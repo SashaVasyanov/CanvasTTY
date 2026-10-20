@@ -21,6 +21,7 @@ jobs:
       - run: npm run check
 
   build:
+    name: build (${{ matrix.os }})
     needs: check
     strategy:
       fail-fast: false
