@@ -1,0 +1,12 @@
+{
+  "compilerOptions": {
+    "target": "es2021", "module": "commonjs", "lib": ["dom","es2021"],
+    "outDir": "./myout", "rootDir": "./", "baseUrl": "./src",
+    "paths": {"common/*": ["./common/*"], "browser/*": ["./browser/*"]},
+    "experimentalDecorators": true, "types": [], "skipLibCheck": true,
+    "noEmitOnError": false, "strict": false, "isolatedModules": false,
+    "removeComments": true, "declaration": false, "sourceMap": false
+  },
+  "include": ["src/common/**/*.ts", "src/browser/**/*.ts", "typings/xterm.d.ts", "addons/addon-fit/src/**/*.ts", "addons/addon-web-links/src/**/*.ts"],
+  "exclude": ["**/*.test.ts", "**/TestUtils.test.ts", "**/*.api.ts"]
+}

@@ -1,0 +1,19 @@
+diff --git a/src/browser/input/Mouse.ts b/src/browser/input/Mouse.ts
+index c40a7cc..6a26847 100644
+--- a/src/browser/input/Mouse.ts
++++ b/src/browser/input/Mouse.ts
+@@ -8,9 +8,12 @@ export function getCoordsRelativeToElement(window: Pick<Window, 'getComputedStyl
+   const elementStyle = window.getComputedStyle(element);
+   const leftPadding = parseInt(elementStyle.getPropertyValue('padding-left'));
+   const topPadding = parseInt(elementStyle.getPropertyValue('padding-top'));
++  // CanvasTTY patch: compensate CSS transform scale of the canvas
++  const sx = element.offsetWidth ? rect.width / element.offsetWidth : 1;
++  const sy = element.offsetHeight ? rect.height / element.offsetHeight : 1;
+   return [
+-    event.clientX - rect.left - leftPadding,
+-    event.clientY - rect.top - topPadding
++    (event.clientX - rect.left) / (sx || 1) - leftPadding,
++    (event.clientY - rect.top) / (sy || 1) - topPadding
+   ];
+ }
+ 

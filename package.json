@@ -1,0 +1,50 @@
+{
+  "name": "canvastty",
+  "productName": "CanvasTTY",
+  "version": "1.1.0",
+  "description": "Пространственный рабочий стол для AI-агентов: canvas с терминалами и чатами Codex / Claude Code, API-чатами и заметками в стиле Obsidian",
+  "main": "main/main.js",
+  "author": "SashaVasyanov",
+  "license": "MIT",
+  "homepage": "https://github.com/SashaVasyanov/CanvasTTY",
+  "repository": { "type": "git", "url": "https://github.com/SashaVasyanov/CanvasTTY.git" },
+  "bugs": { "url": "https://github.com/SashaVasyanov/CanvasTTY/issues" },
+  "keywords": ["electron", "canvas", "ai-agents", "claude-code", "codex", "terminal", "obsidian", "notes", "whiteboard"],
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --devtools",
+    "web": "npx --yes http-server renderer -p 5577 -c-1",
+    "check": "node scripts/check.mjs",
+    "dist": "electron-builder --publish never",
+    "dist:win": "electron-builder --win --publish never",
+    "dist:mac": "electron-builder --mac --publish never",
+    "dist:linux": "electron-builder --linux --publish never"
+  },
+  "devDependencies": {
+    "electron": "38.2.0",
+    "electron-builder": "^26.0.12"
+  },
+  "engines": { "node": ">=20" },
+  "build": {
+    "appId": "com.sashavasyanov.canvastty",
+    "productName": "CanvasTTY",
+    "copyright": "Copyright © 2026 SashaVasyanov",
+    "asar": false,
+    "directories": { "output": "release" },
+    "files": ["main/**", "renderer/**", "package.json", "README.md", "LICENSE"],
+    "win": {
+      "target": [{ "target": "nsis", "arch": ["x64"] }, { "target": "portable", "arch": ["x64"] }],
+      "icon": "renderer/assets/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "CanvasTTY",
+      "artifactName": "CanvasTTY-Setup-${version}.${ext}"
+    },
+    "portable": { "artifactName": "CanvasTTY-Portable-${version}.${ext}" },
+    "mac": { "target": ["dmg"], "icon": "renderer/assets/icon512.png", "category": "public.app-category.developer-tools", "artifactName": "CanvasTTY-${version}-${arch}.${ext}" },
+    "linux": { "target": ["AppImage"], "icon": "renderer/assets/icon512.png", "category": "Development", "artifactName": "CanvasTTY-${version}-${arch}.${ext}" }
+  }
+}
