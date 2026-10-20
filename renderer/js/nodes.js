@@ -427,6 +427,8 @@ export const AGENT_MODES = {
 };
 
 // group label → [value, label]; aliases always point to the newest model of a family
+const plural = (n, one, few, many) => { const m10 = n % 10, m100 = n % 100; return m10 === 1 && m100 !== 11 ? one : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? few : many; };
+
 export const AGENT_MODELS = {
   claude: [
     ['Последняя версия', [['opus', 'Opus (последний)'], ['sonnet', 'Sonnet (последний)'], ['haiku', 'Haiku (последний)']]],
@@ -1079,18 +1081,32 @@ export const NODE_TYPES = {
     mount: ({ node, view, body }) => {
       const title = h('div', { class: 'frame-title txt' });
       const area = h('div', { class: 'frame-area' });
-      body.append(title, area);
+      const count = h('div', { class: 'frame-count' });
+      body.append(title, count, area);
       let cur = node;
-      const paint = () => { title.textContent = cur.data.title || 'Область'; area.style.setProperty('--fc', cur.data.color || FRAME_COLORS[0]); title.style.setProperty('--fc', cur.data.color || FRAME_COLORS[0]); };
+      const paint = () => { title.textContent = cur.data.title || 'Область'; area.style.setProperty('--fc', cur.data.color || FRAME_COLORS[0]); title.style.setProperty('--fc', cur.data.color || FRAME_COLORS[0]); count.style.setProperty('--fc', cur.data.color || FRAME_COLORS[0]); };
       const edit = editableText(title, { onCommit: (v) => view.updateNode(cur.id, { data: { title: v.trim() || 'Область' } }, { checkpoint: true, silent: true }) });
       paint();
-      return { edit: (e) => { if (!e || e.target === title) edit(); }, update: (n) => { cur = n; if (!title.isContentEditable) paint(); } };
+      let ck = '';
+      const setCount = (k, grouped) => {
+        const key = `${k}|${grouped}`;
+        if (key === ck) return; ck = key;
+        count.replaceChildren(...(grouped ? [h('span', { html: icon('link', 11) })] : []), document.createTextNode(k ? `${k} ${plural(k, 'объект', 'объекта', 'объектов')}` : (grouped ? 'группа' : '')));
+        count.style.display = k || grouped ? '' : 'none';
+        count.title = grouped ? 'Группа: область и содержимое двигаются вместе. Ctrl + клик — выбрать объект внутри' : 'Объекты внутри области двигаются вместе с ней';
+      };
+      return { edit: (e) => { if (!e || e.target === title) edit(); }, update: (n) => { cur = n; if (!title.isContentEditable) paint(); }, setCount };
     },
     menu: (n, view) => [
       { label: 'Ввести название…', icon: 'text', onClick: async () => {
         const t = await prompt('Название области', n.data.title || 'Область', 'например Фото проекта 1');
         if (t != null) view.updateNode(n.id, { data: { title: t.trim() || 'Область' } }, { checkpoint: true });
       } },
+      '-',
+      { label: n.data.grouped ? 'Разрешить выбирать объекты по отдельности' : 'Сгруппировать: двигать как одно целое', icon: 'link', onClick: () => view.toggleGrouped(n) },
+      { label: 'Выделить содержимое', icon: 'squares', onClick: () => view.selectContents(n) },
+      { label: 'Разгруппировать (убрать область)', icon: 'area', onClick: () => view.ungroupFrame(n) },
+      { label: 'Удалить вместе с содержимым', icon: 'trash', danger: true, onClick: () => view.removeFrameWithContents(n) },
     ],
   },
 

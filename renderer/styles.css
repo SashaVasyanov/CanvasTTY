@@ -193,10 +193,13 @@ kbd { font: 11px var(--mono); background: rgba(var(--fg-rgb), 0.07); border: 1px
 .canvas-root[data-tool="sticky"], .canvas-root[data-tool="text"], .canvas-root[data-tool="rect"], .canvas-root[data-tool="ellipse"], .canvas-root[data-tool="diamond"], .canvas-root[data-tool="frame"], .canvas-root[data-tool="arrow"] { cursor: crosshair; }
 .canvas-root.space-pan .node, .canvas-root[data-tool="hand"] .node { pointer-events: none; }
 .canvas-root.drop-hover::after { content: 'Отпустите, чтобы добавить на canvas'; position: absolute; inset: 12px; border: 2px dashed rgba(124, 140, 255, 0.6); border-radius: 16px; display: grid; place-items: center; color: var(--accent-2); font-weight: 600; pointer-events: none; background: rgba(124, 140, 255, 0.05); }
-.canvas-bg { position: absolute; inset: 0; background-color: var(--bg); background-repeat: repeat; pointer-events: none; }
+.canvas-root { background-color: var(--bg); }
+.canvas-bg { position: absolute; left: 0; top: 0; width: 100%; height: 100%; transform-origin: 0 0; background-repeat: repeat; background-position: 0 0; pointer-events: none; will-change: transform; }
 .canvas-bg.no-grid { background-image: none !important; }
 .canvas-world { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
-.canvas-root.vp-moving .canvas-world { will-change: transform; }
+.canvas-root.vp-moving .canvas-world, .canvas-root.world-layer .canvas-world { will-change: transform; }
+.node.dragged { will-change: transform; pointer-events: none; }
+.canvas-root.moving .node:not(.dragged) { pointer-events: none; }
 .canvas-root.vp-moving .node, .canvas-root.vp-moving .edge, .canvas-root.vp-moving .sel-box { pointer-events: none; }
 .canvas-root.vp-moving *, .canvas-root.vp-moving *::before, .canvas-root.vp-moving *::after { animation-play-state: paused !important; transition: none !important; }
 .node.culled { visibility: hidden; }
@@ -214,6 +217,7 @@ svg.edges { position: absolute; left: 0; top: 0; width: 1px; height: 1px; overfl
 .canvas-overlay > * { position: absolute; }
 svg.guides { inset: 0; width: 100%; height: 100%; }
 svg.guides line { stroke: #ff5ca8; stroke-width: 1; }
+.marquee, .sel-box, .conn-dots { left: 0; top: 0; will-change: transform; }
 .marquee { display: none; border: 1px solid var(--accent); background: rgba(124, 140, 255, 0.1); border-radius: 2px; }
 .ghost-shape { display: none; border: 1.5px dashed var(--accent); background: rgba(124, 140, 255, 0.06); }
 .sel-box { display: none; border: 1.5px solid var(--accent); border-radius: 3px; }
@@ -695,3 +699,19 @@ svg.guides line { stroke: #ff5ca8; stroke-width: 1; }
 .node.grab .node-head { cursor: move; }
 .node-frame.grab .frame-area { cursor: move; background: color-mix(in srgb, var(--fc) 24%, transparent); border-style: dashed; }
 .node.grab.selected { outline: 2px dashed var(--accent); outline-offset: 3px; }
+
+/* areas as groups */
+.frame-count { position: absolute; right: 16px; top: 16px; z-index: 1; display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 8px; font: 600 11.5px var(--font); color: color-mix(in srgb, var(--fc, #7c8cff) 30%, var(--text-2)); background: color-mix(in srgb, var(--fc, #7c8cff) 16%, transparent); pointer-events: none; }
+.node-frame.drop-target .frame-area { border-style: dashed; border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+
+/* FPS meter and smoothness test */
+.fps-meter { position: fixed; right: 12px; bottom: 12px; z-index: 9500; padding: 4px 9px; border-radius: 8px; font: 600 11.5px var(--mono); background: var(--menu); border: 1px solid var(--line-2); color: var(--text-2); pointer-events: none; }
+.fps-meter.good { color: var(--green); } .fps-meter.mid { color: #f6a04d; } .fps-meter.bad { color: var(--red); }
+.perf-table { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
+.perf-table th { text-align: right; font-size: 11px; color: var(--muted); font-weight: 600; padding: 4px 6px; }
+.perf-table td { padding: 6px; border-top: 1px solid var(--line); }
+.perf-num { text-align: right; font-family: var(--mono); }
+.perf-num.good { color: var(--green); } .perf-num.mid { color: #f6a04d; } .perf-num.bad { color: var(--red); }
+.perf-meta { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--text-2); }
+.perf-warn { color: var(--red); font-size: 12.5px; margin: 6px 0; }
+.perf-run { padding: 8px 0; color: var(--text-2); }

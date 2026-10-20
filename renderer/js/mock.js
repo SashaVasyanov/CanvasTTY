@@ -103,6 +103,7 @@ export const mockNative = {
     abort: async () => {}, defaults: async () => ({ claude: { model: 'sonnet' }, codex: { model: 'gpt-5-codex', effort: 'medium', models: [] } }), onEvent: on('agentchat:event'),
   },
   setBg: async () => {},
+  perf: { info: async () => ({ gpu: { gpu_compositing: 'enabled', rasterization: 'enabled' }, gpuInfo: { gpuDevice: [{ active: true, deviceString: 'Демо-видеокарта' }] }, displays: [{ size: { width: 1920, height: 1080 }, scale: 1, hz: 60 }] }), save: async () => '' },
   limits: {
     get: async () => ({
       codex: { status: 'ok', windows: [{ label: '5ч', used: 10, resetsAt: Date.now() + 3.2 * 3600e3 }, { label: 'Неделя', used: 34, resetsAt: Date.now() + 4 * 86400e3 }], source: 'демо' },

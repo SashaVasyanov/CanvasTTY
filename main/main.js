@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, protocol, net, shell, dialog, Menu, clipboard, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, protocol, net, shell, dialog, Menu, clipboard, nativeImage, screen } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const fsp = fs.promises;
@@ -133,6 +133,20 @@ app.whenReady().then(() => {
   ipcMain.handle('win:maximize', () => (win.isMaximized() ? win.unmaximize() : win.maximize()));
   ipcMain.handle('win:close', () => win.close());
   ipcMain.handle('win:isMaximized', () => win.isMaximized());
+  ipcMain.handle('perf:info', async () => ({
+    gpu: app.getGPUFeatureStatus(),
+    gpuInfo: await app.getGPUInfo('basic').catch(() => null),
+    displays: screen.getAllDisplays().map((d) => ({ size: d.size, scale: d.scaleFactor, hz: d.displayFrequency })),
+    platform: process.platform, electron: process.versions.electron,
+  }));
+  ipcMain.handle('perf:save', (e, report) => {
+    const txt = JSON.stringify(report, null, 2);
+    const out = [];
+    for (const f of [path.join(app.getAppPath(), 'perf-report.json'), path.join(userData, 'perf-report.json')]) {
+      try { fs.writeFileSync(f, txt); out.push(f); } catch {}
+    }
+    return out[0] || '';
+  });
   ipcMain.handle('app:info', () => ({ version: app.getVersion(), platform: process.platform, home: app.getPath('home'), userData }));
 
   // ---------- storage ----------

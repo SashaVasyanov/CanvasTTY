@@ -84,7 +84,8 @@ export class CanvasView extends Emitter {
   toggleMinimap() { state.setSetting('minimap', state.settings.minimap === false); this.applyMinimapSetting(); }
 
   // ---------------- coordinates ----------------
-  rect() { return this.root.getBoundingClientRect(); }
+  // cached: getBoundingClientRect forces a synchronous layout when styles are dirty
+  rect() { return this._rect || (this._rect = this.root.getBoundingClientRect()); }
   toWorld(cx, cy) { const r = this.rect(); return { x: (cx - r.left - this.vp.x) / this.vp.z, y: (cy - r.top - this.vp.y) / this.vp.z }; }
   toScreen(x, y) { return { x: x * this.vp.z + this.vp.x, y: y * this.vp.z + this.vp.y }; }
   centerWorld() { const r = this.rect(); return this.toWorld(r.left + r.width / 2, r.top + r.height / 2); }
@@ -97,10 +98,10 @@ export class CanvasView extends Emitter {
 
   applyViewport() {
     const { x, y, z } = this.vp;
+    if (this._lastZ !== undefined && this._lastZ !== z) this._zoomedSinceRest = true;
+    this._lastZ = z;
     this.world.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${z})`;
-    const g = this.gridStep * z;
-    this.bg.style.backgroundSize = `${g}px ${g}px`;
-    this.bg.style.backgroundPosition = `${x}px ${y}px`;
+    this.positionBg();
     const noGrid = !state.settings.grid || z < 0.2;
     if (noGrid !== this._noGrid) { this._noGrid = noGrid; this.bg.classList.toggle('no-grid', noGrid); }
     // enter card mode immediately (cheaper), leave it only when the gesture ends
@@ -118,6 +119,32 @@ export class CanvasView extends Emitter {
     this.cullSoon();
   }
 
+  // The dot grid is a big composited layer. Panning only changes its transform;
+  // the bitmap is re-rasterised only when the zoom drifts far from the rastered size.
+  sizeBg() {
+    const r = this.rect();
+    if (!r.width) return;
+    this._bgW = r.width; this._bgH = r.height;
+    this._bgG0 = null;
+    this.positionBg();
+  }
+  positionBg() {
+    const { x, y, z } = this.vp;
+    const g = this.gridStep * z;
+    let g0 = this._bgG0;
+    const s = g0 ? g / g0 : 0;
+    if (!g0 || s < 0.48 || s > 3 || (!this._moving && Math.abs(s - 1) > 0.001)) {
+      g0 = this._bgG0 = g;
+      const k = 2.2; // layer is bigger than the viewport so it still covers it while zooming out
+      this.bg.style.width = `${(this._bgW || 2000) * k + g0 * 2}px`;
+      this.bg.style.height = `${(this._bgH || 1200) * k + g0 * 2}px`;
+      this.bg.style.backgroundSize = `${g0}px ${g0}px`;
+    }
+    const sc = g / g0;
+    const tx = (((x % g) + g) % g) - g, ty = (((y % g) + g) % g) - g;
+    this.bg.style.transform = `translate3d(${tx}px, ${ty}px, 0) scale(${sc})`;
+  }
+
   setLod(lod) {
     this.lod = lod;
     this.root.classList.toggle('lod', lod);
@@ -127,7 +154,7 @@ export class CanvasView extends Emitter {
 
   // while the view moves: composite-only, no hover/pointer work, paused animations
   markMoving() {
-    if (!this._moving) { this._moving = true; this.root.classList.add('vp-moving'); }
+    if (!this._moving) { this._moving = true; this.root.classList.add('vp-moving', 'world-layer'); clearTimeout(this._wlT); }
     clearTimeout(this._movT);
     this._movT = setTimeout(() => {
       this._moving = false;
@@ -137,7 +164,16 @@ export class CanvasView extends Emitter {
       if (lod !== this.lod) this.setLod(lod);
       this.cull();
       this.updateGridTile();
+      this.positionBg();
       this.updateOverlay();
+      // a zoom gesture leaves the world rastered at the old scale: drop the layer for one
+      // frame to get crisp text, then promote it again so the next pan starts instantly
+      if (this._zoomedSinceRest) {
+        this._zoomedSinceRest = false;
+        this.root.classList.remove('world-layer');
+        clearTimeout(this._wlT);
+        this._wlT = setTimeout(() => { if (!this._moving) this.root.classList.add('world-layer'); }, 350);
+      }
     }, 160);
   }
 
@@ -238,6 +274,8 @@ export class CanvasView extends Emitter {
     this.undoStack = []; this.redoStack = [];
     this.lod = null;
     this.renderAll();
+    // older canvases have no membership yet: derive it from geometry once
+    if (!this.doc.groups) { this.recomputeGroups('all'); this.doc.groups = 1; } else this.recomputeGroups();
     if (this.doc.fresh) {
       delete this.doc.fresh;
       requestAnimationFrame(() => { const r = this.rect(); this.vp.x = r.width / 2; this.vp.y = r.height / 2; this.vp.z = 1; this.emit('fresh'); this.applyViewport(); });
@@ -300,7 +338,8 @@ export class CanvasView extends Emitter {
     const v = this.views.get(n.id);
     if (!v) return;
     const s = v.el.style;
-    s.left = `${n.x}px`; s.top = `${n.y}px`; s.width = `${n.w}px`; s.height = `${n.h}px`;
+    if (!v.el.classList.contains('dragged')) { s.left = `${n.x}px`; s.top = `${n.y}px`; }
+    s.width = `${n.w}px`; s.height = `${n.h}px`;
     s.zIndex = String((n.type === 'frame' ? 0 : 1000) + (n.z || 0));
     v.el.classList.toggle('selected', this.selection.has(n.id));
     v.el.classList.toggle('locked', !!n.locked);
@@ -353,7 +392,7 @@ export class CanvasView extends Emitter {
   undo() { if (!this.undoStack.length) return; this.redoStack.push(this.snapshot()); this.restore(this.undoStack.pop()); }
   redo() { if (!this.redoStack.length) return; this.undoStack.push(this.snapshot()); this.restore(this.redoStack.pop()); }
 
-  changed() { state.touch(); this.drawMinimap(); this.emit('changed'); }
+  changed() { if (!this.dragging) this.recomputeGroups(); state.touch(); this.drawMinimap(); this.emit('changed'); }
 
   maxZ() { return this.doc.nodes.reduce((m, n) => Math.max(m, n.z || 0), 0); }
 
@@ -369,6 +408,7 @@ export class CanvasView extends Emitter {
     if (checkpoint) this.checkpoint();
     this.doc.nodes.push(n);
     this.createView(n);
+    if (type === 'frame') this.adoptInto(n); else this.recomputeGroups(new Set([n.id]));
     if (select) this.select([n.id]);
     this.changed();
     return n;
@@ -466,9 +506,25 @@ export class CanvasView extends Emitter {
     const c2 = { x: p2.x + (p2.dx || 0) * d, y: p2.y + (p2.dy || 0) * d };
     return { d: `M${p1.x},${p1.y} C${c1.x},${c1.y} ${c2.x},${c2.y} ${p2.x},${p2.y}`, mid: { x: (p1.x + 3 * c1.x + 3 * c2.x + p2.x) / 8, y: (p1.y + 3 * c1.y + 3 * c2.y + p2.y) / 8 } };
   }
+  // cheap path update for edges touching moving nodes (no DOM rebuild)
+  updateEdgesFor(ids) {
+    if (!this._edgeEls) return this.renderEdges();
+    for (const e of this.doc.edges) {
+      if (!ids.has(e.from) && !ids.has(e.to)) continue;
+      const el = this._edgeEls.get(e.id);
+      const a = this.node(e.from), b = this.node(e.to);
+      if (!el || !a || !b) continue;
+      const [sa, sb] = [e.fromSide, e.toSide].every(Boolean) ? [e.fromSide, e.toSide] : this.bestSides(a, b);
+      const { d, mid } = this.curve(this.anchor(a, sa), this.anchor(b, sb));
+      el.hit.setAttribute('d', d); el.line.setAttribute('d', d);
+      if (el.label) { el.label.setAttribute('x', mid.x); el.label.setAttribute('y', mid.y - 6); }
+    }
+  }
+
   renderEdges() {
     const g = this.edgeGroup;
     g.innerHTML = '';
+    this._edgeEls = new Map();
     for (const e of this.doc.edges) {
       const a = this.node(e.from), b = this.node(e.to);
       if (!a || !b) continue;
@@ -485,6 +541,7 @@ export class CanvasView extends Emitter {
         grp.append(t);
       }
       g.append(grp);
+      this._edgeEls.set(e.id, { hit: grp.firstChild, line: grp.children[1], label: grp.querySelector('text') });
     }
   }
 
@@ -499,15 +556,23 @@ export class CanvasView extends Emitter {
     const b = this.bounds(nodes);
     const p = this.toScreen(b.x, b.y);
     const w = b.w * this.vp.z, hh = b.h * this.vp.z;
-    Object.assign(this.selBox.style, { left: `${p.x}px`, top: `${p.y}px`, width: `${w}px`, height: `${hh}px` });
+    this.placeBox(this.selBox, p.x, p.y, w, hh);
     const single = nodes.length === 1 ? nodes[0] : null;
     this.selBox.classList.toggle('multi', !single);
     this.selBox.classList.toggle('window-sel', !!single && NODE_TYPES[single.type]?.chrome === 'window');
     this.selBox.classList.toggle('no-handles', !single || !!single.locked || this.lod && NODE_TYPES[single.type]?.chrome === 'window' && false);
     if (single && !single.locked && !this.dragging) {
-      Object.assign(this.connDots.style, { display: 'block', left: `${p.x}px`, top: `${p.y}px`, width: `${w}px`, height: `${hh}px` });
+      this.connDots.style.display = 'block';
+      this.placeBox(this.connDots, p.x, p.y, w, hh);
     }
     if (!this.dragging && !light) this.renderSelToolbar(nodes, p, w);
+  }
+
+  // position via transform (composited), touch width/height only when they change
+  placeBox(el, x, y, w, hh) {
+    el.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+    const k = `${Math.round(w * 10)}|${Math.round(hh * 10)}`;
+    if (el._sz !== k) { el._sz = k; el.style.width = `${w}px`; el.style.height = `${hh}px`; }
   }
 
   renderSelToolbar(nodes, p, w) {
@@ -633,7 +698,7 @@ export class CanvasView extends Emitter {
 
   // ---------------- clipboard ----------------
   copy(cut = false) {
-    const nodes = this.selectedNodes();
+    const nodes = this.withContents(this.selectedNodes());
     if (!nodes.length) return false;
     const ids = new Set(nodes.map((n) => n.id));
     const payload = { canvastty: 1, nodes: deepClone(nodes), edges: deepClone(this.doc.edges.filter((e) => ids.has(e.from) && ids.has(e.to))) };
@@ -658,13 +723,15 @@ export class CanvasView extends Emitter {
       if (n.data) { delete n.data.sessionId; if (n.type === 'chat') n.data.messages = [...(n.data.messages || [])]; }
       this.doc.nodes.push(n); this.createView(n); newIds.push(n.id);
     }
+    for (const id of newIds) { const n = this.node(id); if (n.parent) { if (map[n.parent]) n.parent = map[n.parent]; else delete n.parent; } }
+    this.recomputeGroups(new Set(newIds.filter((id) => !this.node(id).parent)));
     for (const e of payload.edges || []) if (map[e.from] && map[e.to]) this.doc.edges.push({ ...e, id: uid('e'), from: map[e.from], to: map[e.to] });
     this.renderEdges();
     this.select(newIds);
     this.changed();
   }
   duplicate() {
-    const nodes = this.selectedNodes();
+    const nodes = this.withContents(this.selectedNodes());
     if (!nodes.length) return;
     const ids = new Set(nodes.map((n) => n.id));
     const b = this.bounds(nodes);
@@ -690,7 +757,8 @@ export class CanvasView extends Emitter {
     window.addEventListener('keydown', (e) => { if (e.code === 'Space' && !isEditable(document.activeElement) && !e.repeat) { this.spaceDown = true; r.classList.add('space-pan'); } });
     window.addEventListener('keyup', (e) => { if (e.code === 'Space') { this.spaceDown = false; r.classList.remove('space-pan'); } });
     window.addEventListener('blur', () => { this.spaceDown = false; r.classList.remove('space-pan'); });
-    new ResizeObserver(() => { this.updateOverlay(); this.drawMinimap(); }).observe(r);
+    new ResizeObserver(() => { this._rect = null; this.updateOverlay(); this.drawMinimap(); this.sizeBg(); }).observe(r);
+    window.addEventListener('resize', () => { this._rect = null; });
     // minimap navigation
     this.miniCanvas.addEventListener('pointerdown', (e) => {
       e.stopPropagation();
@@ -769,6 +837,14 @@ export class CanvasView extends Emitter {
         this.startMarquee(e);
         return;
       }
+      const grp = !e.ctrlKey && !e.metaKey && !inBtn && !editing && (inHead || !isWindow || this.lod) ? this.groupRoot(n) : null;
+      if (grp) {
+        e.preventDefault();
+        if (e.shiftKey) { this.toggleSelect(grp.id); return; }
+        if (!this.selection.has(grp.id)) this.select([grp.id]);
+        if (!grp.locked) this.startMove(e);
+        return;
+      }
       if (e.shiftKey && (inHead || !isWindow || this.lod)) { this.toggleSelect(n.id); e.preventDefault(); return; }
       if (!this.selection.has(n.id)) this.select([n.id]);
       if (inBtn && !this.lod) return;
@@ -810,7 +886,8 @@ export class CanvasView extends Emitter {
         if (!moved && Math.hypot(cx - sx, cy - sy) < 3) return;
         moved = true;
         const x = Math.min(sx, cx), y = Math.min(sy, cy), w = Math.abs(cx - sx), hh = Math.abs(cy - sy);
-        Object.assign(this.marquee.style, { display: 'block', left: `${x}px`, top: `${y}px`, width: `${w}px`, height: `${hh}px` });
+        this.marquee.style.display = 'block';
+        this.placeBox(this.marquee, x, y, w, hh);
         const a = this.toWorld(x + r.left, y + r.top), b = this.toWorld(x + w + r.left, y + hh + r.top);
         const sel = new Set(base);
         for (const n of this.doc.nodes) {
@@ -819,8 +896,10 @@ export class CanvasView extends Emitter {
           const enclosed = n.x >= a.x && n.y >= a.y && n.x + n.w <= b.x && n.y + n.h <= b.y;
           if (n.type === 'frame' ? enclosed : hit) sel.add(n.id);
         }
+        const prev = this.selection;
         this.selection = sel;
-        for (const [id, v] of this.views) v.el.classList.toggle('selected', sel.has(id));
+        for (const id of prev) if (!sel.has(id)) this.views.get(id)?.el.classList.remove('selected');
+        for (const id of sel) if (!prev.has(id)) this.views.get(id)?.el.classList.add('selected');
       },
       up: () => { this.marquee.style.display = 'none'; this.afterSelect(); },
     };
@@ -828,39 +907,151 @@ export class CanvasView extends Emitter {
 
   startMove(e) {
     const start = this.toWorld(e.clientX, e.clientY);
-    let nodes = this.selectedNodes().filter((n) => !n.locked);
-    // frames carry their contents
+    const nodes = this.selectedNodes().filter((n) => !n.locked);
+    // areas carry everything that belongs to them (nested areas included)
+    const ids = new Set(nodes.map((n) => n.id));
     const extra = [];
     for (const f of nodes.filter((n) => n.type === 'frame')) {
-      for (const n of this.doc.nodes) {
-        if (n.id === f.id || this.selection.has(n.id) || n.locked) continue;
-        if (n.x >= f.x && n.y >= f.y && n.x + n.w <= f.x + f.w && n.y + n.h <= f.y + f.h) extra.push(n);
-      }
+      for (const n of this.descendants(f)) if (!ids.has(n.id) && !n.locked) { ids.add(n.id); extra.push(n); }
     }
     const all = [...nodes, ...extra];
     const orig = new Map(all.map((n) => [n.id, { x: n.x, y: n.y }]));
     const b0 = this.bounds(nodes);
-    const others = this.snapTargets(new Set(all.map((n) => n.id)));
-    let moved = false, checkpointed = false;
+    const others = this.snapTargets(ids);
+    const movingFrames = new Set(all.filter((n) => n.type === 'frame').map((n) => n.id));
+    let moved = false, checkpointed = false, lastDx = 0, lastDy = 0, dropFrame = null;
+    const setDrop = (f) => {
+      if (dropFrame === f) return;
+      if (dropFrame) this.views.get(dropFrame.id)?.el.classList.remove('drop-target');
+      dropFrame = f;
+      if (f) this.views.get(f.id)?.el.classList.add('drop-target');
+    };
+    // during the drag nodes are moved by a composited transform; left/top are written once at the end
+    const views = all.map((n) => this.views.get(n.id)).filter(Boolean);
     this.dragging = {
       kind: 'move',
       move: (ev) => {
         const p = this.toWorld(ev.clientX, ev.clientY);
         let dx = p.x - start.x, dy = p.y - start.y;
         if (!moved && Math.hypot(dx, dy) * this.vp.z < 3) return;
-        if (!checkpointed) { this.checkpoint(); checkpointed = true; this.root.classList.add('moving'); }
+        if (!checkpointed) {
+          this.checkpoint(); checkpointed = true;
+          this.root.classList.add('moving');
+          for (const v of views) v.el.classList.add('dragged');
+        }
         moved = true;
         if (ev.shiftKey) { if (Math.abs(dx) > Math.abs(dy)) dy = 0; else dx = 0; }
         const snapped = ev.altKey ? { dx, dy, gx: [], gy: [] } : this.snapMove(b0, dx, dy, others);
-        dx = snapped.dx; dy = snapped.dy;
+        dx = Math.round(snapped.dx); dy = Math.round(snapped.dy);
         this.drawGuides(snapped.gx, snapped.gy);
-        for (const n of all) { const o = orig.get(n.id); n.x = Math.round(o.x + dx); n.y = Math.round(o.y + dy); this.syncView(n); }
-        this.renderEdges();
+        if (dx === lastDx && dy === lastDy) return;
+        lastDx = dx; lastDy = dy;
+        const tf = `translate3d(${dx}px, ${dy}px, 0)`;
+        for (const v of views) v.el.style.transform = tf;
+        for (const n of all) { const o = orig.get(n.id); n.x = o.x + dx; n.y = o.y + dy; }
+        this.updateEdgesFor(ids);
         this.updateOverlay();
+        // highlight the area the objects will land in
+        if (!nodes.every((n) => n.type === 'frame')) {
+          const c = { x: b0.x + dx + b0.w / 2, y: b0.y + dy + b0.h / 2 };
+          setDrop(this.frameAt(c.x, c.y, movingFrames));
+        }
       },
-      up: (ev) => { this.drawGuides([], []); this.root.classList.remove('moving'); if (moved) { this.lastMoveEnd = performance.now(); this.updateOverlay(); this.changed(); this.emit('moveEnd', { nodes, clientX: ev.clientX, clientY: ev.clientY }); } },
+      up: (ev) => {
+        this.drawGuides([], []);
+        this.root.classList.remove('moving');
+        setDrop(null);
+        for (const v of views) { v.el.classList.remove('dragged'); v.el.style.transform = ''; }
+        for (const n of all) this.syncView(n);
+        if (moved) {
+          this.lastMoveEnd = performance.now();
+          this.recomputeGroups(new Set(nodes.map((n) => n.id)));
+          this.renderEdges();
+          this.updateOverlay(); this.changed();
+          this.emit('moveEnd', { nodes, clientX: ev.clientX, clientY: ev.clientY });
+        }
+      },
     };
   }
+
+  // ---------------- areas as groups ----------------
+  // An object belongs to the innermost area that contains its centre. Membership is stored in
+  // node.parent and recomputed whenever something comes to rest, so moving an area always
+  // carries its contents, even if they stick out of it a little.
+  frameAt(x, y, exclude = new Set()) {
+    let best = null, ba = Infinity;
+    for (const f of this.doc.nodes) {
+      if (f.type !== 'frame' || exclude.has(f.id)) continue;
+      if (x < f.x || y < f.y || x > f.x + f.w || y > f.y + f.h) continue;
+      const a = f.w * f.h;
+      if (a < ba) { ba = a; best = f; }
+    }
+    return best;
+  }
+  withContents(nodes) {
+    const ids = new Set(nodes.map((n) => n.id)); const out = [...nodes];
+    for (const f of nodes) if (f.type === 'frame') for (const n of this.descendants(f)) if (!ids.has(n.id)) { ids.add(n.id); out.push(n); }
+    return out;
+  }
+  children(f) { return this.doc.nodes.filter((n) => n.parent === f.id); }
+  descendants(f, out = [], seen = new Set([f.id])) {
+    for (const n of this.doc.nodes) {
+      if (n.parent !== f.id || seen.has(n.id)) continue;
+      seen.add(n.id); out.push(n);
+      if (n.type === 'frame') this.descendants(n, out, seen);
+    }
+    return out;
+  }
+  groupRoot(n) {
+    let root = null, cur = n, guard = 0;
+    while (cur && cur.parent && guard++ < 50) { cur = this.node(cur.parent); if (cur?.data?.grouped) root = cur; }
+    return root;
+  }
+  // fresh: ids (or 'all') whose area is chosen anew; everything else keeps its area while its
+  // centre is still inside it, so overlapping areas don't steal each other's objects
+  recomputeGroups(fresh = null) {
+    const nodes = this.doc.nodes;
+    const frames = nodes.filter((n) => n.type === 'frame');
+    const byId = new Map(frames.map((f) => [f.id, f]));
+    const inside = (n, f) => { const cx = n.x + n.w / 2, cy = n.y + n.h / 2; return cx >= f.x && cy >= f.y && cx <= f.x + f.w && cy <= f.y + f.h; };
+    const fits = (n, f) => f.id !== n.id && inside(n, f) && (n.type !== 'frame' || f.w * f.h > n.w * n.h);
+    for (const n of nodes) {
+      const cur = n.parent && byId.get(n.parent);
+      const isFresh = fresh === 'all' || (fresh && fresh.has(n.id));
+      if (!isFresh && (cur ? fits(n, cur) : !n.parent)) continue; // loose objects stay loose until moved
+      let best = null, ba = Infinity;
+      for (const f of frames) {
+        if (!fits(n, f)) continue;
+        const a = f.w * f.h;
+        if (a < ba - 1 || (Math.abs(a - ba) <= 1 && (f.z || 0) > (best.z || 0))) { ba = a; best = f; }
+      }
+      if (best) n.parent = best.id; else delete n.parent;
+    }
+    // break accidental cycles between areas
+    for (const f of frames) { let c = f, d = 0; while (c && c.parent && d < 60) { c = byId.get(c.parent); d++; if (c === f) { delete f.parent; break; } } }
+    // nested areas are drawn above their parents
+    const depth = (f) => { let d = 0, c = f; while (c.parent && d < 50) { c = this.node(c.parent); if (!c) break; d++; } return d; };
+    const order = frames.map((f) => [f, depth(f)]).sort((a, b) => a[1] - b[1] || (a[0].z || 0) - (b[0].z || 0));
+    order.forEach(([f], i) => { const z = -order.length + i; if (f.z !== z) { f.z = z; this.syncView(f); } });
+    for (const f of frames) this.views.get(f.id)?.inst?.setCount?.(this.descendants(f).length, !!f.data.grouped);
+  }
+  adoptInto(f) {
+    const ids = new Set(this.doc.nodes.filter((n) => n.id !== f.id && n.x + n.w / 2 >= f.x && n.y + n.h / 2 >= f.y && n.x + n.w / 2 <= f.x + f.w && n.y + n.h / 2 <= f.y + f.h).map((n) => n.id));
+    ids.add(f.id);
+    this.recomputeGroups(ids);
+  }
+  selectContents(f) { const d = this.descendants(f).map((n) => n.id); if (d.length) this.select(d); else toast('В области пока ничего нет'); }
+  toggleGrouped(f) {
+    this.updateNode(f.id, { data: { grouped: !f.data.grouped } }, { checkpoint: true });
+    this.recomputeGroups();
+    toast(f.data.grouped ? 'Область и её содержимое двигаются как одно целое. Ctrl + клик — выбрать объект внутри' : 'Объекты внутри области снова выбираются по отдельности');
+  }
+  ungroupFrame(f) {
+    const kids = this.children(f).map((n) => n.id);
+    this.removeNodes([f.id]);
+    if (kids.length) this.select(kids.filter((id) => this.node(id)));
+  }
+  removeFrameWithContents(f) { this.removeNodes([f.id, ...this.descendants(f).map((n) => n.id)]); }
 
   snapTargets(exclude) {
     const r = this.rect();
@@ -898,7 +1089,7 @@ export class CanvasView extends Emitter {
     let s = '';
     for (const x of xs) { const p = this.toScreen(x, 0); s += `<line x1="${p.x}" y1="0" x2="${p.x}" y2="${r.height}"/>`; }
     for (const y of ys) { const p = this.toScreen(0, y); s += `<line x1="0" y1="${p.y}" x2="${r.width}" y2="${p.y}"/>`; }
-    this.guideSvg.innerHTML = s;
+    if (this._guides !== s) { this._guides = s; this.guideSvg.innerHTML = s; }
   }
 
   startResize(e, dir) {
@@ -941,7 +1132,7 @@ export class CanvasView extends Emitter {
         Object.assign(this.sizeLabel.style, { display: 'block', left: `${sp.x + 8}px`, top: `${sp.y + 8}px` });
         this.sizeLabel.textContent = `${n.w} × ${n.h}`;
       },
-      up: () => { this.sizeLabel.style.display = 'none'; this.views.get(n.id)?.inst?.onResize?.(n); this.changed(); },
+      up: () => { this.sizeLabel.style.display = 'none'; this.views.get(n.id)?.inst?.onResize?.(n); if (n.type === 'frame') this.adoptInto(n); else this.recomputeGroups(new Set([n.id])); this.changed(); },
     };
   }
 
@@ -1001,10 +1192,18 @@ export class CanvasView extends Emitter {
   }
 
   onPointerMove(e) {
-    if (this.dragging) this.dragging.move(e);
     this.lastPointer = { x: e.clientX, y: e.clientY };
+    if (!this.dragging) return;
+    this._pendingMove = e;
+    if (!this._moveRaf) this._moveRaf = requestAnimationFrame(() => this.flushMove());
+  }
+  flushMove() {
+    if (this._moveRaf) { cancelAnimationFrame(this._moveRaf); this._moveRaf = 0; }
+    const e = this._pendingMove; this._pendingMove = null;
+    if (e && this.dragging) this.dragging.move(e);
   }
   onPointerUp(e) {
+    this.flushMove();
     const d = this.dragging;
     this.dragging = null;
     if (d) { d.up && d.up(e); this.updateOverlay(); }
@@ -1143,7 +1342,7 @@ export class CanvasView extends Emitter {
       const dy = k === 'arrowup' ? -step : k === 'arrowdown' ? step : 0;
       if (!this.nudging) { this.checkpoint(); this.nudging = true; }
       clearTimeout(this.nudgeT); this.nudgeT = setTimeout(() => { this.nudging = false; }, 600);
-      for (const n of this.selectedNodes()) if (!n.locked) { n.x += dx; n.y += dy; this.syncView(n); }
+      for (const n of this.withContents(this.selectedNodes())) if (!n.locked) { n.x += dx; n.y += dy; this.syncView(n); }
       this.renderEdges(); this.updateOverlay(); this.changed();
       return true;
     }

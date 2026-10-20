@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld('native', {
   chat: { providers: inv('chat:providers'), send: inv('chat:send'), abort: inv('chat:abort'), models: inv('chat:models'), onEvent: on('chat:event') },
   agentChat: { run: inv('agentchat:run'), abort: inv('agentchat:abort'), defaults: inv('agentchat:defaults'), onEvent: on('agentchat:event') },
   setBg: inv('win:setBg'),
+  perf: { info: inv('perf:info'), save: inv('perf:save') },
   limits: { get: inv('limits:get'), usage: inv('usage:get') },
   vault: {
     root: inv('vault:root'), setRoot: inv('vault:setRoot'), index: inv('vault:index'), read: inv('vault:read'), write: inv('vault:write'),

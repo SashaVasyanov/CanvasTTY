@@ -5,6 +5,7 @@ import { CanvasView } from './canvas.js';
 import { NODE_TYPES, imageNodeFromFile } from './nodes.js';
 import { vaultIndex } from './vaultIndex.js';
 import { Sidebar, NotePanel, openGraph } from './notes.js';
+import { setFpsMeter, toggleFpsMeter, runPerfTest } from './perf.js';
 import { limits, limitsPanel, petSvg, LIMIT_SOURCES, PETS, openPetPicker } from './hub.js';
 
 const VERSION = '1.2.0';
@@ -25,6 +26,7 @@ class App {
     this.bindBus();
     this.bindKeys();
     this.startPet();
+    if (state.settings.fps) setFpsMeter(true);
     state.on('canvas', () => { this.canvas.load(); this.renderTabs(); });
     state.on('projects', () => this.renderTabs());
     this.canvas.load();
@@ -549,6 +551,7 @@ class App {
       const mod = e.ctrlKey || e.metaKey;
       const k = e.key.toLowerCase();
       if (mod && k === 'p') { e.preventDefault(); this.palette(); return; }
+      if (mod && e.shiftKey && k === 'f') { e.preventDefault(); toggleFpsMeter(); return; }
       if (mod && k === 'o') { e.preventDefault(); this.quickOpen(false); return; }
       if (mod && k === 'n') { e.preventDefault(); this.sidebar.newNote(); return; }
       if (mod && e.key === '\\') { e.preventDefault(); this.toggleSidebar(); return; }
@@ -576,6 +579,8 @@ class App {
       { label: 'Лимиты нейросетей', icon: 'gauge', run: () => this.showLimits(this.limitsBtn) },
       { label: 'Настройки', icon: 'settings', hint: 'Ctrl+,', run: () => this.openSettings() },
       { label: 'Сменить питомца', icon: 'refresh', run: () => openPetPicker() },
+      { label: 'Тест плавности (FPS)', icon: 'gauge', run: () => runPerfTest(this) },
+      { label: 'Показать / скрыть счётчик FPS', icon: 'gauge', hint: 'Ctrl+Shift+F', run: () => toggleFpsMeter() },
       { label: 'Выбрать хранилище заметок', icon: 'folderOpen', run: () => this.chooseVault() },
       ...state.ws.projects.flatMap((p) => p.canvases.map((c) => ({ label: `${p.name} / ${c.name}`, hint: 'canvas', icon: 'grid', run: () => state.openCanvas(p.id, c.id) }))),
       ...vaultIndex.notes.map((n) => ({ label: n.name, hint: n.path.includes('/') ? n.path.split('/').slice(0, -1).join('/') : 'заметка', icon: 'file', run: () => this.openNote(n.path) })),
@@ -661,6 +666,9 @@ class App {
       row('Карточки при отдалении', lod, 'При каком масштабе окна агентов превращаются в компактные карточки'),
       row('Питомец', petBtn, 'Готовые питомцы или своя картинка. Также: ПКМ по питомцу в пульте'),
       row('Питомец бегает за курсором', toggle('pet')),
+      h('h3', {}, 'Производительность'),
+      row('Счётчик FPS', (() => { const i = h('input', { type: 'checkbox', class: 'switch' }); i.checked = !!s.fps; i.onchange = () => { state.setSetting('fps', i.checked); setFpsMeter(i.checked); }; return i; })(), 'Также Ctrl+Shift+F'),
+      row('Тест плавности', h('button', { class: 'btn', onclick: () => { document.querySelector('.modal-back')?.remove(); runPerfTest(this); } }, 'Запустить'), 'Canvas сам подвигается 10 секунд и покажет FPS, видеокарту и экран'),
       h('h3', {}, 'Заметки'),
       row('Хранилище (папка с .md)', vault, 'Можно указать существующее хранилище Obsidian'),
     );
@@ -735,7 +743,7 @@ class App {
       ['Ctrl+Z / Ctrl+Shift+Z', 'Отменить / повторить'], ['Ctrl+C / X / V / D', 'Копировать / вырезать / вставить / дублировать'],
       ['Ctrl+G', 'Сгруппировать в область'], ['Ctrl+L', 'Закрепить'], ['[ / ]', 'Назад / вперёд по слоям'], ['Стрелки (+Shift)', 'Сдвиг на 1 (10) px'],
       ['Shift+1 / Shift+2 / Shift+0', 'Показать всё / выделенное / 100%'], ['Ctrl+P (в терминале Ctrl+Shift+P)', 'Палитра команд'], ['Ctrl+O / Ctrl+Shift+O', 'Открыть заметку'], ['Ctrl+N / Ctrl+Shift+N', 'Новая заметка'],
-      ['Ctrl+`', 'Новый терминал'], ['Ctrl+\\', 'Боковая панель'], ['M', 'Скрыть / показать миникарту'], ['F1', 'Инструкция'], ['Ctrl+K (в заметке)', 'Ссылка'], ['[[ (в заметке)', 'Ссылка на заметку с автодополнением'],
+      ['Ctrl+`', 'Новый терминал'], ['Ctrl+\\', 'Боковая панель'], ['M', 'Скрыть / показать миникарту'], ['Ctrl+Shift+F', 'Счётчик FPS'], ['F1', 'Инструкция'], ['Ctrl+K (в заметке)', 'Ссылка'], ['[[ (в заметке)', 'Ссылка на заметку с автодополнением'],
       ['Ctrl+Shift+L (в заметке)', 'Чек-лист'], ['# , - , 1. , [] , > (в заметке)', 'Markdown-сокращения'],
     ];
     return h('div', { class: 'keys' }, ...keys.map(([k, d]) => h('div', { class: 'key-row' }, h('kbd', {}, k), h('span', {}, d))));
