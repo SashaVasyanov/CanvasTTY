@@ -426,10 +426,20 @@ export const AGENT_MODES = {
   codex: [['write', 'Правки в папке'], ['read', 'Только чтение'], ['full', 'Полный доступ']],
 };
 
+// group label → [value, label]; aliases always point to the newest model of a family
 export const AGENT_MODELS = {
-  claude: [['opus', 'Opus'], ['sonnet', 'Sonnet'], ['haiku', 'Haiku'], ['claude-fable-5-1', 'Fable 5.1']],
-  codex: [['gpt-5-codex', 'GPT-5 Codex'], ['gpt-5', 'GPT-5'], ['gpt-5-codex-mini', 'GPT-5 Codex mini']],
+  claude: [
+    ['Последняя версия', [['opus', 'Opus (последний)'], ['sonnet', 'Sonnet (последний)'], ['haiku', 'Haiku (последний)']]],
+    ['Fable', [['claude-fable-5-1', 'Fable 5.1'], ['claude-fable-5', 'Fable 5']]],
+    ['Opus', [['claude-opus-5-5', 'Opus 5.5'], ['claude-opus-5', 'Opus 5'], ['claude-opus-4-8', 'Opus 4.8'], ['claude-opus-4-7', 'Opus 4.7'], ['claude-opus-4-6', 'Opus 4.6'], ['claude-opus-4-5-20251101', 'Opus 4.5']]],
+    ['Sonnet', [['claude-sonnet-5-5', 'Sonnet 5.5'], ['claude-sonnet-5', 'Sonnet 5'], ['claude-sonnet-4-6', 'Sonnet 4.6'], ['claude-sonnet-4-5-20250929', 'Sonnet 4.5']]],
+    ['Haiku', [['claude-haiku-5-5', 'Haiku 5.5'], ['claude-haiku-4-5-20251001', 'Haiku 4.5']]],
+  ],
+  codex: [
+    ['Модели', [['gpt-5-codex', 'GPT-5 Codex'], ['gpt-5', 'GPT-5'], ['gpt-5-codex-mini', 'GPT-5 Codex mini']]],
+  ],
 };
+const modelLabel = (kind, v) => { for (const [, items] of AGENT_MODELS[kind] || []) for (const [mv, ml] of items) if (mv === v) return ml; return v; };
 export const AGENT_EFFORTS = {
   claude: [['low', 'Низкий'], ['medium', 'Средний'], ['high', 'Высокий'], ['xhigh', 'Очень высокий'], ['max', 'Максимальный']],
   codex: [['minimal', 'Минимальный'], ['low', 'Низкий'], ['medium', 'Средний'], ['high', 'Высокий'], ['xhigh', 'Очень высокий']],
@@ -495,12 +505,13 @@ class AgentChatInstance {
     const d = (await agentDefaults())[this.kind] || {};
     this.defaults = d;
     const cur = this.node.data.model || '';
-    const models = [...AGENT_MODELS[this.kind] || []];
-    for (const m of d.models || []) if (!models.some(([v]) => v === m)) models.push([m, m]);
-    if (cur && !models.some(([v]) => v === cur)) models.push([cur, cur]);
+    const groups = (AGENT_MODELS[this.kind] || []).map(([g, items]) => [g, [...items]]);
+    const known = new Set(groups.flatMap(([, items]) => items.map(([v]) => v)));
+    const extra = [...(d.models || []), cur].filter((m) => m && !known.has(m) && m !== '__custom');
+    if (extra.length) groups.push(['Другие', [...new Set(extra)].map((m) => [m, m])]);
     this.modelSel.innerHTML = '';
     this.modelSel.append(h('option', { value: '' }, d.model ? `Авто (${d.model})` : 'Авто'));
-    for (const [v, l] of models) this.modelSel.append(h('option', { value: v }, l));
+    for (const [g, items] of groups) this.modelSel.append(h('optgroup', { label: g }, ...items.map(([v, l]) => h('option', { value: v }, l))));
     this.modelSel.append(h('option', { value: '__custom' }, 'Другая…'));
     this.modelSel.value = cur;
     const eff = this.node.data.effort || '';
@@ -513,7 +524,7 @@ class AgentChatInstance {
   renderInfo() {
     const d = this.defaults || {};
     const n = this.node.data;
-    const model = n.actualModel || n.model || d.model;
+    const model = n.actualModel || (n.model ? modelLabel(this.kind, n.model) : d.model && modelLabel(this.kind, d.model));
     const effL = (AGENT_EFFORTS[this.kind] || []).find(([v]) => v === (n.effort || d.effort))?.[1];
     this.modelInfo.textContent = model ? `${model}${effL ? ` · размышл.: ${effL.toLowerCase()}` : ''}` : 'модель из настроек агента';
     this.modelInfo.title = n.actualModel ? 'Модель, которую агент сообщил в последней сессии' : 'Модель из настроек агента или выбранная сверху';
@@ -1075,6 +1086,12 @@ export const NODE_TYPES = {
       paint();
       return { edit: (e) => { if (!e || e.target === title) edit(); }, update: (n) => { cur = n; if (!title.isContentEditable) paint(); } };
     },
+    menu: (n, view) => [
+      { label: 'Ввести название…', icon: 'text', onClick: async () => {
+        const t = await prompt('Название области', n.data.title || 'Область', 'например Фото проекта 1');
+        if (t != null) view.updateNode(n.id, { data: { title: t.trim() || 'Область' } }, { checkpoint: true });
+      } },
+    ],
   },
 
   gallery: {

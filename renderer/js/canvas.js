@@ -429,10 +429,19 @@ export class CanvasView extends Emitter {
   toggleSelect(id) { this.selection.has(id) ? this.selection.delete(id) : this.selection.add(id); this.selectedEdge = null; this.afterSelect(); }
   clearSelection() { if (!this.selection.size && !this.selectedEdge) return; this.selection.clear(); this.selectedEdge = null; this.afterSelect(); }
   afterSelect() {
+    if (this.grabId && (!this.selection.has(this.grabId) || this.selection.size > 1)) this.setGrab(null);
     for (const [id, v] of this.views) v.el.classList.toggle('selected', this.selection.has(id));
     this.renderEdges();
     this.updateOverlay();
     this.emit('selection');
+  }
+  // "grab" mode: after a double-click the whole object (window body, area interior)
+  // works as a handle until it is deselected, Esc is pressed or it is double-clicked again
+  setGrab(id) {
+    if (this.grabId === id) return;
+    if (this.grabId) this.views.get(this.grabId)?.el.classList.remove('grab');
+    this.grabId = id || null;
+    if (id) this.views.get(id)?.el.classList.add('grab');
   }
   selectedNodes() { return this.doc.nodes.filter((n) => this.selection.has(n.id)); }
 
@@ -741,6 +750,13 @@ export class CanvasView extends Emitter {
     }
     if (creating && (!n || n.type === 'frame')) { e.preventDefault(); this.startCreate(e); return; }
 
+    if (n && n.id === this.grabId && !e.target.closest('.node-head button')) {
+      if (e.shiftKey) { this.toggleSelect(n.id); e.preventDefault(); return; }
+      if (!this.selection.has(n.id)) this.select([n.id]);
+      e.preventDefault();
+      if (!n.locked) this.startMove(e);
+      return;
+    }
     if (n) {
       const v = this.views.get(n.id);
       const inHead = !!e.target.closest('.node-head');
@@ -1010,6 +1026,22 @@ export class CanvasView extends Emitter {
     }
     if (this.lod && NODE_TYPES[n.type].chrome === 'window') { this.focusNode(n.id); return; }
     const v = this.views.get(n.id);
+    if (this.tool === 'select') {
+      // second double-click on a grabbed object returns control to its content
+      if (this.grabId === n.id) { this.setGrab(null); if (v.def.chrome !== 'window') v.inst?.edit?.(e); return; }
+      const inHead = !!e.target.closest('.node-head');
+      const typing = e.target.closest('input, textarea, select, button, [contenteditable="true"]');
+      const grabbable = (v.def.chrome === 'window' && !inHead && !typing) || (n.type === 'frame' && !e.target.closest('.frame-title'));
+      if (grabbable) {
+        window.getSelection()?.removeAllRanges();
+        if (document.activeElement && isEditable(document.activeElement)) document.activeElement.blur();
+        this.root.focus({ preventScroll: true });
+        this.select([n.id]);
+        this.setGrab(n.id);
+        if (!this.grabHinted) { this.grabHinted = true; toast('Объект можно перетаскивать за любое место. Двойной клик или Esc — снова работать с содержимым'); }
+        return;
+      }
+    }
     if (e.target.closest('.node-head .head-title') && v.def.rename) { v.def.rename(n, this); return; }
     v.inst?.edit?.(e);
   }
@@ -1103,7 +1135,7 @@ export class CanvasView extends Emitter {
       if (this.selectedEdge) { this.removeEdge(this.selectedEdge); return true; }
       if (this.selection.size) { this.removeNodes([...this.selection]); return true; }
     }
-    if (k === 'escape') { this.clearSelection(); this.setTool('select'); return true; }
+    if (k === 'escape') { if (this.grabId) { this.setGrab(null); return true; } this.clearSelection(); this.setTool('select'); return true; }
     if (k.startsWith('arrow') && this.selection.size) {
       e.preventDefault();
       const step = e.shiftKey ? 10 : 1;

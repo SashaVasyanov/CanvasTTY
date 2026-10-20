@@ -688,3 +688,10 @@ svg.guides line { stroke: #ff5ca8; stroke-width: 1; }
 .cwd-path:hover { background: rgba(var(--fg-rgb), 0.07); color: var(--text); }
 .cwd-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .model-info { flex: 0 1 auto; max-width: 62%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+
+/* grab mode (double-click with the selection tool) */
+.node.window.grab .node-body::after { content: ''; position: absolute; inset: 0; z-index: 60; cursor: move; background: color-mix(in srgb, var(--accent) 7%, transparent); border-radius: 0 0 var(--node-r, 12px) var(--node-r, 12px); }
+.node.grab { cursor: move; }
+.node.grab .node-head { cursor: move; }
+.node-frame.grab .frame-area { cursor: move; background: color-mix(in srgb, var(--fc) 24%, transparent); border-style: dashed; }
+.node.grab.selected { outline: 2px dashed var(--accent); outline-offset: 3px; }
