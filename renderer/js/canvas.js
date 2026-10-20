@@ -438,6 +438,7 @@ export class CanvasView extends Emitter {
     this.doc.nodes = this.doc.nodes.filter((n) => !set.has(n.id));
     this.doc.edges = this.doc.edges.filter((e) => !set.has(e.from) && !set.has(e.to));
     for (const id of ids) this.selection.delete(id);
+    if (this.dragging?.kind === 'connect' && set.has(this.dragging.from)) this.cancelDrag();
     this.renderEdges();
     this.updateOverlay();
     this.emit('selection');
@@ -522,6 +523,7 @@ export class CanvasView extends Emitter {
   }
 
   renderEdges() {
+    if (this.dragging?.kind !== 'connect') this.clearConnectPreview();
     const g = this.edgeGroup;
     g.innerHTML = '';
     this._edgeEls = new Map();
@@ -754,6 +756,8 @@ export class CanvasView extends Emitter {
     r.addEventListener('contextmenu', (e) => this.onContext(e));
     window.addEventListener('pointermove', (e) => this.onPointerMove(e));
     window.addEventListener('pointerup', (e) => this.onPointerUp(e));
+    window.addEventListener('pointercancel', () => this.cancelDrag());
+    window.addEventListener('blur', () => { if (this.dragging?.kind === 'connect') this.cancelDrag(); });
     window.addEventListener('keydown', (e) => { if (e.code === 'Space' && !isEditable(document.activeElement) && !e.repeat) { this.spaceDown = true; r.classList.add('space-pan'); } });
     window.addEventListener('keyup', (e) => { if (e.code === 'Space') { this.spaceDown = false; r.classList.remove('space-pan'); } });
     window.addEventListener('blur', () => { this.spaceDown = false; r.classList.remove('space-pan'); });
@@ -789,6 +793,7 @@ export class CanvasView extends Emitter {
   }
 
   onPointerDown(e) {
+    if (this.dragging) this.cancelDrag();
     if (e.target.closest('.nav-box') || e.target.closest('.sel-toolbar')) return;
     this.root.focus({ preventScroll: true });
     const pan = e.button === 1 || (e.button === 0 && (this.spaceDown || this.tool === 'hand'));
@@ -800,7 +805,7 @@ export class CanvasView extends Emitter {
     if (handle) { e.stopPropagation(); this.startResize(e, handle.dataset.dir); return; }
     // connection dots
     const dot = e.target.closest('.conn-dot');
-    if (dot) { e.stopPropagation(); const n = this.selectedNodes()[0]; if (n) this.startConnect(e, n, dot.dataset.side); return; }
+    if (dot) { e.stopPropagation(); e.preventDefault(); window.getSelection()?.removeAllRanges(); const n = this.selectedNodes()[0]; if (n) this.startConnect(e, n, dot.dataset.side); return; }
 
     // edges
     const edgeEl = e.target.closest('.edge');
@@ -1167,20 +1172,25 @@ export class CanvasView extends Emitter {
 
   startConnect(e, from, side) {
     const fromNode = from;
+    // keep receiving pointerup even if the button is released outside the window
+    try { this.root.setPointerCapture(e.pointerId); } catch {}
     this.dragging = {
       kind: 'connect',
+      from: fromNode.id,
+      cancel: () => this.clearConnectPreview(),
       move: (ev) => {
         const p = this.toWorld(ev.clientX, ev.clientY);
         const target = this.hitNode(document.elementFromPoint(ev.clientX, ev.clientY) || document.body);
         const a = side ? this.anchor(fromNode, side) : this.anchor(fromNode, this.bestSides(fromNode, { x: p.x, y: p.y, w: 1, h: 1 })[0]);
         let b = { x: p.x, y: p.y, dx: 0, dy: 0 };
         if (target && target.id !== fromNode.id) { const [, sb] = this.bestSides(fromNode, target); b = this.anchor(target, sb); }
+        this._previewOn = true;
         this.edgePreview.setAttribute('d', this.curve(a, b).d);
         for (const v of this.views.values()) v.el.classList.toggle('connect-target', !!target && v.id === target.id && target.id !== fromNode.id);
       },
       up: (ev) => {
-        this.edgePreview.setAttribute('d', '');
-        for (const v of this.views.values()) v.el.classList.remove('connect-target');
+        this.clearConnectPreview();
+        if (!this.node(fromNode.id)) return; // the source was deleted meanwhile
         const target = this.hitNode(document.elementFromPoint(ev.clientX, ev.clientY) || document.body);
         if (target && target.id !== fromNode.id) { this.addEdge(fromNode.id, target.id); if (this.tool === 'arrow' && !ev.shiftKey) this.setTool('select'); return; }
         const p = this.toWorld(ev.clientX, ev.clientY);
@@ -1189,6 +1199,25 @@ export class CanvasView extends Emitter {
         this.emit('connectToEmpty', { from: fromNode, world: p, clientX: ev.clientX, clientY: ev.clientY });
       },
     };
+  }
+
+  clearConnectPreview() {
+    if (!this._previewOn) return;
+    this._previewOn = false;
+    this.edgePreview.setAttribute('d', '');
+    for (const v of this.views.values()) v.el.classList.remove('connect-target');
+  }
+  // abandon whatever drag is in progress (lost pointerup, window lost focus, Esc, a new click…)
+  cancelDrag() {
+    const d = this.dragging;
+    if (!d) return;
+    this.dragging = null;
+    this._pendingMove = null;
+    if (this._moveRaf) { cancelAnimationFrame(this._moveRaf); this._moveRaf = 0; }
+    if (d.cancel) d.cancel();
+    else if (d.up) { try { d.up({ clientX: this.lastPointer?.x ?? 0, clientY: this.lastPointer?.y ?? 0, shiftKey: false, altKey: false }); } catch {} }
+    this.clearConnectPreview();
+    this.updateOverlay();
   }
 
   onPointerMove(e) {
@@ -1330,7 +1359,7 @@ export class CanvasView extends Emitter {
       if (this.selectedEdge) { this.removeEdge(this.selectedEdge); return true; }
       if (this.selection.size) { this.removeNodes([...this.selection]); return true; }
     }
-    if (k === 'escape') { if (this.grabId) { this.setGrab(null); return true; } this.clearSelection(); this.setTool('select'); return true; }
+    if (k === 'escape') { if (this.dragging) { this.cancelDrag(); return true; } if (this.grabId) { this.setGrab(null); return true; } this.clearSelection(); this.setTool('select'); return true; }
     if (k.startsWith('arrow') && this.selection.size) {
       e.preventDefault();
       const step = e.shiftKey ? 10 : 1;

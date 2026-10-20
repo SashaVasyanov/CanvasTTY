@@ -39,11 +39,35 @@ function toolSummary(name, input) {
   return input.command || input.file_path || input.path || input.pattern || input.url || input.query || input.description || input.prompt || JSON.stringify(input).slice(0, 200);
 }
 
+// The agents get a small MCP server with the user's previous chats (search_chats / read_chat /
+// list_chats), so "find it in my old chats" works from a chat window.
+const HISTORY_TOOLS = ['mcp__canvastty__search_chats', 'mcp__canvastty__read_chat', 'mcp__canvastty__list_chats'];
+const HISTORY_HINT = 'You run inside CanvasTTY. Tools mcp__canvastty__search_chats, read_chat and list_chats search and read the user\'s previous conversations (CanvasTTY chats and Claude Code / Codex sessions on this computer). Use them whenever the user refers to an earlier chat.';
+
 class AgentChatManager {
-  constructor({ send, ptys }) {
+  constructor({ send, ptys, userData }) {
     this.send = send;
     this.ptys = ptys;
+    this.userData = userData;
     this.runs = new Map();
+  }
+
+  historyServer() {
+    const env = { ELECTRON_RUN_AS_NODE: '1', CANVASTTY_USERDATA: this.userData || '', HOME: os.homedir(), USERPROFILE: os.homedir() };
+    if (process.env.CLAUDE_CONFIG_DIR) env.CLAUDE_CONFIG_DIR = process.env.CLAUDE_CONFIG_DIR;
+    if (process.env.CODEX_HOME) env.CODEX_HOME = process.env.CODEX_HOME;
+    return { command: process.execPath, args: [path.join(__dirname, 'mcp-history.js')], env };
+  }
+  claudeMcpConfig() {
+    if (!this.userData) return null;
+    const file = path.join(this.userData, 'mcp-canvastty.json');
+    try { fs.writeFileSync(file, JSON.stringify({ mcpServers: { canvastty: { type: 'stdio', ...this.historyServer() } } }, null, 1)); return file; } catch { return null; }
+  }
+  codexMcpArgs() {
+    const srv = this.historyServer();
+    const lit = (v) => `'${String(v).replace(/'/g, '')}'`; // TOML literal string
+    const env = Object.entries(srv.env).map(([k, v]) => `${k}=${lit(v)}`).join(',');
+    return ['-c', `mcp_servers.canvastty.command=${lit(srv.command)}`, '-c', `mcp_servers.canvastty.args=[${srv.args.map(lit).join(',')}]`, '-c', `mcp_servers.canvastty.env={${env}}`];
   }
 
   abort(reqId) {
@@ -83,6 +107,8 @@ class AgentChatManager {
     if (model) args.push('--model', model);
     if (opts.effort && !opts.noEffort) args.push('--effort', opts.effort);
     if (sessionId) args.push('--resume', sessionId);
+    const mcpFile = !opts.noMcp && this.claudeMcpConfig();
+    if (mcpFile) args.push('--mcp-config', mcpFile, '--allowedTools', HISTORY_TOOLS.join(','), '--append-system-prompt', HISTORY_HINT);
     const proc = spawnCli(resolved, args, { cwd: safeCwd(cwd), env: this.env(), stdio: ['pipe', 'pipe', 'pipe'] });
     const run = { proc, aborted: false };
     this.runs.set(reqId, run);
@@ -137,6 +163,7 @@ class AgentChatManager {
         emit('notice', { text: 'Эта версия Claude Code не поддерживает выбор уровня размышления — используется уровень по умолчанию. Обновите: npm i -g @anthropic-ai/claude-code' });
         this.runClaude({ ...opts, noEffort: true }, resolved, emit, partial); return;
       }
+      if (!gotOutput && mcpFile && /mcp-config|allowedTools|append-system-prompt|mcp/i.test(stderr) && /unknown|invalid|error/i.test(stderr)) { this.runClaude({ ...opts, noMcp: true }, resolved, emit, partial); return; }
       if (!gotOutput && partial && /include-partial-messages|unknown option/i.test(stderr)) { this.runClaude(opts, resolved, emit, false); return; }
       if (!finished) {
         if (code !== 0) emit('error', { message: (stderr.trim() || `Процесс завершился с кодом ${code}`).slice(-1500) });
@@ -155,6 +182,7 @@ class AgentChatManager {
     else args.push('-s', mode === 'read' ? 'read-only' : 'workspace-write');
     if (model) args.push('-m', model);
     if (opts.effort) args.push('-c', `model_reasoning_effort=${opts.effort}`);
+    if (!opts.noMcp && this.userData) args.push(...this.codexMcpArgs());
     if (sessionId && withResume) args.push('resume', sessionId);
     const proc = spawnCli(resolved, args, { cwd: safeCwd(cwd), env: this.env(), stdio: ['pipe', 'pipe', 'pipe'] });
     const run = { proc, aborted: false };
@@ -215,6 +243,7 @@ class AgentChatManager {
       this.runs.delete(reqId);
       if (buf.trim().startsWith('{')) { try { handle(JSON.parse(buf.trim())); } catch {} }
       if (run.aborted) { emit('done', { sessionId: sid, aborted: true }); return; }
+      if (!gotOutput && code !== 0 && !opts.noMcp && /mcp_servers|mcp server|invalid.*config|config.*invalid/i.test(stderr)) { this.runCodex({ ...opts, noMcp: true }, resolved, emit, withResume); return; }
       if (!gotOutput && withResume && sessionId && code !== 0) {
         emit('notice', { text: 'Не удалось продолжить прошлую сессию Codex — начинаю новую.' });
         this.runCodex(opts, resolved, emit, false);

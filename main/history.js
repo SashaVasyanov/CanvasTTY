@@ -242,4 +242,10 @@ async function readSession(kind, file) {
   return kind === 'codex' ? readCodex(abs) : readClaude(abs);
 }
 
-module.exports = { HistoryStore, listSessions, readSession };
+// newest session files of an agent (for full-text search)
+async function sessionFiles(kind, limit = 400) {
+  const files = kind === 'codex' ? await walk(codexRoot(), (n) => /^rollout-.*\.jsonl$/.test(n)) : await walk(claudeRoot(), (n) => n.endsWith('.jsonl'));
+  return newestFiles(files, limit);
+}
+
+module.exports = { HistoryStore, listSessions, readSession, sessionFiles };

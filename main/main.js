@@ -48,7 +48,7 @@ let usageLog = {};
 const send = (channel, payload) => { if (win && !win.isDestroyed()) win.webContents.send(channel, payload); };
 const ptys = new PtyManager({ userData: app.getPath('userData'), send });
 const vault = new Vault({ send });
-const agentChat = new AgentChatManager({ send, ptys });
+const agentChat = new AgentChatManager({ send, ptys, userData: app.getPath('userData') });
 const chat = new ChatManager({
   send,
   onUsage: (provider, u) => {
