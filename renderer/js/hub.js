@@ -288,9 +288,17 @@ export function mountHub({ node, view, body }) {
     if (mood !== pet.dataset.mood) { pet.dataset.mood = mood; pet.querySelector('.pet-svg')?.remove(); pet.insertAdjacentHTML('afterbegin', petSvg(mood)); }
   };
 
+  // StandBy-style clock: chunky rounded digits in overlapping shades of blue + date
+  let clockKey = '';
   const renderClock = () => {
     const d = new Date();
-    clock.innerHTML = `<div class="clock-time">${String(d.getHours()).padStart(2, '0')}<span class="colon">:</span>${String(d.getMinutes()).padStart(2, '0')}</div><div class="clock-date">${d.toLocaleDateString('ru-RU', { weekday: 'short', day: 'numeric', month: 'short' })}</div>`;
+    const hh = String(d.getHours()).padStart(2, '0'), mm = String(d.getMinutes()).padStart(2, '0');
+    const date = d.toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long' });
+    const key = hh + mm + date;
+    if (key === clockKey) return;
+    clockKey = key;
+    const dg = (ch, i) => `<span class="sb-d sb-d${i}">${ch}</span>`;
+    clock.innerHTML = `<div class="sb-time" aria-label="${hh}:${mm}">${dg(hh[0], 1)}${dg(hh[1], 2)}<span class="sb-colon"><i></i><i></i></span>${dg(mm[0], 3)}${dg(mm[1], 4)}</div><div class="sb-date">${date}</div>`;
   };
 
   const renderDock = () => {

@@ -8,6 +8,7 @@ const { Vault } = require('./vault');
 const { ChatManager, PROVIDERS } = require('./chat');
 const { getLimits } = require('./limits');
 const { AgentChatManager, agentDefaults } = require('./agentchat');
+const { HistoryStore, listSessions, readSession } = require('./history');
 
 app.setName('CanvasTTY');
 // rendering performance: GPU rasterization even on blocklisted drivers
@@ -175,6 +176,14 @@ app.whenReady().then(() => {
   ipcMain.handle('agentchat:run', (e, opts) => { agentChat.run(opts); return true; });
   ipcMain.handle('agentchat:abort', (e, reqId) => agentChat.abort(reqId));
   ipcMain.handle('agentchat:defaults', () => agentDefaults());
+  // ---------- chat history ----------
+  const history = new HistoryStore(path.join(userData, 'chats'));
+  ipcMain.handle('history:list', (e, q) => history.list(q || {}));
+  ipcMain.handle('history:get', (e, id) => history.get(id));
+  ipcMain.handle('history:save', (e, rec) => history.save(rec));
+  ipcMain.handle('history:remove', (e, id) => history.remove(id));
+  ipcMain.handle('sessions:list', (e, kind, opts) => listSessions(kind, opts || {}).catch(() => []));
+  ipcMain.handle('sessions:read', (e, kind, file) => readSession(kind, file));
   ipcMain.handle('win:setBg', (e, color) => { try { win.setBackgroundColor(color); } catch {} });
 
   // ---------- limits ----------

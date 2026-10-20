@@ -103,6 +103,28 @@ export const mockNative = {
     abort: async () => {}, defaults: async () => ({ claude: { model: 'sonnet' }, codex: { model: 'gpt-5-codex', effort: 'medium', models: [] } }), onEvent: on('agentchat:event'),
   },
   setBg: async () => {},
+  history: (() => {
+    const db = new Map();
+    const now = Date.now();
+    db.set('demo1', { id: 'demo1', kind: 'agentchat', agent: 'claude', title: 'Разобрать структуру проекта', model: 'claude-opus-5-5', cwd: '/home/user', count: 2, created: now - 3600e3, updated: now - 3600e3, messages: [{ role: 'user', content: 'Разбери структуру проекта' }, { role: 'assistant', content: 'Проект состоит из main/ и renderer/.', parts: [{ type: 'text', text: 'Проект состоит из **main/** и **renderer/**.' }] }] });
+    db.set('demo2', { id: 'demo2', kind: 'agentchat', agent: 'claude', title: 'Починить сборку под Windows', model: 'claude-sonnet-5-5', cwd: '/home/user/app', count: 4, created: now - 30 * 3600e3, updated: now - 30 * 3600e3, messages: [{ role: 'user', content: 'Почини сборку' }, { role: 'assistant', content: 'Готово', parts: [{ type: 'text', text: 'Готово' }] }] });
+    db.set('demo3', { id: 'demo3', kind: 'chat', agent: 'anthropic', provider: 'anthropic', title: 'Идеи для названия', model: 'claude-sonnet-5-5', count: 2, created: now - 5 * 86400e3, updated: now - 5 * 86400e3, messages: [{ role: 'user', content: 'Придумай название' }, { role: 'assistant', content: 'CanvasTTY' }] });
+    const meta = ({ messages, ...r }) => ({ ...r, count: messages.length });
+    return {
+      list: async ({ kind, agent } = {}) => [...db.values()].filter((r) => (!kind || r.kind === kind) && (!agent || r.agent === agent)).sort((a, b) => b.updated - a.updated).map(meta),
+      get: async (id) => db.get(id) || null,
+      save: async (rec) => { const prev = db.get(rec.id); db.set(rec.id, { ...rec, title: rec.title || rec.messages.find((m) => m.role === 'user')?.content.slice(0, 80) || 'Чат', created: prev?.created || Date.now(), updated: Date.now() }); return true; },
+      remove: async (id) => db.delete(id),
+    };
+  })(),
+  sessions: {
+    list: async (kind) => [
+      { source: kind, id: 's1', sessionId: 'a1b2c3d4-1111', file: '/demo/s1.jsonl', cwd: '/home/user', here: true, title: kind === 'codex' ? 'Почини тесты' : 'Добавь README и настрой сборку', created: Date.now() - 7200e3, updated: Date.now() - 7200e3 },
+      { source: kind, id: 's2', sessionId: 'e5f6a7b8-2222', file: '/demo/s2.jsonl', cwd: '/home/user/other', here: false, title: 'Сессия из терминала в другой папке', created: Date.now() - 50 * 3600e3, updated: Date.now() - 50 * 3600e3 },
+    ],
+    read: async (kind, file) => ({ cwd: '/home/user', sessionId: 'a1b2c3d4-1111', model: kind === 'codex' ? 'gpt-5-codex' : 'claude-opus-5-5', messages: [{ role: 'user', content: 'Добавь README и настрой сборку' }, { role: 'assistant', content: 'Готово! README добавлен.', parts: [{ type: 'tool', id: 't1', name: 'Bash', input: 'ls -la', output: 'README.md\nsrc', status: 'ok' }, { type: 'text', text: 'Готово! README добавлен.' }] }] }),
+  },
+
   perf: { info: async () => ({ gpu: { gpu_compositing: 'enabled', rasterization: 'enabled' }, gpuInfo: { gpuDevice: [{ active: true, deviceString: 'Демо-видеокарта' }] }, displays: [{ size: { width: 1920, height: 1080 }, scale: 1, hz: 60 }] }), save: async () => '' },
   limits: {
     get: async () => ({

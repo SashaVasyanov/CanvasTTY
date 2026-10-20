@@ -5,6 +5,7 @@ import { renderChatMarkdown } from './md.js';
 import { RichEditor } from './editor.js';
 import { vaultIndex } from './vaultIndex.js';
 import { mountHub } from './hub.js';
+import { ChatHistory, saveConversation } from './chathistory.js';
 
 // ---------------- routers for main-process events ----------------
 const ptyRoutes = new Map();
@@ -263,6 +264,8 @@ class ChatInstance {
     this.foot = h('div', { class: 'chat-foot' }, this.input, this.sendBtn);
     this.usage = h('div', { class: 'chat-usage' });
     this.root.append(this.bar, this.list, this.ctxRow, this.foot, this.usage);
+    this.hist = new ChatHistory(this);
+    this.bar.prepend(this.hist.button);
     body.append(this.root);
     this.fillProviders();
     this.providerSel.addEventListener('change', () => { const p = this.providerSel.value; this.view.setData(node.id, { provider: p, model: '' }); this.modelInput.value = ''; this.modelInput.placeholder = this.providers?.[p]?.model || 'модель'; this.view.syncHead(this.view.node(node.id)); });
@@ -396,6 +399,7 @@ class ChatInstance {
     this.streaming = null;
     this.sendBtn.innerHTML = icon('send', 16); this.sendBtn.classList.remove('stop');
     this.view.setData(this.node.id, { messages: [...all] });
+    saveConversation(this);
     this.renderAll();
     const tot = all.reduce((t, m) => t + (m.usage ? m.usage.input + m.usage.output : 0), 0);
     this.usage.textContent = tot ? `${tot.toLocaleString('ru-RU')} токенов в этом чате` : '';
@@ -404,6 +408,18 @@ class ChatInstance {
   }
 
   stop() { if (this.streaming) native.chat.abort(this.streaming); }
+  isBusy() { return !!this.streaming; }
+  loadConversation({ convId = null, messages = [], title = '', provider, model }) {
+    const patch = { convId, messages, title: title || 'Новый чат' };
+    if (provider) { patch.provider = provider; patch.model = model || ''; }
+    this.view.setData(this.node.id, patch);
+    this.node = this.view.node(this.node.id) || this.node;
+    this.providerSel.value = this.node.data.provider || 'openai';
+    this.modelInput.value = this.node.data.model || '';
+    this.usage.textContent = '';
+    this.renderAll();
+    this.view.syncHead(this.node);
+  }
 
   statusInfo() {
     if (this.streaming) return { label: 'Отвечает…', kind: 'busy' };
@@ -459,7 +475,7 @@ class AgentChatInstance {
     this.effortSel = h('select', { class: 'select sm no-drag', title: 'Уровень размышления (reasoning effort)' });
     this.cwdBtn = h('button', { class: 'cwd-path no-drag', title: 'Рабочая папка агента — нажмите, чтобы сменить', onclick: () => this.pickCwd() });
     this.modelInfo = h('span', { class: 'model-info' });
-    this.newBtn = h('button', { class: 'icon-btn sm', title: 'Новая сессия (агент забудет переписку)', html: icon('plus', 14), onclick: () => this.newSession() });
+    this.newBtn = h('button', { class: 'icon-btn sm', title: 'Новый чат (текущий останется в истории)', html: icon('plus', 14), onclick: () => this.newSession() });
     const field = (label, ctrl) => h('label', { class: 'bar-field' }, h('span', { class: 'bar-label' }, label), ctrl);
     this.bar = h('div', { class: 'chat-bar agent-bar' },
       field('Модель', this.modelSel), field('Размышление', this.effortSel), field('Доступ', this.modeSel), this.newBtn);
@@ -470,6 +486,8 @@ class AgentChatInstance {
     this.sendBtn = h('button', { class: 'chat-send', title: 'Отправить', html: icon('send', 16), onclick: () => (this.running ? this.stop() : this.send()) });
     this.usage = h('div', { class: 'chat-usage' });
     this.root.append(this.bar, this.infoBar, this.list, this.ctxRow, h('div', { class: 'chat-foot' }, this.input, this.sendBtn), this.usage);
+    this.hist = new ChatHistory(this);
+    this.bar.prepend(this.hist.button);
     body.append(this.root);
     for (const [v, l] of AGENT_MODES[this.kind] || []) this.modeSel.append(h('option', { value: v }, l));
     this.fillModelOptions();
@@ -537,7 +555,16 @@ class AgentChatInstance {
     this.cwdBtn.title = `Рабочая папка агента:\n${c}\n\nНажмите, чтобы сменить`;
   }
   async pickCwd() { const p = await native.dialog.folder('Рабочая папка агента'); if (p) { this.view.setData(this.node.id, { cwd: p }); this.renderCwd(); } }
-  newSession() { this.view.setData(this.node.id, { sessionId: null, messages: [], ctxHash: null }); this.renderAll(); toast('Начата новая сессия'); }
+  newSession() { if (this.isBusy()) return; this.hist.newChat(); toast('Новый чат: прошлый сохранён в истории'); }
+  isBusy() { return !!this.running; }
+  loadConversation({ convId = null, messages = [], title = '', sessionId = null, cwd, model, actualModel }) {
+    const patch = { convId, messages, title: title || '', sessionId, ctxHash: null, actualModel: actualModel || model || null };
+    if (cwd) patch.cwd = cwd;
+    this.view.setData(this.node.id, patch);
+    this.node = this.view.node(this.node.id) || this.node;
+    this.usage.textContent = sessionId ? `сессия ${String(sessionId).slice(0, 8)}` : '';
+    this.renderCwd(); this.renderInfo(); this.renderAll(); this.syncHead();
+  }
   renderCtx() { renderCtxRow(this.ctxRow, this.view, this.node.id); }
 
   renderAll() {
@@ -654,6 +681,7 @@ class AgentChatInstance {
     if (ev.cost) bits.push(`$${ev.cost.toFixed(4)}`);
     if (this.node.data.sessionId) bits.push(`сессия ${String(this.node.data.sessionId).slice(0, 8)}`);
     this.usage.textContent = bits.join(' · ');
+    saveConversation(this);
     this.renderAll();
     this.syncHead();
     bus.emit('limits:refresh');
@@ -938,7 +966,8 @@ export const NODE_TYPES = {
         const p = await native.vault.create('Чаты', n.data.title || 'Чат', md);
         await vaultIndex.refresh(); toast(`Сохранено: ${p}`);
       } },
-      { label: 'Очистить историю', icon: 'trash', onClick: () => { view.setData(n.id, { messages: [] }); inst?.renderAll(); } },
+      { label: 'История чатов', icon: 'sidebar', onClick: () => inst?.hist.open() },
+      { label: 'Новый чат', icon: 'plus', onClick: () => inst?.hist.newChat() },
       { label: 'Переименовать', icon: 'pen', onClick: () => NODE_TYPES.chat.rename(n, view) },
     ],
   },
@@ -952,7 +981,8 @@ export const NODE_TYPES = {
     mount: (ctx) => new AgentChatInstance(ctx),
     rename: async (n, view) => { const t = await prompt('Название окна', NODE_TYPES.agentchat.title(n)); if (t != null) view.updateNode(n.id, { data: { title: t } }, { checkpoint: true }); },
     menu: (n, view, inst) => [
-      { label: 'Новая сессия', icon: 'plus', onClick: () => inst?.newSession() },
+      { label: 'История чатов', icon: 'sidebar', onClick: () => inst?.hist.open() },
+      { label: 'Новый чат', icon: 'plus', onClick: () => inst?.newSession() },
       { label: 'Сменить рабочую папку…', icon: 'folder', onClick: () => inst?.pickCwd() },
       { label: 'Открыть эту сессию в терминале', icon: 'terminal', onClick: () => {
         const a = state.agent(n.data.agentId);
