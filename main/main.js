@@ -10,6 +10,7 @@ const { getLimits } = require('./limits');
 const { AgentChatManager, agentDefaults } = require('./agentchat');
 const { HistoryStore, listSessions, readSession } = require('./history');
 const { SyncManager } = require('./sync');
+const codexPets = require('./codexpets');
 
 const isMac = process.platform === 'darwin';
 
@@ -149,6 +150,13 @@ app.whenReady().then(() => {
     const u = new URL(req.url);
     let p = decodeURIComponent(u.pathname);
     if (p === '/' || !p) p = '/index.html';
+    // Codex pets are read straight from ~/.codex/pets
+    if (p.startsWith('/__codexpets/')) {
+      const root = codexPets.petsDir();
+      const file = path.join(root, path.normalize(p.slice('/__codexpets/'.length)));
+      if (!file.startsWith(root + path.sep)) return new Response('forbidden', { status: 403 });
+      return net.fetch(pathToFileURL(file).toString());
+    }
     const file = path.join(RENDERER, path.normalize(p));
     if (!file.startsWith(RENDERER)) return new Response('forbidden', { status: 403 });
     return net.fetch(pathToFileURL(file).toString());
@@ -218,6 +226,10 @@ app.whenReady().then(() => {
   ipcMain.handle('history:remove', (e, id) => history.remove(id));
   ipcMain.handle('sessions:list', (e, kind, opts) => listSessions(kind, opts || {}).catch(() => []));
   ipcMain.handle('sessions:read', (e, kind, file) => readSession(kind, file));
+  ipcMain.handle('codexPets:installed', () => codexPets.installed());
+  ipcMain.handle('codexPets:catalog', (e, q) => codexPets.catalog(q || {}));
+  ipcMain.handle('codexPets:install', (e, pet) => codexPets.install(pet));
+  ipcMain.handle('codexPets:remove', (e, id) => codexPets.remove(id));
   ipcMain.handle('win:setBg', (e, color) => { try { win.setBackgroundColor(color); } catch {} });
 
   // ---------- limits ----------

@@ -1,6 +1,7 @@
 // The "agents hub" widget from the reference screenshot: limits, statuses, clock, pet, launch dock.
-import { h, icon, badge, bus, relTime, Emitter, esc, modal, toast, menu } from './util.js';
+import { h, icon, badge, bus, relTime, Emitter, esc, modal, toast, menu, confirmBox } from './util.js';
 import { state, native } from './state.js';
+import { SpritePet, codexPets, codexPetFor, isCodexKind, loadCodexPets, PET_ROWS } from './companion.js';
 
 // ---------------- clock colours ----------------
 // d: the four digits (they overlap: screen blend on dark backgrounds, multiply on light ones)
@@ -198,13 +199,22 @@ export const PETS = {
       none: ['Позовём агента? Кнопки в доке'],
     } },
 };
-export function currentPet() { return PETS[state.settings.petKind] || PETS.blondie; }
+const CODEX_BG = 'linear-gradient(160deg, #eef1ff, #e2f3ff)';
+const CODEX_LINES = { busy: ['Агенты работают — я слежу!', 'Идёт работа…'], idle: ['Агенты ждут задачу', 'Дай им работу!'], none: ['Позовём агента? Кнопки в доке'] };
+export function currentPet() {
+  const cp = codexPetFor(state.settings.petKind);
+  if (cp) return { name: cp.displayName, bg: CODEX_BG, codex: cp, lines: CODEX_LINES };
+  return PETS[state.settings.petKind] || PETS.blondie;
+}
 function petImg(src, mood, own) {
   // single-image pets get their mood from animation + overlay
   const fx = own ? '' : '<span class="pet-fx"></span>';
   return `<div class="pet-svg pet-wrap ${mood}${own ? ' own' : ''}"><img src="${src}" alt="" draggable="false">${fx}</div>`;
 }
 export function petMarkup(key, mood = 'idle') {
+  const cp = codexPetFor(key);
+  if (cp) return `<div class="pet-svg pet-wrap ${mood} cpet-static" style="background-image:url('${cp.url}');background-size:800% ${cp.rows * 100}%"></div>`;
+  if (isCodexKind(key)) key = 'blondie';
   const p = PETS[key] || PETS.blondie;
   if (p === PETS.custom) {
     const s = state.settings;
@@ -235,8 +245,39 @@ function pickFile() {
 
 export function openPetPicker() {
   const grid = h('div', { class: 'pet-grid' });
+  const codexBox = h('div', { class: 'pet-codex' });
   const customBox = h('div', { class: 'pet-custom' });
-  const select = (k) => { state.setSetting('petKind', k); bus.emit('pet:changed'); render(); };
+  let sprites = [];
+  const select = (k) => { if (!isCodexKind(k) || !state.settings.pet) state.setSetting('pet', true); state.setSetting('petKind', k); bus.emit('pet:changed'); render(); };
+  const renderCodex = () => {
+    for (const sp of sprites) sp.destroy();
+    sprites = [];
+    const cur = state.settings.petKind || '';
+    const cgrid = h('div', { class: 'pet-grid' });
+    for (const p of codexPets.list) {
+      const sp = new SpritePet({ url: p.url, rows: p.rows, size: 78 });
+      sprites.push(sp);
+      const del = h('span', { class: 'pet-del', title: 'Удалить питомца (из CanvasTTY и Codex)', html: icon('x', 12), onclick: async (e) => {
+        e.stopPropagation();
+        if (!(await confirmBox('Удалить питомца?', `«${p.displayName}» будет удалён из ~/.codex/pets и пропадёт и из приложения Codex.`))) return;
+        await native.codexPets.remove(p.id);
+        if (state.settings.petKind === `codex:${p.id}`) state.setSetting('petKind', 'blondie');
+        await loadCodexPets(); bus.emit('pet:changed'); renderCodex();
+      } });
+      const card = h('button', { class: `pet-card${cur === `codex:${p.id}` ? ' on' : ''}`, title: p.description || p.displayName, onclick: () => { select(`codex:${p.id}`); renderCodex(); } },
+        h('div', { class: 'pet-prev', style: { background: CODEX_BG } }, sp.el), h('div', { class: 'pet-name' }, p.displayName), del);
+      card.addEventListener('mouseenter', () => sp.play('waving', { once: true, then: 'idle' }));
+      cgrid.append(card);
+    }
+    codexBox.replaceChildren(
+      h('div', { class: 'pet-custom-head' }, h('b', {}, 'Питомцы Codex'),
+        h('span', { class: 'muted small' }, 'Анимированные питомцы из приложения Codex: показывают, что делают агенты, бегают, когда их тащишь, машут и прыгают. Хранятся в ~/.codex/pets — общие с Codex.')),
+      codexPets.list.length ? cgrid : h('div', { class: 'muted small pet-codex-empty' }, 'Пока нет установленных — выберите в каталоге: там больше 3500 питомцев.'),
+      h('div', { class: 'row' },
+        h('button', { class: 'btn primary', onclick: () => openPetCatalog(() => { loadCodexPets().then(renderCodex); }) }, h('span', { html: icon('globe', 14) }), ' Каталог codex-pets.net'),
+        h('button', { class: 'btn', onclick: async () => { await loadCodexPets(); renderCodex(); } }, 'Обновить список')),
+    );
+  };
   const render = () => {
     const cur = state.settings.petKind || 'blondie';
     grid.innerHTML = '';
@@ -270,7 +311,79 @@ export function openPetPicker() {
     );
   };
   render();
-  modal({ title: 'Питомец', body: h('div', {}, grid, customBox), width: 'min(760px, 94vw)', className: 'pet-modal' });
+  renderCodex();
+  if (!codexPets.loaded) loadCodexPets().then(renderCodex);
+  modal({ title: 'Питомец', body: h('div', {}, codexBox, h('div', { class: 'pet-custom-head' }, h('b', {}, 'Встроенные')), grid, customBox), width: 'min(820px, 94vw)', className: 'pet-modal', onClose: () => sprites.forEach((sp) => sp.destroy()) });
+}
+
+// ---------------- codex-pets.net catalog ----------------
+const ipcMsg = (e) => String(e?.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+export function openPetCatalog(onInstalled) {
+  let page = 1, sort = 'popular', q = '', sprites = [], busy = false;
+  const search = h('input', { class: 'input', placeholder: 'Поиск: кот, robot, anime…' });
+  const sortSel = h('select', { class: 'select' }, ...[['popular', 'Популярные'], ['new', 'Новые'], ['views', 'Просматриваемые'], ['discussed', 'Обсуждаемые'], ['random', 'Случайные']].map(([v, l]) => h('option', { value: v }, l)));
+  sortSel.value = sort;
+  const grid = h('div', { class: 'cat-grid' });
+  const pager = h('div', { class: 'cat-pager' });
+  const status = h('div', { class: 'muted small' });
+  const load = async () => {
+    if (busy) return; busy = true;
+    status.textContent = 'Загрузка…';
+    try {
+      const data = await native.codexPets.catalog({ page, pageSize: 24, sort, q });
+      for (const sp of sprites) sp.destroy();
+      sprites = [];
+      grid.replaceChildren(...data.pets.map((p) => card(p)));
+      status.textContent = `${data.total.toLocaleString('ru-RU')} питомцев · страница ${data.page} из ${data.totalPages}`;
+      pager.replaceChildren(
+        h('button', { class: 'btn sm', disabled: data.page <= 1, onclick: () => { page--; load(); } }, '← Назад'),
+        h('button', { class: 'btn sm', disabled: data.page >= data.totalPages, onclick: () => { page++; load(); } }, 'Дальше →'));
+      grid.scrollTop = 0;
+    } catch (e) {
+      status.textContent = `Не удалось загрузить каталог: ${ipcMsg(e)}. Проверьте интернет.`;
+    }
+    busy = false;
+  };
+  const card = (p) => {
+    const sp = new SpritePet({ url: p.spritesheetUrl, rows: p.rows, size: 96, still: true });
+    sprites.push(sp);
+    const btn = h('button', { class: `btn sm ${p.installed ? '' : 'primary'}` }, p.installed ? 'Выбрать' : 'Установить');
+    btn.onclick = async () => {
+      btn.disabled = true; btn.textContent = p.installed ? '…' : 'Загрузка…';
+      try {
+        const inst = p.installed ? { id: p.id } : await native.codexPets.install(p);
+        await loadCodexPets();
+        state.setSetting('pet', true);
+        state.setSetting('petKind', `codex:${inst.id}`);
+        bus.emit('pet:changed');
+        p.installed = true; btn.textContent = 'Выбран ✓'; btn.classList.remove('primary');
+        toast(`«${p.displayName}» теперь ваш питомец`);
+        onInstalled?.();
+      } catch (e) { btn.disabled = false; btn.textContent = 'Установить'; toast('Не удалось установить: ' + ipcMsg(e), 'error'); }
+    };
+    const el = h('div', { class: 'cat-card', title: p.description },
+      h('div', { class: 'cat-prev' }, sp.el, p.rows === 11 ? h('span', { class: 'cat-badge', title: 'Смотрит на курсор (16 направлений)' }, '👀') : null),
+      h('div', { class: 'cat-name' }, p.displayName),
+      h('div', { class: 'cat-owner' }, p.owner ? `by ${p.owner}` : ''),
+      btn);
+    // previews come alive on hover, like on codex-pets.net
+    const states = ['idle', 'waving', 'running', 'jumping', 'review'];
+    let si = 0;
+    el.addEventListener('mouseenter', () => { sp.setStill(false); sp.play(states[si++ % states.length]); });
+    el.addEventListener('mouseleave', () => { sp.play('idle'); sp.setStill(true); });
+    return el;
+  };
+  let t;
+  search.addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => { q = search.value.trim(); page = 1; load(); }, 350); });
+  search.addEventListener('keydown', (e) => e.stopPropagation());
+  sortSel.onchange = () => { sort = sortSel.value; page = 1; load(); };
+  const body = h('div', { class: 'cat-wrap' },
+    h('div', { class: 'cat-bar' }, search, sortSel),
+    status, grid, pager,
+    h('div', { class: 'muted small' }, 'Питомцы — работы сообщества с ', h('a', { href: 'https://codex-pets.net/', target: '_blank' }, 'codex-pets.net'), '. Устанавливаются в ~/.codex/pets и сразу появляются в приложении Codex.'));
+  modal({ title: 'Каталог Codex Pets', body, width: 'min(1000px, 96vw)', className: 'cat-modal', onClose: () => sprites.forEach((sp) => sp.destroy()) });
+  load();
+  setTimeout(() => search.focus(), 50);
 }
 
 // ---------------- hub widget ----------------
@@ -300,6 +413,9 @@ export function mountHub({ node, view, body }) {
   };
   limitsBox.addEventListener('click', (e) => { e.stopPropagation(); bus.emit('showLimits', limitsBox); });
 
+  let tileSprite = null, agentState = 'idle';
+  const offAS = bus.on('agentstate', (info) => { agentState = info.state; if (tileSprite && !tileSprite.once) tileSprite.play(info.state); else if (tileSprite) tileSprite.then = info.state; });
+  const offCP = bus.on('codexPets:changed', () => { statusSig = ''; renderStatus(); });
   const agentNodes = () => view.doc.nodes.filter((n) => ['terminal', 'chat', 'agentchat'].includes(n.type));
   let statusSig = '';
   const renderStatus = () => {
@@ -309,7 +425,7 @@ export function mountHub({ node, view, body }) {
     statusSig = sig;
     statusBox.innerHTML = '';
     if (!nodes.length) statusBox.append(h('div', { class: 'hs-empty' }, 'Нет агентов на этом canvas'));
-    const order = { busy: 0, idle: 1, na: 2, off: 3 };
+    const order = { wait: 0, busy: 1, na: 2, idle: 3, off: 4 };
     const list = nodes.map((n) => { const v = view.views.get(n.id); const def = v?.def; return { n, def, st: def?.status?.(n, v?.inst) || { label: '', kind: 'off' } }; })
       .filter((x) => x.def)
       .sort((a, b) => (order[a.st.kind] ?? 9) - (order[b.st.kind] ?? 9));
@@ -320,6 +436,19 @@ export function mountHub({ node, view, body }) {
     }
     if (list.length > 3) statusBox.append(h('div', { class: 'hs-more' }, `+ ещё ${list.length - 3}`));
     const busy = list.filter((x) => x.st.kind === 'busy').length;
+    const cp = codexPetFor(state.settings.petKind);
+    if (cp) {
+      if (!tileSprite || tileSprite.url !== cp.url) {
+        tileSprite?.destroy(); pet.querySelector('.pet-svg')?.remove();
+        const size = Math.round(Math.max(64, Math.min(150, (pet.clientHeight || 110) * 0.92 * 192 / 208)));
+        tileSprite = new SpritePet({ url: cp.url, rows: cp.rows, size, state: agentState });
+        tileSprite.el.classList.add('pet-svg');
+        pet.prepend(tileSprite.el);
+      }
+      pet.dataset.mood = 'codex';
+      return;
+    }
+    if (tileSprite) { tileSprite.destroy(); tileSprite = null; pet.dataset.mood = ''; }
     const mood = !list.length ? 'sleep' : busy ? 'busy' : 'idle';
     if (mood !== pet.dataset.mood) { pet.dataset.mood = mood; pet.querySelector('.pet-svg')?.remove(); pet.insertAdjacentHTML('afterbegin', petSvg(mood)); }
   };
@@ -379,7 +508,8 @@ export function mountHub({ node, view, body }) {
     const summary = list.length ? `Агентов: ${list.length}, работают: ${busy}` : '';
     bubble.innerHTML = `${esc(pool[Math.floor(Math.random() * pool.length)])}${summary ? `<br><small>${summary}</small>` : ''}`;
     bubble.classList.add('show');
-    pet.classList.remove('wiggle'); void pet.offsetWidth; pet.classList.add('wiggle');
+    if (tileSprite) tileSprite.play('waving', { once: true, then: agentState });
+    else { pet.classList.remove('wiggle'); void pet.offsetWidth; pet.classList.add('wiggle'); }
     clearTimeout(bubble._t); bubble._t = setTimeout(() => bubble.classList.remove('show'), 3200);
   });
 
@@ -391,7 +521,7 @@ export function mountHub({ node, view, body }) {
   const t1 = setInterval(renderClock, 10 * 1000);
   const t2 = setInterval(() => { if (!view.root.classList.contains('vp-moving')) renderStatus(); }, 1500);
   return {
-    destroy() { offL(); offA(); offS(); offP(); offClock(); themeObs.disconnect(); clearInterval(t1); clearInterval(t2); },
+    destroy() { offL(); offA(); offS(); offP(); offAS(); offCP(); tileSprite?.destroy(); offClock(); themeObs.disconnect(); clearInterval(t1); clearInterval(t2); },
     update() {},
   };
 }

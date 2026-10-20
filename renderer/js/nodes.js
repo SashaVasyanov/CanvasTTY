@@ -70,6 +70,8 @@ async function buildContextText(view, id) {
 // =====================================================================
 // Terminal / agent
 // =====================================================================
+const WAIT_RE = /(Do you want to|Would you like to|Allow (this|command|once)|Approve|approval|\(y\/n\)|\[y\/N\]|\[Y\/n\]|Proceed\?|Press Enter to continue|❯\s*1\.\s*Yes|Yes, and don't ask|Разрешить|Подтвердите)/i;
+
 class TerminalInstance {
   constructor({ node, view, body }) {
     this.node = node; this.view = view; this.body = body;
@@ -230,6 +232,15 @@ class TerminalInstance {
     if (this.state === 'stopped') return { label: 'Остановлен', kind: 'off' };
     if (this.state === 'exited') return { label: 'Завершён', kind: 'off' };
     if (Date.now() - this.lastOutput < 2500) return { label: 'Работает', kind: 'busy' };
+    // an agent CLI asking for approval / a choice (Claude Code, Codex, Gemini…)
+    if (this.agent.cmd && this.term) {
+      if (this._waitAt !== this.lastOutput) {
+        this._waitAt = this.lastOutput;
+        const tail = this.tailText(1500).split('\n').slice(-16).join('\n');
+        this._waiting = WAIT_RE.test(tail);
+      }
+      if (this._waiting) return { label: 'Ждёт ответа', kind: 'wait' };
+    }
     return { label: 'Ожидает', kind: 'idle' };
   }
 
@@ -656,7 +667,7 @@ class AgentChatInstance {
         case 'reasoning': { const l = asst.parts[asst.parts.length - 1]; if (l && l.type === 'reasoning') l.text += ev.text; else asst.parts.push({ type: 'reasoning', text: ev.text }); break; }
         case 'tool': if (!asst.parts.some((p) => p.type === 'tool' && p.id === ev.id)) asst.parts.push({ type: 'tool', id: ev.id, name: ev.name, input: ev.input, status: 'run' }); newText = true; break;
         case 'toolResult': { const t = asst.parts.find((p) => p.type === 'tool' && p.id === ev.id); if (t) { t.output = ev.output; t.status = ev.isError ? 'err' : 'ok'; } break; }
-        case 'notice': asst.parts.push({ type: 'notice', text: ev.text }); break;
+        case 'notice': asst.parts.push({ type: 'notice', text: ev.text }); if (ev.needsInput) asst.needsInput = true; break;
         case 'error': asst.parts.push({ type: 'error', text: ev.message }); break;
         case 'done': this.finish(reqId, all, asst, ev); return;
         default: break;
@@ -693,6 +704,7 @@ class AgentChatInstance {
     if (this.running) return { label: 'Работает', kind: 'busy' };
     const m = this.messages[this.messages.length - 1];
     if (m && (m.parts || []).some((p) => p.type === 'error')) return { label: 'Ошибка', kind: 'na' };
+    if (m && m.needsInput) return { label: 'Нужно разрешение', kind: 'wait' };
     return { label: this.messages.length ? 'Ожидает' : 'Готов', kind: 'idle' };
   }
   update(n) { this.node = n; if (!this.running) { this.modeSel.value = n.data.mode || this.modeSel.value; this.fillModelOptions(); this.renderCwd(); this.renderAll(); } }

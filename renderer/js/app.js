@@ -6,9 +6,10 @@ import { NODE_TYPES, imageNodeFromFile } from './nodes.js';
 import { vaultIndex } from './vaultIndex.js';
 import { Sidebar, NotePanel, openGraph } from './notes.js';
 import { setFpsMeter, toggleFpsMeter, runPerfTest } from './perf.js';
-import { limits, limitsPanel, petSvg, LIMIT_SOURCES, PETS, openPetPicker, CLOCK_PRESETS, CLOCK_DEFAULT, clockColors, paintClock, clockMarkup } from './hub.js';
+import { AgentWatch, Companion, loadCodexPets, codexPetFor } from './companion.js';
+import { limits, limitsPanel, petSvg, LIMIT_SOURCES, PETS, openPetPicker, openPetCatalog, CLOCK_PRESETS, CLOCK_DEFAULT, clockColors, paintClock, clockMarkup } from './hub.js';
 
-const VERSION = '1.3.0';
+const VERSION = '1.4.0';
 
 class App {
   async start() {
@@ -25,7 +26,9 @@ class App {
     this.bindCanvas();
     this.bindBus();
     this.bindKeys();
+    this.agentWatch = new AgentWatch(this);
     this.startPet();
+    loadCodexPets().then(() => this.updatePet());
     if (state.settings.fps) setFpsMeter(true);
     this.bindSync();
     state.on('canvas', () => { this.canvas.load(); this.renderTabs(); });
@@ -522,7 +525,9 @@ class App {
 
   bindBus() {
     bus.on('launchAgent', (o) => this.launchAgent(o));
-    bus.on('pet:changed', () => this.refreshPet());
+    bus.on('pet:changed', () => this.updatePet());
+    bus.on('openPetPicker', () => openPetPicker());
+    bus.on('openPetCatalog', () => openPetCatalog());
     bus.on('agentMenu', ({ agentId, x, y, near }) => this.agentMenu(agentId, x, y, near));
     bus.on('launchChatMenu', ({ near, x, y }) => menu(Object.keys(PROVIDER_META).map((id) => ({ label: providerName(id), badge: badge(PROVIDER_META[id].mono, PROVIDER_META[id].color, 16, PROVIDER_META[id].dark), onClick: () => this.launchChat({ provider: id, near }) })), x, y - 280));
     bus.on('launchWeb', (o) => this.launchWeb(o));
@@ -581,6 +586,7 @@ class App {
       { label: 'Лимиты нейросетей', icon: 'gauge', run: () => this.showLimits(this.limitsBtn) },
       { label: 'Настройки', icon: 'settings', hint: 'Ctrl+,', run: () => this.openSettings() },
       { label: 'Сменить питомца', icon: 'refresh', run: () => openPetPicker() },
+      { label: 'Каталог Codex Pets', icon: 'globe', hint: 'codex-pets.net', run: () => openPetCatalog() },
       { label: 'Тест плавности (FPS)', icon: 'gauge', run: () => runPerfTest(this) },
       { label: 'Показать / скрыть счётчик FPS', icon: 'gauge', hint: 'Ctrl+Shift+F', run: () => toggleFpsMeter() },
       { label: 'Выбрать хранилище заметок', icon: 'folderOpen', run: () => this.chooseVault() },
@@ -647,7 +653,7 @@ class App {
 
   settings_general(s) {
     const row = (label, ctrl, hint) => h('div', { class: 'set-row' }, h('div', {}, h('div', { class: 'set-label' }, label), hint ? h('div', { class: 'muted small' }, hint) : null), ctrl);
-    const toggle = (key) => { const i = h('input', { type: 'checkbox', class: 'switch' }); i.checked = !!s[key]; i.onchange = () => { state.setSetting(key, i.checked); this.canvas.applyViewport(); if (key === 'pet') this.pet.style.display = i.checked ? '' : 'none'; }; return i; };
+    const toggle = (key) => { const i = h('input', { type: 'checkbox', class: 'switch' }); i.checked = !!s[key]; i.onchange = () => { state.setSetting(key, i.checked); this.canvas.applyViewport(); if (key === 'pet') this.updatePet(); }; return i; };
     const wheel = h('select', { class: 'select' }, h('option', { value: 'zoom' }, 'Масштаб'), h('option', { value: 'scroll' }, 'Прокрутка'));
     wheel.value = s.wheel; wheel.onchange = () => state.setSetting('wheel', wheel.value);
     const lod = h('input', { type: 'range', min: '0.2', max: '0.9', step: '0.05', value: s.lodZoom });
@@ -670,7 +676,7 @@ class App {
       h('h3', { 'data-anchor': 'clock' }, 'Часы в пульте'),
       this.clockSettings(s),
       row('Питомец', petBtn, 'Готовые питомцы или своя картинка. Также: ПКМ по питомцу в пульте'),
-      row('Питомец бегает за курсором', toggle('pet')),
+      row('Питомец на экране', toggle('pet'), 'Встроенные питомцы бегают за курсором, питомцы Codex сидят в углу и показывают, что делают агенты'),
       h('h3', {}, 'Производительность'),
       row('Счётчик FPS', (() => { const i = h('input', { type: 'checkbox', class: 'switch' }); i.checked = !!s.fps; i.onchange = () => { state.setSetting('fps', i.checked); setFpsMeter(i.checked); }; return i; })(), 'Также Ctrl+Shift+F'),
       row('Тест плавности', h('button', { class: 'btn', onclick: () => { document.querySelector('.modal-back')?.remove(); runPerfTest(this); } }, 'Запустить'), 'Canvas сам подвигается 10 секунд и покажет FPS, видеокарту и экран'),
@@ -841,7 +847,22 @@ class App {
   }
 
   // ---------------- cat companion ----------------
-  refreshPet() { if (this.pet) this.pet.innerHTML = petSvg('idle'); }
+  refreshPet() { this.updatePet(); }
+  // built-in pets follow the cursor; Codex pets sit on the canvas like in the Codex app
+  updatePet() {
+    if (!this.pet) return;
+    const cp = codexPetFor(state.settings.petKind);
+    const on = state.settings.pet !== false;
+    this.followerOn = on && !cp;
+    if (cp && on) {
+      this.pet.style.display = 'none';
+      if (!this.companion || this.companion.pet.url !== cp.url) { this.companion?.destroy(); this.companion = new Companion(this, cp); }
+    } else {
+      this.companion?.destroy(); this.companion = null;
+      this.pet.style.display = on ? '' : 'none';
+      this.pet.innerHTML = petSvg('idle');
+    }
+  }
   startPet() {
     const pet = h('div', { class: 'pet-follower', html: petSvg('idle') });
     this.pet = pet;
@@ -861,8 +882,9 @@ class App {
       setCls(d > 4, false);
       if (d > 2) raf = requestAnimationFrame(step); // stop the loop once the pet has arrived
     };
+    this.followerOn = !!state.settings.pet;
     this.canvasHost.addEventListener('pointermove', (e) => {
-      if (!state.settings.pet) return;
+      if (!this.followerOn) return;
       const r = this.canvasHost.getBoundingClientRect();
       tx = e.clientX - r.left + 14; ty = e.clientY - r.top + 16; last = Date.now();
       if (!raf) raf = requestAnimationFrame(step);

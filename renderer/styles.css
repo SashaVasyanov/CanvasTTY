@@ -458,6 +458,7 @@ svg.guides line { stroke: #ff5ca8; stroke-width: 1; }
 .hub-status { background: var(--hub-dark); border: 1px solid var(--line); padding: 6px; display: flex; flex-direction: column; gap: 4px; }
 .hs-row { display: flex; align-items: center; gap: 7px; padding: 4px 7px; border-radius: 7px; background: #d6dae2; color: #1b1e25; cursor: pointer; min-width: 0; flex: 1; max-height: 40px; }
 .hs-row.busy { background: #c5e8bc; }
+.hs-row.wait { background: #ffe2c2; }
 .hs-row.na { background: #f1cfcd; }
 .hs-row.off { background: #b9bec8; }
 .hs-row:hover { filter: brightness(1.05); }
@@ -762,3 +763,46 @@ svg.guides line { stroke: #ff5ca8; stroke-width: 1; }
 .clock-picks { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
 .clock-pick { display: flex; flex-direction: column; align-items: center; gap: 3px; font-size: 10.5px; color: var(--muted); }
 .clock-pick input[type="color"] { width: 100%; height: 26px; padding: 0; border: 1px solid var(--line-2); border-radius: 6px; background: none; cursor: pointer; }
+
+/* agent waiting for the user */
+.head-status.wait { background: #f6a04d; animation: beat 1s infinite; }
+.hs-row.wait .hs-dot { background: #f6a04d; animation: beat 1s infinite; }
+.card-status.wait { color: #f6a04d; }
+
+/* Codex pets: floating companion */
+.cpet { position: relative; flex: none; }
+.cpet-img { position: absolute; inset: 0; background-repeat: no-repeat; }
+.companion { position: absolute; z-index: 26; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; pointer-events: none; user-select: none; }
+.companion .cpet { pointer-events: auto; cursor: grab; filter: drop-shadow(0 6px 10px rgba(0, 0, 0, 0.28)); touch-action: none; }
+.companion.dragging .cpet { cursor: grabbing; }
+.cbubble { pointer-events: auto; max-width: 260px; padding: 6px 11px; border-radius: 12px; background: var(--menu); border: 1px solid var(--line-2); border-left: 3px solid var(--accent); box-shadow: var(--shadow); font-size: 12px; line-height: 1.35; color: var(--text); cursor: pointer; opacity: 0; transform: translateY(6px); transition: opacity 0.18s, transform 0.18s; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cbubble.on { opacity: 1; transform: none; }
+.cbubble:not(.on) { pointer-events: none; }
+.cbubble.running { border-left-color: #5b8cff; }
+.cbubble.waiting { border-left-color: #f6a04d; }
+.cbubble.review { border-left-color: var(--green); }
+.cbubble.failed { border-left-color: var(--red); }
+.cpet-static { background-repeat: no-repeat; background-position: 0 0; width: 100%; aspect-ratio: 192 / 208; }
+.hub-pet .cpet { margin-top: 4px; }
+
+/* pet picker: codex section */
+.pet-card { position: relative; }
+.pet-del { position: absolute; top: 6px; right: 6px; width: 20px; height: 20px; border-radius: 6px; display: none; place-items: center; background: rgba(0, 0, 0, 0.45); color: #fff; }
+.pet-card:hover .pet-del { display: grid; }
+.pet-codex { display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; }
+.pet-codex .row { display: flex; gap: 8px; flex-wrap: wrap; }
+.pet-codex .pet-prev { display: grid; place-items: center; }
+.pet-codex-empty { padding: 6px 2px; }
+
+/* codex-pets.net catalog */
+.cat-wrap { display: flex; flex-direction: column; gap: 10px; }
+.cat-bar { display: flex; gap: 8px; }
+.cat-bar .input { flex: 1; }
+.cat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(148px, 1fr)); gap: 10px; max-height: min(62vh, 640px); overflow-y: auto; padding: 2px; }
+.cat-card { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 10px 8px; border-radius: 12px; background: rgba(var(--fg-rgb), 0.04); border: 1px solid var(--line); }
+.cat-card:hover { background: rgba(var(--fg-rgb), 0.07); }
+.cat-prev { position: relative; width: 100%; height: 112px; border-radius: 10px; background: linear-gradient(160deg, #eef1ff, #e2f3ff); display: grid; place-items: center; overflow: hidden; }
+.cat-badge { position: absolute; top: 4px; right: 6px; font-size: 13px; }
+.cat-name { font-size: 12.5px; font-weight: 600; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cat-owner { font-size: 10.5px; color: var(--muted); max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-height: 13px; }
+.cat-pager { display: flex; justify-content: center; gap: 8px; }

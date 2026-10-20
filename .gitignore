@@ -8,3 +8,4 @@ Thumbs.db
 .vscode/
 .idea/
 perf-report.json
+renderer/__test/

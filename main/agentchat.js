@@ -110,6 +110,11 @@ class AgentChatManager {
       } else if (j.type === 'result') {
         finished = true;
         if (j.is_error || (j.subtype && j.subtype !== 'success')) emit('error', { message: asText(j.result) || j.subtype || 'Ошибка' });
+        // tools the agent wasn't allowed to run: it now waits for the user to allow them
+        if (Array.isArray(j.permission_denials) && j.permission_denials.length) {
+          const names = [...new Set(j.permission_denials.map((d) => d.tool_name).filter(Boolean))].join(', ');
+          emit('notice', { text: `Агенту не хватило прав${names ? ` (${names})` : ''}. Выберите режим «Доступ» шире и повторите или ответьте ему.`, needsInput: true });
+        }
         emit('done', { sessionId: sid, cost: j.total_cost_usd, usage: j.usage ? { input: (j.usage.input_tokens || 0) + (j.usage.cache_read_input_tokens || 0), output: j.usage.output_tokens || 0 } : null, durationMs: j.duration_ms });
       }
     };

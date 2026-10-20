@@ -1,7 +1,7 @@
 {
   "name": "canvastty",
   "productName": "CanvasTTY",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Пространственный рабочий стол для AI-агентов: canvas с терминалами и чатами Codex / Claude Code, API-чатами и заметками в стиле Obsidian",
   "main": "main/main.js",
   "author": "SashaVasyanov",

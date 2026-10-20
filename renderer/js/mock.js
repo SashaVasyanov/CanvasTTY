@@ -25,7 +25,7 @@ let seq = 0;
 export const mockNative = {
   isElectron: false,
   win: { minimize() {}, maximize() {}, close() {}, isMaximized: async () => false, onState: on('win:state') },
-  info: async () => ({ version: '1.3.0', platform: 'browser', home: '/home/user' }),
+  info: async () => ({ version: '1.4.0', platform: 'browser', home: '/home/user' }),
   ws: { load: async () => LS.get('mock:ws', null), save: async (ws) => LS.set('mock:ws', ws) },
   canvas: { load: async (id) => LS.get(`mock:canvas:${id}`, null), save: async (id, d) => LS.set(`mock:canvas:${id}`, d), remove: async (id) => localStorage.removeItem(`mock:canvas:${id}`) },
   pty: {
@@ -103,6 +103,16 @@ export const mockNative = {
     abort: async () => {}, defaults: async () => ({ claude: { model: 'sonnet' }, codex: { model: 'gpt-5-codex', effort: 'medium', models: [] } }), onEvent: on('agentchat:event'),
   },
   setBg: async () => {},
+  codexPets: (() => {
+    let inst = [{ id: 'test-pet', displayName: 'Тестовый пет', description: 'Синтетический лист для проверки', rows: 11, url: '__test/sheet.webp' }];
+    const cat = Array.from({ length: 24 }, (_, i) => ({ id: `cat-${i}`, displayName: `Пет №${i + 1}`, description: 'демо', owner: 'demo', tags: [], rows: i % 2 ? 11 : 9, spritesheetUrl: '__test/sheet.webp', downloadUrl: 'x', installed: false }));
+    return {
+      installed: async () => inst,
+      catalog: async ({ page = 1 }) => ({ page, totalPages: 3, total: 72, pets: cat.map((p) => ({ ...p, installed: inst.some((x) => x.id === p.id) })) }),
+      install: async (p) => { const e = { id: p.id, displayName: p.displayName, description: '', rows: p.rows, url: p.spritesheetUrl }; inst = [...inst, e]; return e; },
+      remove: async (id) => { inst = inst.filter((x) => x.id !== id); return true; },
+    };
+  })(),
   sync: (() => { let cfg = { enabled: false, dir: '', keys: false }; return { info: async () => ({ ...cfg, root: cfg.dir ? cfg.dir + '/CanvasTTY Sync' : '', device: 'demo-pc', status: { state: cfg.enabled ? 'ok' : 'off', last: Date.now(), pushed: 3, pulled: 1 } }), configure: async (p) => { cfg = { ...cfg, ...p }; return cfg; }, now: async () => cfg, ready: async () => cfg, adoptVault: async () => '/demo/CanvasTTY Sync/Заметки', onChanged: () => () => {}, onStatus: () => () => {} }; })(),
   history: (() => {
     const db = new Map();
