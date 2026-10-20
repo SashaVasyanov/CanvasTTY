@@ -1,6 +1,7 @@
 // Workspace: projects → canvases, settings. Canvas documents are loaded on demand.
 import { Emitter, uid, debounce } from './util.js';
 import { mockNative } from './mock.js';
+import { mergeDocs } from './merge.js';
 
 export const native = window.native || mockNative;
 
@@ -104,6 +105,39 @@ class State extends Emitter {
   }
 
   touch() { this.saveDoc(); }
+  // deleted ids travel with the workspace so other computers delete them too
+  tombstone(...ids) { this.ws.tombstones = [...new Set([...(this.ws.tombstones || []), ...ids])].slice(-1000); }
+
+  // ----- changes that arrived from another computer (sync) -----
+  normalizeWs(ws) {
+    ws.settings = { ...defaultSettings(), ...(ws.settings || {}) };
+    for (const a of DEFAULT_AGENTS) if (!ws.settings.agents.find((x) => x.id === a.id)) ws.settings.agents.push({ ...a });
+    return ws;
+  }
+  async applyRemote(ev, isBusy = () => false) {
+    if (ev.kind === 'workspace') {
+      const ws = await native.ws.load();
+      if (!ws?.projects?.length) return;
+      ws.activeProjectId = this.ws.activeProjectId; ws.activeCanvasId = this.ws.activeCanvasId;
+      ws.settings = { ...ws.settings, vaultPath: this.ws.settings.vaultPath };
+      this.ws = this.normalizeWs(ws);
+      const p = this.ws.projects.find((x) => x.id === this.ws.activeProjectId);
+      if (!p || !p.canvases.some((c) => c.id === this.ws.activeCanvasId)) await this.openCanvas(this.ws.projects[0].id, this.ws.projects[0].canvases[0].id);
+      this.emit('projects'); this.emit('settings', 'all');
+      return true;
+    }
+    if (ev.kind === 'canvas' && this.doc && ev.id === this.doc.id && !ev.deleted && ev.remote) {
+      // merged into the open canvas in place: windows, terminals and running agents are untouched
+      if (isBusy('drag')) { clearTimeout(this._remoteT); this._remoteT = setTimeout(() => this.applyRemote(ev, isBusy), 800); return false; }
+      const merged = mergeDocs(ev.base, this.doc, ev.remote);
+      this.doc.nodes = merged.nodes; this.doc.edges = merged.edges;
+      if (merged.groups) this.doc.groups = merged.groups;
+      this.emit('docMerged', this.doc);
+      this.saveDoc();
+      return true;
+    }
+    return false;
+  }
 
   // ----- projects -----
   async createProject(name, cwd) {
@@ -120,6 +154,7 @@ class State extends Emitter {
     if (this.ws.projects.length <= 1) return false;
     const p = this.ws.projects.find((x) => x.id === id);
     for (const c of p.canvases) await native.canvas.remove(c.id);
+    this.tombstone(id, ...p.canvases.map((c) => c.id));
     this.ws.projects = this.ws.projects.filter((x) => x.id !== id);
     if (this.ws.activeProjectId === id) await this.openCanvas(this.ws.projects[0].id, this.ws.projects[0].canvases[0].id);
     this.saveWs(); this.emit('projects');
@@ -156,6 +191,7 @@ class State extends Emitter {
     const p = this.ws.projects.find((x) => x.id === projectId);
     if (p.canvases.length <= 1) return false;
     p.canvases = p.canvases.filter((x) => x.id !== canvasId);
+    this.tombstone(canvasId);
     await native.canvas.remove(canvasId);
     if (this.ws.activeCanvasId === canvasId) await this.openCanvas(p.id, p.canvases[0].id);
     this.saveWs(); this.emit('projects');

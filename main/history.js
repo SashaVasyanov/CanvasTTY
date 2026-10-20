@@ -36,19 +36,33 @@ class HistoryStore {
     // never store half-streamed state
     full.messages = full.messages.map((m) => { const { running, ...rest } = m; return rest; });
     await fsp.writeFile(this.file(rec.id), JSON.stringify(full));
-    const firstUser = full.messages.find((m) => m.role === 'user');
-    this.index[rec.id] = {
-      id: rec.id, kind: full.kind, agent: full.agent, model: full.model || '', cwd: full.cwd || '', sessionId: full.sessionId || null,
-      title: (full.title || firstUser?.content || 'Без названия').replace(/\s+/g, ' ').slice(0, 90),
-      count: full.messages.length, created: full.created, updated: now,
-    };
-    this.writeIndex();
+    this.indexRecord(full);
+    this.onChange?.('save', full);
     return true;
   }
-  async remove(id) {
+  indexRecord(full) {
+    const firstUser = full.messages.find((m) => m.role === 'user');
+    this.index[full.id] = {
+      id: full.id, kind: full.kind, agent: full.agent, model: full.model || '', cwd: full.cwd || '', sessionId: full.sessionId || null,
+      title: (full.title || firstUser?.content || 'Без названия').replace(/\s+/g, ' ').slice(0, 90),
+      count: full.messages.length, created: full.created, updated: full.updated,
+    };
+    this.writeIndex();
+  }
+  // a conversation that arrived from another computer
+  async importRecord(full) {
+    if (!full?.id || !Array.isArray(full.messages)) return;
+    await fsp.writeFile(this.file(full.id), JSON.stringify(full));
+    this.indexRecord(full);
+  }
+  async removeLocal(id) {
     delete this.index[id];
     this.writeIndex();
     await fsp.unlink(this.file(id)).catch(() => {});
+  }
+  async remove(id) {
+    await this.removeLocal(id);
+    this.onChange?.('remove', id);
     return true;
   }
 }

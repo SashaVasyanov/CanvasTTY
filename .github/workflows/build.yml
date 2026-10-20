@@ -35,6 +35,7 @@ jobs:
             args: --mac
             files: |
               release/*.dmg
+              release/*-mac-*.zip
           - os: ubuntu-latest
             args: --linux
             files: |

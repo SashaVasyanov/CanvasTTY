@@ -41,8 +41,11 @@
 - Редактор с панелью как в Apple Notes: стили, чек-листы, таблицы, картинки, Markdown-сокращения.
 - Заметки выводятся на canvas по одной, со связями или целым графом.
 
+**Синхронизация**
+- Проекты, canvas и история чатов синхронизируются между Windows, macOS и Linux через облачную папку (iCloud Drive, Dropbox, Google Drive, OneDrive, Яндекс Диск, Syncthing). Без сервера и регистрации, правки с разных компьютеров объединяются по объектам.
+
 **Оформление**
-- Тёмная, светлая и системная тема, питомцы на выбор или свой из картинки или GIF.
+- Тёмная, светлая и системная тема, питомцы на выбор или свой из картинки или GIF, наборы цветов для часов отдельно для каждой темы.
 
 <table>
 <tr>
@@ -68,7 +71,7 @@
 ### Готовая сборка
 Скачайте последнюю версию на странице [**Releases**](https://github.com/SashaVasyanov/CanvasTTY/releases):
 - **Windows** — `CanvasTTY-Setup-x.y.z.exe` (установщик) или `CanvasTTY-Portable-x.y.z.exe` (без установки);
-- **macOS** — `.dmg`;
+- **macOS** — `CanvasTTY-x.y.z-mac-arm64.dmg` (Apple Silicon) или `…-mac-x64.dmg` (Intel). При первом запуске: правой кнопкой → «Открыть». Если macOS пишет «повреждено» — `xattr -cr /Applications/CanvasTTY.app`;
 - **Linux** — `.AppImage`.
 
 Сборки без цифровой подписи, поэтому Windows SmartScreen или macOS Gatekeeper при первом запуске спросят подтверждение. Свежую сборку любого коммита можно скачать во вкладке [Actions](https://github.com/SashaVasyanov/CanvasTTY/actions): откройте нужный запуск, раздел «Artifacts».

@@ -5,6 +5,8 @@
 const { spawn, execFile } = require('child_process');
 const path = require('path');
 const os = require('os');
+// a folder from another computer (synced canvas) may not exist here
+const safeCwd = (d) => { try { if (d && require('fs').statSync(d).isDirectory()) return d; } catch {} return os.homedir(); };
 const fs = require('fs');
 
 const isWin = process.platform === 'win32';
@@ -81,7 +83,7 @@ class AgentChatManager {
     if (model) args.push('--model', model);
     if (opts.effort && !opts.noEffort) args.push('--effort', opts.effort);
     if (sessionId) args.push('--resume', sessionId);
-    const proc = spawnCli(resolved, args, { cwd: cwd || os.homedir(), env: this.env(), stdio: ['pipe', 'pipe', 'pipe'] });
+    const proc = spawnCli(resolved, args, { cwd: safeCwd(cwd), env: this.env(), stdio: ['pipe', 'pipe', 'pipe'] });
     const run = { proc, aborted: false };
     this.runs.set(reqId, run);
     let buf = '', stderr = '', gotOutput = false, streamedThisMsg = false, sid = sessionId || null, finished = false;
@@ -149,7 +151,7 @@ class AgentChatManager {
     if (model) args.push('-m', model);
     if (opts.effort) args.push('-c', `model_reasoning_effort=${opts.effort}`);
     if (sessionId && withResume) args.push('resume', sessionId);
-    const proc = spawnCli(resolved, args, { cwd: cwd || os.homedir(), env: this.env(), stdio: ['pipe', 'pipe', 'pipe'] });
+    const proc = spawnCli(resolved, args, { cwd: safeCwd(cwd), env: this.env(), stdio: ['pipe', 'pipe', 'pipe'] });
     const run = { proc, aborted: false };
     this.runs.set(reqId, run);
     let buf = '', stderr = '', gotOutput = false, sid = (withResume && sessionId) || null, usage = null, failed = false;

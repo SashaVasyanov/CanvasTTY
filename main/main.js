@@ -9,6 +9,24 @@ const { ChatManager, PROVIDERS } = require('./chat');
 const { getLimits } = require('./limits');
 const { AgentChatManager, agentDefaults } = require('./agentchat');
 const { HistoryStore, listSessions, readSession } = require('./history');
+const { SyncManager } = require('./sync');
+
+const isMac = process.platform === 'darwin';
+
+// Apps started from Finder / the dock get a minimal PATH (no Homebrew, no npm globals),
+// so take PATH from the user's login shell, like a terminal would.
+function fixPath() {
+  if (process.platform === 'win32') return;
+  try {
+    const sh = process.env.SHELL || (isMac ? '/bin/zsh' : '/bin/bash');
+    const out = require('child_process').execFileSync(sh, ['-ilc', 'printf "__CTTY__%s__CTTY__" "$PATH"'], { encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] });
+    const m = out.match(/__CTTY__(.*?)__CTTY__/);
+    const extra = isMac ? ['/opt/homebrew/bin', '/usr/local/bin'] : ['/usr/local/bin'];
+    const parts = [...(m ? m[1].split(':') : []), ...(process.env.PATH || '').split(':'), ...extra].filter(Boolean);
+    process.env.PATH = [...new Set(parts)].join(':');
+  } catch {}
+}
+fixPath();
 
 app.setName('CanvasTTY');
 // rendering performance: GPU rasterization even on blocklisted drivers
@@ -23,7 +41,7 @@ protocol.registerSchemesAsPrivileged([
 
 const RENDERER = path.join(__dirname, '..', 'renderer');
 let win = null;
-let userData, wsFile, canvasDir, usageFile;
+let userData, wsFile, canvasDir, usageFile, sync = null;
 let usageLog = {};
 
 const send = (channel, payload) => { if (win && !win.isDestroyed()) win.webContents.send(channel, payload); };
@@ -89,7 +107,8 @@ function createWindow() {
   const iconPath = path.join(RENDERER, 'assets', process.platform === 'win32' ? 'icon.ico' : 'icon.png');
   win = new BrowserWindow({
     width: 1500, height: 920, minWidth: 900, minHeight: 600,
-    frame: false,
+    // macOS keeps its native traffic lights over our own title bar
+    ...(isMac ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 14, y: 12 } } : { frame: false }),
     backgroundColor: '#14161c',
     icon: fs.existsSync(iconPath) ? nativeImage.createFromPath(iconPath) : undefined,
     show: false,
@@ -101,7 +120,13 @@ function createWindow() {
       spellcheck: false,
     },
   });
-  Menu.setApplicationMenu(null);
+  // macOS needs an application menu, otherwise Cmd+C / Cmd+V / Cmd+Q don't work
+  Menu.setApplicationMenu(isMac ? Menu.buildFromTemplate([
+    { role: 'appMenu' },
+    { role: 'editMenu' },
+    { label: 'Вид', submenu: [{ role: 'reload' }, { role: 'toggleDevTools' }, { type: 'separator' }, { role: 'togglefullscreen' }] },
+    { role: 'windowMenu' },
+  ]) : null);
   win.loadURL('app://canvastty/index.html');
   win.once('ready-to-show', () => win.show());
   win.on('maximize', () => send('win:state', { maximized: true }));
@@ -152,10 +177,10 @@ app.whenReady().then(() => {
 
   // ---------- storage ----------
   ipcMain.handle('ws:load', () => loadWorkspace());
-  ipcMain.handle('ws:save', (e, ws) => writeJson(wsFile, ws));
+  ipcMain.handle('ws:save', async (e, ws) => { await writeJson(wsFile, ws); sync?.localChanged('workspace', 'workspace', ws); });
   ipcMain.handle('canvas:load', (e, id) => readJsonSync(path.join(canvasDir, `${id}.json`), null));
-  ipcMain.handle('canvas:save', (e, id, data) => writeJson(path.join(canvasDir, `${id}.json`), data));
-  ipcMain.handle('canvas:delete', async (e, id) => { try { await fsp.unlink(path.join(canvasDir, `${id}.json`)); } catch {} });
+  ipcMain.handle('canvas:save', async (e, id, data) => { await writeJson(path.join(canvasDir, `${id}.json`), data); sync?.localChanged('canvas', id, data); });
+  ipcMain.handle('canvas:delete', async (e, id) => { try { await fsp.unlink(path.join(canvasDir, `${id}.json`)); } catch {} sync?.localDeleted('canvas', id); });
 
   // ---------- pty ----------
   ipcMain.handle('pty:spawn', (e, opts) => ptys.spawn(opts));
@@ -178,6 +203,15 @@ app.whenReady().then(() => {
   ipcMain.handle('agentchat:defaults', () => agentDefaults());
   // ---------- chat history ----------
   const history = new HistoryStore(path.join(userData, 'chats'));
+  // ---------- sync between computers ----------
+  sync = new SyncManager({ userData, wsFile, canvasDir, history, send });
+  history.onChange = (op, v) => (op === 'save' ? sync.localChanged('chat', v.id, v) : sync.localDeleted('chat', v));
+  ipcMain.handle('sync:info', () => sync.info());
+  ipcMain.handle('sync:configure', (e, patch) => sync.configure(patch || {}));
+  ipcMain.handle('sync:now', async () => { await sync.reconcile(); return sync.info(); });
+  ipcMain.handle('sync:adoptVault', async () => { const dest = await sync.adoptVault(vault.root); vault.setRoot(dest); return dest; });
+  // started once the window listens, so no change from another computer is missed
+  ipcMain.handle('sync:ready', () => { sync.start(); return sync.info(); });
   ipcMain.handle('history:list', (e, q) => history.list(q || {}));
   ipcMain.handle('history:get', (e, id) => history.get(id));
   ipcMain.handle('history:save', (e, rec) => history.save(rec));

@@ -1,6 +1,42 @@
 // The "agents hub" widget from the reference screenshot: limits, statuses, clock, pet, launch dock.
-import { h, icon, badge, bus, relTime, Emitter, esc, modal, toast } from './util.js';
+import { h, icon, badge, bus, relTime, Emitter, esc, modal, toast, menu } from './util.js';
 import { state, native } from './state.js';
+
+// ---------------- clock colours ----------------
+// d: the four digits (they overlap: screen blend on dark backgrounds, multiply on light ones)
+export const CLOCK_PRESETS = {
+  standby: { name: 'StandBy, синий', bg: '#000000', d: ['#1f6dff', '#59a6ff', '#2a7dff', '#6cb6ff'], colon: '#d9e9ff', date: '#7fb6ff' },
+  sunset: { name: 'Закат', bg: '#000000', d: ['#ff4f2e', '#ff9f3d', '#ff6a45', '#ffc25c'], colon: '#ffe8d2', date: '#ffad6b' },
+  mint: { name: 'Мята', bg: '#03110c', d: ['#10b981', '#5eeab5', '#1ccf96', '#8cf5cf'], colon: '#dcfff1', date: '#6fe3b4' },
+  violet: { name: 'Фиалка', bg: '#07040f', d: ['#7444ff', '#b18aff', '#8a58ff', '#cdb1ff'], colon: '#efe6ff', date: '#b795ff' },
+  neon: { name: 'Неон', bg: '#0b0008', d: ['#ff2e88', '#ff7ab8', '#ff4597', '#ffa6cf'], colon: '#ffe3f0', date: '#ff8cc1' },
+  graphite: { name: 'Графит', bg: '#000000', d: ['#5d6472', '#c3c8d2', '#828997', '#e5e8ee'], colon: '#ffffff', date: '#a9afba' },
+  paper: { name: 'Бумага', bg: '#ffffff', d: ['#1f6dff', '#7db8ff', '#3b84ff', '#a6ceff'], colon: '#1d4cb8', date: '#3569d4' },
+  sky: { name: 'Небо', bg: '#eaf3ff', d: ['#2a64f6', '#8db7ff', '#4a7ffb', '#b5d1ff'], colon: '#1c3c94', date: '#3a62c7' },
+  peach: { name: 'Персик', bg: '#fff3ea', d: ['#ff6433', '#ffae86', '#ff8152', '#ffcaa9'], colon: '#a83c18', date: '#df6438' },
+  lilac: { name: 'Сирень', bg: '#f5f0ff', d: ['#7646ff', '#bfa1ff', '#9064ff', '#d8c7ff'], colon: '#45269a', date: '#7a52de' },
+  matcha: { name: 'Матча', bg: '#f1f8ef', d: ['#2f9e5b', '#8fd3a6', '#4bb373', '#b5e3c4'], colon: '#1e5d36', date: '#3a8a59' },
+};
+export const CLOCK_DEFAULT = { dark: 'standby', light: 'paper' };
+const lum = (hex) => { const n = parseInt(String(hex).replace('#', '').padEnd(6, '0').slice(0, 6), 16); return (0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255; };
+export const isLightTheme = () => document.documentElement.dataset.theme === 'light';
+export function clockColors(theme = isLightTheme() ? 'light' : 'dark') {
+  const s = state.settings || {};
+  const id = s[theme === 'light' ? 'clockLight' : 'clockDark'] || CLOCK_DEFAULT[theme];
+  const c = id === 'custom' ? { ...CLOCK_PRESETS[CLOCK_DEFAULT[theme]], ...(s[theme === 'light' ? 'clockCustomLight' : 'clockCustomDark'] || {}) } : (CLOCK_PRESETS[id] || CLOCK_PRESETS[CLOCK_DEFAULT[theme]]);
+  return { ...c, blend: lum(c.bg) > 0.5 ? 'multiply' : 'screen' };
+}
+export function paintClock(el, c = clockColors()) {
+  el.style.setProperty('--sb-bg', c.bg);
+  c.d.forEach((v, i) => el.style.setProperty(`--sb-d${i + 1}`, v));
+  el.style.setProperty('--sb-colon', c.colon);
+  el.style.setProperty('--sb-date', c.date);
+  el.style.setProperty('--sb-blend', c.blend);
+}
+export function clockMarkup(hh = '19', mm = '08', date = '') {
+  const dg = (ch, i) => `<span class="sb-d sb-d${i}">${ch}</span>`;
+  return `<div class="sb-time" aria-label="${hh}:${mm}">${dg(hh[0], 1)}${dg(hh[1], 2)}<span class="sb-colon"><i></i><i></i></span>${dg(mm[0], 3)}${dg(mm[1], 4)}</div>${date ? `<div class="sb-date">${date}</div>` : ''}`;
+}
 
 // ---------------- limits store ----------------
 class Limits extends Emitter {
@@ -297,9 +333,27 @@ export function mountHub({ node, view, body }) {
     const key = hh + mm + date;
     if (key === clockKey) return;
     clockKey = key;
-    const dg = (ch, i) => `<span class="sb-d sb-d${i}">${ch}</span>`;
-    clock.innerHTML = `<div class="sb-time" aria-label="${hh}:${mm}">${dg(hh[0], 1)}${dg(hh[1], 2)}<span class="sb-colon"><i></i><i></i></span>${dg(mm[0], 3)}${dg(mm[1], 4)}</div><div class="sb-date">${date}</div>`;
+    clock.innerHTML = clockMarkup(hh, mm, date);
   };
+  const repaintClock = () => paintClock(clock);
+  repaintClock();
+  const themeObs = new MutationObserver(repaintClock);
+  themeObs.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+  const offClock = state.on('settings', (k) => { if (k === 'all' || String(k).startsWith('clock')) repaintClock(); });
+  clock.title = 'ПКМ — цвета часов';
+  clock.addEventListener('contextmenu', (e) => {
+    e.preventDefault(); e.stopPropagation();
+    const theme = isLightTheme() ? 'light' : 'dark';
+    const key = theme === 'light' ? 'clockLight' : 'clockDark';
+    const cur = state.settings[key] || CLOCK_DEFAULT[theme];
+    const sw = (c) => `<span class="clock-sw" style="background:${c.bg}"><i style="background:${c.d[0]}"></i><i style="background:${c.d[1]}"></i></span>`;
+    menu([
+      { label: theme === 'light' ? 'Цвета часов для светлой темы' : 'Цвета часов для тёмной темы', disabled: true },
+      ...Object.entries(CLOCK_PRESETS).map(([id, c]) => ({ label: c.name, badge: h('span', { html: sw(c) }), checked: cur === id, onClick: () => state.setSetting(key, id) })),
+      '-',
+      { label: 'Свои цвета…', icon: 'palette', checked: cur === 'custom', onClick: () => bus.emit('openSettings', 'general', 'clock') },
+    ], e.clientX, e.clientY);
+  });
 
   const renderDock = () => {
     dock.innerHTML = '';
@@ -337,7 +391,7 @@ export function mountHub({ node, view, body }) {
   const t1 = setInterval(renderClock, 10 * 1000);
   const t2 = setInterval(() => { if (!view.root.classList.contains('vp-moving')) renderStatus(); }, 1500);
   return {
-    destroy() { offL(); offA(); offS(); offP(); clearInterval(t1); clearInterval(t2); },
+    destroy() { offL(); offA(); offS(); offP(); offClock(); themeObs.disconnect(); clearInterval(t1); clearInterval(t2); },
     update() {},
   };
 }

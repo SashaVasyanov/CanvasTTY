@@ -6,9 +6,9 @@ import { NODE_TYPES, imageNodeFromFile } from './nodes.js';
 import { vaultIndex } from './vaultIndex.js';
 import { Sidebar, NotePanel, openGraph } from './notes.js';
 import { setFpsMeter, toggleFpsMeter, runPerfTest } from './perf.js';
-import { limits, limitsPanel, petSvg, LIMIT_SOURCES, PETS, openPetPicker } from './hub.js';
+import { limits, limitsPanel, petSvg, LIMIT_SOURCES, PETS, openPetPicker, CLOCK_PRESETS, CLOCK_DEFAULT, clockColors, paintClock, clockMarkup } from './hub.js';
 
-const VERSION = '1.2.0';
+const VERSION = '1.3.0';
 
 class App {
   async start() {
@@ -27,6 +27,7 @@ class App {
     this.bindKeys();
     this.startPet();
     if (state.settings.fps) setFpsMeter(true);
+    this.bindSync();
     state.on('canvas', () => { this.canvas.load(); this.renderTabs(); });
     state.on('projects', () => this.renderTabs());
     this.canvas.load();
@@ -59,13 +60,14 @@ class App {
         h('button', { class: 'tb-icon', title: 'Инструкция (F1)', html: icon('help', 16), onclick: () => this.openHelp() }),
         this.limitsBtn,
         h('button', { class: 'tb-icon', title: 'Настройки', html: icon('settings', 16), onclick: () => this.openSettings() }),
-        isEl ? h('div', { class: 'win-ctrls' },
+        isEl && state.info.platform !== 'darwin' ? h('div', { class: 'win-ctrls' },
           h('button', { class: 'win-btn', title: 'Свернуть', html: icon('minus', 15), onclick: () => native.win.minimize() }),
           this.maxBtn = h('button', { class: 'win-btn', title: 'Развернуть', html: icon('square', 13), onclick: () => native.win.maximize() }),
           h('button', { class: 'win-btn close', title: 'Закрыть', html: icon('x', 15), onclick: () => native.win.close() })) : null,
       ),
     );
-    if (isEl) native.win.onState(({ maximized }) => { this.maxBtn.innerHTML = icon(maximized ? 'squares' : 'square', 13); });
+    document.documentElement.dataset.platform = state.info.platform || 'web';
+    if (isEl && this.maxBtn) native.win.onState(({ maximized }) => { this.maxBtn.innerHTML = icon(maximized ? 'squares' : 'square', 13); });
     this.sidebarHost = h('div', { class: 'sidebar-host' });
     this.canvasHost = h('div', { class: 'canvas-host' });
     this.panelHost = h('div', { class: 'panel-host' });
@@ -524,7 +526,7 @@ class App {
     bus.on('agentMenu', ({ agentId, x, y, near }) => this.agentMenu(agentId, x, y, near));
     bus.on('launchChatMenu', ({ near, x, y }) => menu(Object.keys(PROVIDER_META).map((id) => ({ label: providerName(id), badge: badge(PROVIDER_META[id].mono, PROVIDER_META[id].color, 16, PROVIDER_META[id].dark), onClick: () => this.launchChat({ provider: id, near }) })), x, y - 280));
     bus.on('launchWeb', (o) => this.launchWeb(o));
-    bus.on('openSettings', () => this.openSettings());
+    bus.on('openSettings', (tab, anchor) => this.openSettings(tab || 'general', anchor));
     bus.on('openNotePath', (p) => this.openNote(p));
     bus.on('searchTag', (t) => this.sidebar.filterByTag(t));
     bus.on('expandNote', (id) => this.expandNote(id));
@@ -626,9 +628,9 @@ class App {
   }
 
   // ---------------- settings ----------------
-  openSettings(tab = 'general') {
+  openSettings(tab = 'general', anchor = null) {
     const s = state.settings;
-    const tabs = [['general', 'Общие'], ['agents', 'Агенты'], ['providers', 'API-провайдеры'], ['limits', 'Лимиты'], ['keys', 'Горячие клавиши']];
+    const tabs = [['general', 'Общие'], ['agents', 'Агенты'], ['providers', 'API-провайдеры'], ['limits', 'Лимиты'], ['sync', 'Синхронизация'], ['keys', 'Горячие клавиши']];
     const nav = h('div', { class: 'set-nav' });
     const pane = h('div', { class: 'set-pane' });
     const body = h('div', { class: 'settings' }, nav, pane);
@@ -640,6 +642,7 @@ class App {
     for (const [id, l] of tabs) nav.append(h('button', { 'data-id': id, onclick: () => show(id) }, l));
     modal({ title: 'Настройки', body, width: 'min(860px, 94vw)', className: 'settings-modal', onClose: () => { state.saveWs(); state.emit('settings', 'all'); limits.refresh(); } });
     show(tab);
+    if (anchor) requestAnimationFrame(() => pane.querySelector(`[data-anchor="${anchor}"]`)?.scrollIntoView({ block: 'start' }));
   }
 
   settings_general(s) {
@@ -664,6 +667,8 @@ class App {
       row('Сетка из точек', toggle('grid')),
       row('Привязка к сетке', toggle('snap'), 'Умные направляющие работают всегда. Alt — временно без привязки'),
       row('Карточки при отдалении', lod, 'При каком масштабе окна агентов превращаются в компактные карточки'),
+      h('h3', { 'data-anchor': 'clock' }, 'Часы в пульте'),
+      this.clockSettings(s),
       row('Питомец', petBtn, 'Готовые питомцы или своя картинка. Также: ПКМ по питомцу в пульте'),
       row('Питомец бегает за курсором', toggle('pet')),
       h('h3', {}, 'Производительность'),
@@ -672,6 +677,92 @@ class App {
       h('h3', {}, 'Заметки'),
       row('Хранилище (папка с .md)', vault, 'Можно указать существующее хранилище Obsidian'),
     );
+  }
+
+  // ---------------- sync between computers ----------------
+  bindSync() {
+    if (!native.sync) return;
+    let lastToast = 0;
+    native.sync.onChanged(async (ev) => {
+      if (ev.kind === 'chat') return; // the history panel reads fresh data when opened
+      const busy = (what) => (what === 'drag' ? !!this.canvas.dragging : [...this.canvas.views.values()].some((v) => v.inst?.isBusy?.()));
+      const applied = await state.applyRemote(ev, busy);
+      if (!applied) return;
+      if (ev.kind === 'workspace') { this.applyTheme(); this.canvas.applyMinimapSetting(); this.renderTabs(); }
+      if (Date.now() - lastToast > 8000) { lastToast = Date.now(); toast(`Синхронизировано с «${ev.from || 'другим устройством'}»`); }
+    });
+    state.on('docMerged', () => { this.canvas.renderAll(); this.canvas.recomputeGroups(); });
+    native.sync.ready?.();
+  }
+
+  settings_sync() {
+    const box = h('div', {});
+    const render = async () => {
+      const info = await native.sync.info();
+      const st = info.status || {};
+      const row = (label, ctrl, hint) => h('div', { class: 'set-row' }, h('div', {}, h('div', { class: 'set-label' }, label), hint ? h('div', { class: 'muted small' }, hint) : null), ctrl);
+      const pick = async () => { const d = await native.dialog.folder('Папка для синхронизации (в iCloud Drive, Dropbox, Google Drive, OneDrive…)'); if (d) { await native.sync.configure({ dir: d, enabled: true }); render(); } };
+      const onT = h('input', { type: 'checkbox', class: 'switch' }); onT.checked = !!info.enabled;
+      onT.onchange = async () => { if (onT.checked && !info.dir) { onT.checked = false; return pick(); } await native.sync.configure({ enabled: onT.checked }); render(); };
+      const keysT = h('input', { type: 'checkbox', class: 'switch' }); keysT.checked = !!info.keys;
+      keysT.onchange = async () => { await native.sync.configure({ keys: keysT.checked }); render(); };
+      const stateText = !info.enabled ? 'выключена' : st.state === 'error' ? `ошибка: ${st.error}` : st.last ? `работает, последняя проверка ${new Date(st.last).toLocaleTimeString('ru-RU')}` : 'запускается…';
+      const inVault = info.root && (state.settings.vaultPath || '').replace(/\\/g, '/').startsWith(info.root.replace(/\\/g, '/'));
+      box.replaceChildren(
+        h('p', { class: 'muted' }, 'Проекты, canvas, окна и история чатов синхронизируются между компьютерами через общую папку: iCloud Drive, Dropbox, Google Drive, OneDrive, Яндекс Диск или Syncthing. Сервер и регистрация не нужны: выберите одну и ту же облачную папку на каждом компьютере. Правки с разных компьютеров объединяются: если меняли разные объекты, сохранятся все, если один и тот же — более позднее изменение.'),
+        row('Синхронизация', onT, `Это устройство: ${info.device}`),
+        row('Папка', h('div', { class: 'row' }, h('code', { class: 'path' }, info.root || 'не выбрана'), h('button', { class: 'btn', onclick: pick }, info.dir ? 'Изменить…' : 'Выбрать…')),
+          'Например: Windows — C:\\Users\\вы\\iCloudDrive или папка Dropbox; macOS — iCloud Drive (~/Library/Mobile Documents/com~apple~CloudDocs).'),
+        row('Состояние', h('div', { class: 'row' }, h('span', { class: st.state === 'error' ? 'perf-warn' : 'muted' }, stateText),
+          info.enabled ? h('button', { class: 'btn', onclick: async () => { await native.sync.now(); render(); toast('Синхронизировано'); } }, 'Сейчас') : null),
+          info.enabled ? `Отправлено изменений: ${st.pushed || 0}, получено: ${st.pulled || 0}` : null),
+        row('Заметки', inVault ? h('span', { class: 'muted' }, 'хранятся в папке синхронизации') : h('button', { class: 'btn', disabled: !info.dir, onclick: async () => {
+          const dest = await native.sync.adoptVault(); state.setSetting('vaultPath', dest); await vaultIndex.refresh(); this.sidebar?.refresh?.(); toast('Заметки теперь в папке синхронизации'); render();
+        } }, 'Перенести в папку синхронизации'), 'Заметки — обычные .md файлы, облако синхронизирует их само. Существующие заметки будут скопированы.'),
+        row('API-ключи', keysT, 'По умолчанию ключи остаются только на этом компьютере. Включайте, только если доверяете облачной папке.'),
+      );
+    };
+    render();
+    const off = native.sync.onStatus?.(() => { if (box.isConnected) render(); else off?.(); });
+    return box;
+  }
+
+  clockSettings(s) {
+    const wrap = h('div', { class: 'clock-set' });
+    const col = (theme) => {
+      const key = theme === 'light' ? 'clockLight' : 'clockDark';
+      const ckey = theme === 'light' ? 'clockCustomLight' : 'clockCustomDark';
+      const box = h('div', { class: 'clock-col' });
+      const sel = h('select', { class: 'select sm' }, ...Object.entries(CLOCK_PRESETS).map(([id, c]) => h('option', { value: id }, c.name)), h('option', { value: 'custom' }, 'Свои цвета'));
+      sel.value = s[key] || CLOCK_DEFAULT[theme];
+      const prev = h('div', { class: 'sb-preview', html: clockMarkup('19', '08', theme === 'light' ? 'Светлая тема' : 'Тёмная тема') });
+      const picks = h('div', { class: 'clock-picks' });
+      const paint = () => {
+        const c = clockColors(theme);
+        paintClock(prev, c);
+        picks.style.display = sel.value === 'custom' ? '' : 'none';
+        picks.replaceChildren(...[['bg', 'Фон'], ['d0', 'Цифра 1'], ['d1', 'Цифра 2'], ['d2', 'Цифра 3'], ['d3', 'Цифра 4'], ['colon', 'Точки'], ['date', 'Дата']].map(([k, label]) => {
+          const val = k.startsWith('d') && k.length === 2 ? c.d[+k[1]] : c[k];
+          const inp = h('input', { type: 'color', value: val });
+          inp.oninput = () => {
+            const cur = { ...clockColors(theme) }; delete cur.blend; delete cur.name;
+            if (k.length === 2 && k.startsWith('d')) { cur.d = [...cur.d]; cur.d[+k[1]] = inp.value; } else cur[k] = inp.value;
+            state.setSetting(ckey, cur);
+            paintClock(prev, clockColors(theme));
+          };
+          return h('label', { class: 'clock-pick' }, inp, label);
+        }));
+      };
+      sel.onchange = () => {
+        if (sel.value === 'custom' && !s[ckey]) { const base = { ...clockColors(theme) }; delete base.blend; delete base.name; state.setSetting(ckey, base); }
+        state.setSetting(key, sel.value); paint();
+      };
+      paint();
+      box.append(h('div', { class: 'clock-col-head' }, h('span', {}, theme === 'light' ? 'Светлая тема' : 'Тёмная тема'), sel), prev, picks);
+      return box;
+    };
+    wrap.append(col('dark'), col('light'));
+    return h('div', {}, wrap, h('div', { class: 'muted small' }, 'Также ПКМ по часам в пульте. В «Свои цвета» можно задать фон, каждую цифру, точки и дату.'));
   }
 
   settings_agents(s) {

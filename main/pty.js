@@ -4,6 +4,8 @@ const { spawn, execFile } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+// a folder from another computer (synced canvas) may not exist here
+const safeCwd = (d) => { try { if (d && require('fs').statSync(d).isDirectory()) return d; } catch {} return os.homedir(); };
 
 const isWin = process.platform === 'win32';
 const MAX_SCROLLBACK = 400 * 1024;
@@ -127,7 +129,7 @@ class PtyManager {
         childEnv[key] = `${childEnv[key] || ''};${npmBin}`;
       }
     }
-    const argv = [String(c), String(r), b64(cwd || os.homedir()), b64(cmdLine)];
+    const argv = [String(c), String(r), b64(safeCwd(cwd)), b64(cmdLine)];
     const proc = bridge.kind === 'exe'
       ? spawn(bridge.path, argv, { windowsHide: true, env: childEnv, stdio: ['pipe', 'pipe', 'pipe'] })
       : spawn('python3', [bridge.path, ...argv], { env: childEnv, stdio: ['pipe', 'pipe', 'pipe'] });
@@ -143,7 +145,8 @@ class PtyManager {
       this.send('pty:data', { id, data });
     });
     proc.stderr.on('data', (chunk) => {
-      const data = chunk.toString('utf8').replace(/\n/g, '\r\n');
+      let data = chunk.toString('utf8').replace(/\n/g, '\r\n');
+      if (/xcrun: error|xcode-select/i.test(data)) data += '\r\n[CanvasTTY] Для терминала нужен python3 из Command Line Tools: выполните в Терминале macOS  xcode-select --install\r\n';
       session.buffer += data;
       this.send('pty:data', { id, data: `\x1b[90m${data}\x1b[0m` });
     });
@@ -154,7 +157,8 @@ class PtyManager {
     });
     proc.on('error', (err) => {
       session.exited = true; session.exitCode = -1;
-      const msg = `\r\n\x1b[31m[CanvasTTY] ${err.message}\x1b[0m\r\n`;
+      const hint = !isWin && err.code === 'ENOENT' ? (process.platform === 'darwin' ? '\r\nДля терминала нужен python3: выполните в Терминале macOS  xcode-select --install' : '\r\nДля терминала нужен python3') : '';
+      const msg = `\r\n\x1b[31m[CanvasTTY] ${err.message}${hint}\x1b[0m\r\n`;
       session.buffer += msg;
       this.send('pty:data', { id, data: msg });
       this.send('pty:exit', { id, code: -1, error: err.message });

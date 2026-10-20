@@ -392,7 +392,7 @@ export class CanvasView extends Emitter {
   undo() { if (!this.undoStack.length) return; this.redoStack.push(this.snapshot()); this.restore(this.undoStack.pop()); }
   redo() { if (!this.redoStack.length) return; this.undoStack.push(this.snapshot()); this.restore(this.redoStack.pop()); }
 
-  changed() { if (!this.dragging) this.recomputeGroups(); state.touch(); this.drawMinimap(); this.emit('changed'); }
+  changed() { if (!this.dragging) this.recomputeGroups(); state.lastEdit = Date.now(); state.touch(); this.drawMinimap(); this.emit('changed'); }
 
   maxZ() { return this.doc.nodes.reduce((m, n) => Math.max(m, n.z || 0), 0); }
 
