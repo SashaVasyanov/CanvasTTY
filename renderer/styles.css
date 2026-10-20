@@ -675,3 +675,16 @@ svg.guides line { stroke: #ff5ca8; stroke-width: 1; }
 .pet-slot-img img { width: 100%; height: 100%; object-fit: contain; }
 .pet-slot-label { font-size: 12px; color: var(--text-2); }
 :root[data-theme="light"] .ctx-chip { color: var(--accent-2); background: rgba(91, 108, 240, 0.12); }
+
+/* agent chat: model / effort / folder */
+.agent-bar { flex-wrap: wrap; gap: 6px 8px; align-items: flex-end; }
+.bar-field { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 110px; }
+.bar-field:first-child { flex: 1.5 1 150px; }
+.bar-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); padding-left: 2px; }
+.agent-bar .select { max-width: none; width: 100%; }
+.agent-bar .icon-btn { margin-bottom: 1px; }
+.agent-info { display: flex; align-items: center; gap: 10px; padding: 5px 10px; border-bottom: 1px solid var(--line); font-size: 11.5px; color: var(--text-2); min-width: 0; }
+.cwd-path { display: inline-flex; align-items: center; gap: 5px; min-width: 0; flex: 1 1 auto; padding: 2px 6px; border-radius: 6px; color: var(--text-2); font: 11.5px var(--mono); }
+.cwd-path:hover { background: rgba(var(--fg-rgb), 0.07); color: var(--text); }
+.cwd-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-info { flex: 0 1 auto; max-width: 62%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }

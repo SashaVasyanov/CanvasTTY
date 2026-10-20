@@ -7,7 +7,7 @@ import { vaultIndex } from './vaultIndex.js';
 import { Sidebar, NotePanel, openGraph } from './notes.js';
 import { limits, limitsPanel, petSvg, LIMIT_SOURCES, PETS, openPetPicker } from './hub.js';
 
-const VERSION = '1.1.0';
+const VERSION = '1.2.0';
 
 class App {
   async start() {

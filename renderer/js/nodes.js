@@ -426,29 +426,52 @@ export const AGENT_MODES = {
   codex: [['write', 'Правки в папке'], ['read', 'Только чтение'], ['full', 'Полный доступ']],
 };
 
+export const AGENT_MODELS = {
+  claude: [['opus', 'Opus'], ['sonnet', 'Sonnet'], ['haiku', 'Haiku'], ['claude-fable-5-1', 'Fable 5.1']],
+  codex: [['gpt-5-codex', 'GPT-5 Codex'], ['gpt-5', 'GPT-5'], ['gpt-5-codex-mini', 'GPT-5 Codex mini']],
+};
+export const AGENT_EFFORTS = {
+  claude: [['low', 'Низкий'], ['medium', 'Средний'], ['high', 'Высокий'], ['xhigh', 'Очень высокий'], ['max', 'Максимальный']],
+  codex: [['minimal', 'Минимальный'], ['low', 'Низкий'], ['medium', 'Средний'], ['high', 'Высокий'], ['xhigh', 'Очень высокий']],
+};
+let agentDefaultsP = null;
+const agentDefaults = () => (agentDefaultsP = agentDefaultsP || (native.agentChat.defaults ? native.agentChat.defaults().catch(() => ({})) : Promise.resolve({})));
+
 class AgentChatInstance {
   constructor({ node, view, body }) {
     this.node = node; this.view = view;
     this.running = null;
     this.root = h('div', { class: 'chat agent-chat' });
     this.modeSel = h('select', { class: 'select sm no-drag', title: 'Что агенту разрешено делать' });
-    this.modelInput = h('input', { class: 'input sm no-drag model-input', placeholder: 'модель по умолчанию', title: node.data.kind === 'claude' ? 'Например: sonnet, opus' : 'Например: gpt-5-codex' });
-    this.cwdBtn = h('button', { class: 'cwd-btn no-drag', title: 'Рабочая папка агента — нажмите, чтобы сменить', onclick: () => this.pickCwd() });
+    this.modelSel = h('select', { class: 'select sm no-drag', title: 'Модель' });
+    this.effortSel = h('select', { class: 'select sm no-drag', title: 'Уровень размышления (reasoning effort)' });
+    this.cwdBtn = h('button', { class: 'cwd-path no-drag', title: 'Рабочая папка агента — нажмите, чтобы сменить', onclick: () => this.pickCwd() });
+    this.modelInfo = h('span', { class: 'model-info' });
     this.newBtn = h('button', { class: 'icon-btn sm', title: 'Новая сессия (агент забудет переписку)', html: icon('plus', 14), onclick: () => this.newSession() });
-    this.bar = h('div', { class: 'chat-bar' }, this.modeSel, this.modelInput, this.cwdBtn, this.newBtn);
+    const field = (label, ctrl) => h('label', { class: 'bar-field' }, h('span', { class: 'bar-label' }, label), ctrl);
+    this.bar = h('div', { class: 'chat-bar agent-bar' },
+      field('Модель', this.modelSel), field('Размышление', this.effortSel), field('Доступ', this.modeSel), this.newBtn);
+    this.infoBar = h('div', { class: 'agent-info' }, this.cwdBtn, this.modelInfo);
     this.list = h('div', { class: 'chat-list scrollable' });
     this.ctxRow = h('div', { class: 'chat-ctx' });
     this.input = h('textarea', { class: 'chat-input', rows: 2, placeholder: 'Задача для агента… (Enter — отправить, Shift+Enter — новая строка)' });
     this.sendBtn = h('button', { class: 'chat-send', title: 'Отправить', html: icon('send', 16), onclick: () => (this.running ? this.stop() : this.send()) });
     this.usage = h('div', { class: 'chat-usage' });
-    this.root.append(this.bar, this.list, this.ctxRow, h('div', { class: 'chat-foot' }, this.input, this.sendBtn), this.usage);
+    this.root.append(this.bar, this.infoBar, this.list, this.ctxRow, h('div', { class: 'chat-foot' }, this.input, this.sendBtn), this.usage);
     body.append(this.root);
     for (const [v, l] of AGENT_MODES[this.kind] || []) this.modeSel.append(h('option', { value: v }, l));
+    this.fillModelOptions();
+    this.modelSel.addEventListener('change', async () => {
+      let v = this.modelSel.value;
+      if (v === '__custom') {
+        v = (await prompt('Название модели', this.node.data.model || '', this.kind === 'claude' ? 'например claude-opus-5-5' : 'например gpt-5-codex')) || '';
+      }
+      this.view.setData(this.node.id, { model: v.trim(), actualModel: null });
+      this.fillModelOptions();
+    });
+    this.effortSel.addEventListener('change', () => { this.view.setData(this.node.id, { effort: this.effortSel.value }); this.renderInfo(); });
     this.modeSel.value = node.data.mode || (AGENT_MODES[this.kind] || [[]])[0][0];
     this.modeSel.addEventListener('change', () => this.view.setData(this.node.id, { mode: this.modeSel.value }));
-    this.modelInput.value = node.data.model || '';
-    this.modelInput.addEventListener('change', () => this.view.setData(this.node.id, { model: this.modelInput.value.trim() }));
-    this.modelInput.addEventListener('keydown', (e) => e.stopPropagation());
     this.input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); this.send(); } e.stopPropagation(); });
     this.input.addEventListener('input', () => { this.input.style.height = 'auto'; this.input.style.height = `${Math.min(160, this.input.scrollHeight)}px`; });
     this.list.addEventListener('click', (e) => {
@@ -468,7 +491,38 @@ class AgentChatInstance {
   get messages() { return this.node.data.messages || []; }
   get cwd() { return this.node.data.cwd || state.project.cwd || state.info.home; }
 
-  renderCwd() { const c = this.cwd || ''; this.cwdBtn.replaceChildren(h('span', { html: icon('folder', 12) }), h('span', {}, c.split(/[\\/]/).filter(Boolean).pop() || c || 'папка')); this.cwdBtn.title = `Рабочая папка: ${c}\nНажмите, чтобы сменить`; }
+  async fillModelOptions() {
+    const d = (await agentDefaults())[this.kind] || {};
+    this.defaults = d;
+    const cur = this.node.data.model || '';
+    const models = [...AGENT_MODELS[this.kind] || []];
+    for (const m of d.models || []) if (!models.some(([v]) => v === m)) models.push([m, m]);
+    if (cur && !models.some(([v]) => v === cur)) models.push([cur, cur]);
+    this.modelSel.innerHTML = '';
+    this.modelSel.append(h('option', { value: '' }, d.model ? `Авто (${d.model})` : 'Авто'));
+    for (const [v, l] of models) this.modelSel.append(h('option', { value: v }, l));
+    this.modelSel.append(h('option', { value: '__custom' }, 'Другая…'));
+    this.modelSel.value = cur;
+    const eff = this.node.data.effort || '';
+    this.effortSel.innerHTML = '';
+    this.effortSel.append(h('option', { value: '' }, d.effort ? `Авто (${((AGENT_EFFORTS[this.kind] || []).find(([v]) => v === d.effort)?.[1] || d.effort).toLowerCase()})` : 'Авто'));
+    for (const [v, l] of AGENT_EFFORTS[this.kind] || []) this.effortSel.append(h('option', { value: v }, l));
+    this.effortSel.value = eff;
+    this.renderInfo();
+  }
+  renderInfo() {
+    const d = this.defaults || {};
+    const n = this.node.data;
+    const model = n.actualModel || n.model || d.model;
+    const effL = (AGENT_EFFORTS[this.kind] || []).find(([v]) => v === (n.effort || d.effort))?.[1];
+    this.modelInfo.textContent = model ? `${model}${effL ? ` · размышл.: ${effL.toLowerCase()}` : ''}` : 'модель из настроек агента';
+    this.modelInfo.title = n.actualModel ? 'Модель, которую агент сообщил в последней сессии' : 'Модель из настроек агента или выбранная сверху';
+  }
+  renderCwd() {
+    const c = this.cwd || '';
+    this.cwdBtn.replaceChildren(h('span', { html: icon('folder', 12) }), h('span', { class: 'cwd-text' }, !c ? 'выберите папку' : c.length > 46 ? '…' + c.slice(-45) : c));
+    this.cwdBtn.title = `Рабочая папка агента:\n${c}\n\nНажмите, чтобы сменить`;
+  }
   async pickCwd() { const p = await native.dialog.folder('Рабочая папка агента'); if (p) { this.view.setData(this.node.id, { cwd: p }); this.renderCwd(); } }
   newSession() { this.view.setData(this.node.id, { sessionId: null, messages: [], ctxHash: null }); this.renderAll(); toast('Начата новая сессия'); }
   renderCtx() { renderCtxRow(this.ctxRow, this.view, this.node.id); }
@@ -556,6 +610,7 @@ class AgentChatInstance {
     chatRoutes.set(reqId, (ev) => {
       switch (ev.type) {
         case 'session': this.view.setData(this.node.id, { sessionId: ev.sessionId }); break;
+        case 'info': if (ev.model) { this.view.setData(this.node.id, { actualModel: ev.model }); this.renderInfo(); } break;
         case 'delta': lastText().text += ev.text; break;
         case 'break': newText = true; break;
         case 'reasoning': { const l = asst.parts[asst.parts.length - 1]; if (l && l.type === 'reasoning') l.text += ev.text; else asst.parts.push({ type: 'reasoning', text: ev.text }); break; }
@@ -568,7 +623,7 @@ class AgentChatInstance {
       }
       paint();
     });
-    await native.agentChat.run({ reqId, kind: this.kind, cmd: this.agent.cmd || this.kind, prompt, sessionId: this.node.data.sessionId, mode: this.modeSel.value, model: this.modelInput.value.trim(), cwd: this.cwd });
+    await native.agentChat.run({ reqId, kind: this.kind, cmd: this.agent.cmd || this.kind, prompt, sessionId: this.node.data.sessionId, mode: this.modeSel.value, model: this.node.data.model || '', effort: this.node.data.effort || '', cwd: this.cwd });
   }
 
   finish(reqId, all, asst, ev) {
@@ -599,7 +654,7 @@ class AgentChatInstance {
     if (m && (m.parts || []).some((p) => p.type === 'error')) return { label: 'Ошибка', kind: 'na' };
     return { label: this.messages.length ? 'Ожидает' : 'Готов', kind: 'idle' };
   }
-  update(n) { this.node = n; if (!this.running) { this.modeSel.value = n.data.mode || this.modeSel.value; this.modelInput.value = n.data.model || ''; this.renderCwd(); this.renderAll(); } }
+  update(n) { this.node = n; if (!this.running) { this.modeSel.value = n.data.mode || this.modeSel.value; this.fillModelOptions(); this.renderCwd(); this.renderAll(); } }
   edit() { this.input.focus(); }
   destroy() { this.offEdges?.(); }
   dispose() { this.stop(); }

@@ -5,6 +5,7 @@
 const { spawn, execFile } = require('child_process');
 const path = require('path');
 const os = require('os');
+const fs = require('fs');
 
 const isWin = process.platform === 'win32';
 
@@ -78,6 +79,7 @@ class AgentChatManager {
     if (partial) args.push('--include-partial-messages');
     if (mode && mode !== 'default') args.push('--permission-mode', mode);
     if (model) args.push('--model', model);
+    if (opts.effort && !opts.noEffort) args.push('--effort', opts.effort);
     if (sessionId) args.push('--resume', sessionId);
     const proc = spawnCli(resolved, args, { cwd: cwd || os.homedir(), env: this.env(), stdio: ['pipe', 'pipe', 'pipe'] });
     const run = { proc, aborted: false };
@@ -124,6 +126,10 @@ class AgentChatManager {
       this.runs.delete(reqId);
       if (buf.trim()) { try { handle(JSON.parse(buf.trim())); } catch {} }
       if (run.aborted) { emit('done', { sessionId: sid, aborted: true }); return; }
+      if (!gotOutput && opts.effort && !opts.noEffort && /--effort|effort/i.test(stderr) && /unknown|invalid|error/i.test(stderr)) {
+        emit('notice', { text: 'Эта версия Claude Code не поддерживает выбор уровня размышления — используется уровень по умолчанию. Обновите: npm i -g @anthropic-ai/claude-code' });
+        this.runClaude({ ...opts, noEffort: true }, resolved, emit, partial); return;
+      }
       if (!gotOutput && partial && /include-partial-messages|unknown option/i.test(stderr)) { this.runClaude(opts, resolved, emit, false); return; }
       if (!finished) {
         if (code !== 0) emit('error', { message: (stderr.trim() || `Процесс завершился с кодом ${code}`).slice(-1500) });
@@ -141,6 +147,7 @@ class AgentChatManager {
     if (mode === 'full') args.push('--dangerously-bypass-approvals-and-sandbox');
     else args.push('-s', mode === 'read' ? 'read-only' : 'workspace-write');
     if (model) args.push('-m', model);
+    if (opts.effort) args.push('-c', `model_reasoning_effort=${opts.effort}`);
     if (sessionId && withResume) args.push('resume', sessionId);
     const proc = spawnCli(resolved, args, { cwd: cwd || os.homedir(), env: this.env(), stdio: ['pipe', 'pipe', 'pipe'] });
     const run = { proc, aborted: false };
@@ -214,4 +221,33 @@ class AgentChatManager {
   }
 }
 
-module.exports = { AgentChatManager };
+// Defaults configured in the agents' own settings, so the UI can show which model is really used.
+function readText(p) { try { return fs.readFileSync(p, 'utf8'); } catch { return ''; } }
+function agentDefaults() {
+  const home = os.homedir();
+  const out = { claude: {}, codex: {} };
+  // Claude Code: ~/.claude/settings.json → "model", "effortLevel"
+  const claudeDir = process.env.CLAUDE_CONFIG_DIR || path.join(home, '.claude');
+  try {
+    const j = JSON.parse(readText(path.join(claudeDir, 'settings.json')) || '{}');
+    if (j.model) out.claude.model = j.model;
+    if (j.effortLevel || j.effort) out.claude.effort = j.effortLevel || j.effort;
+  } catch {}
+  if (process.env.ANTHROPIC_MODEL) out.claude.model = process.env.ANTHROPIC_MODEL;
+  // Codex: ~/.codex/config.toml (top-level keys before the first [section])
+  const codexDir = process.env.CODEX_HOME || path.join(home, '.codex');
+  const toml = readText(path.join(codexDir, 'config.toml')).split(/^\s*\[/m)[0];
+  const tv = (k) => { const m = new RegExp(`^\\s*${k}\\s*=\\s*["']?([^"'\\n#]+)["']?`, 'm').exec(toml); return m ? m[1].trim() : null; };
+  if (tv('model')) out.codex.model = tv('model');
+  if (tv('model_reasoning_effort')) out.codex.effort = tv('model_reasoning_effort');
+  // models Codex has seen (cache files differ between versions — best effort)
+  const models = new Set();
+  for (const f of ['models_cache.json', 'models.json']) {
+    const t = readText(path.join(codexDir, f));
+    for (const m of t.matchAll(/"(?:slug|id|model)"\s*:\s*"([^"]+)"/g)) if (/^(gpt|o\d|codex)/i.test(m[1])) models.add(m[1]);
+  }
+  out.codex.models = [...models].slice(0, 20);
+  return out;
+}
+
+module.exports = { AgentChatManager, agentDefaults };

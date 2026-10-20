@@ -7,7 +7,7 @@ const { PtyManager } = require('./pty');
 const { Vault } = require('./vault');
 const { ChatManager, PROVIDERS } = require('./chat');
 const { getLimits } = require('./limits');
-const { AgentChatManager } = require('./agentchat');
+const { AgentChatManager, agentDefaults } = require('./agentchat');
 
 app.setName('CanvasTTY');
 // rendering performance: GPU rasterization even on blocklisted drivers
@@ -160,6 +160,7 @@ app.whenReady().then(() => {
   // ---------- agent chat (CLI agents in chat window) ----------
   ipcMain.handle('agentchat:run', (e, opts) => { agentChat.run(opts); return true; });
   ipcMain.handle('agentchat:abort', (e, reqId) => agentChat.abort(reqId));
+  ipcMain.handle('agentchat:defaults', () => agentDefaults());
   ipcMain.handle('win:setBg', (e, color) => { try { win.setBackgroundColor(color); } catch {} });
 
   // ---------- limits ----------

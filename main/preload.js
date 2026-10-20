@@ -21,7 +21,7 @@ contextBridge.exposeInMainWorld('native', {
     onData: on('pty:data'), onExit: on('pty:exit'),
   },
   chat: { providers: inv('chat:providers'), send: inv('chat:send'), abort: inv('chat:abort'), models: inv('chat:models'), onEvent: on('chat:event') },
-  agentChat: { run: inv('agentchat:run'), abort: inv('agentchat:abort'), onEvent: on('agentchat:event') },
+  agentChat: { run: inv('agentchat:run'), abort: inv('agentchat:abort'), defaults: inv('agentchat:defaults'), onEvent: on('agentchat:event') },
   setBg: inv('win:setBg'),
   limits: { get: inv('limits:get'), usage: inv('usage:get') },
   vault: {

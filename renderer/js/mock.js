@@ -25,7 +25,7 @@ let seq = 0;
 export const mockNative = {
   isElectron: false,
   win: { minimize() {}, maximize() {}, close() {}, isMaximized: async () => false, onState: on('win:state') },
-  info: async () => ({ version: '1.1.0', platform: 'browser', home: '/home/user' }),
+  info: async () => ({ version: '1.2.0', platform: 'browser', home: '/home/user' }),
   ws: { load: async () => LS.get('mock:ws', null), save: async (ws) => LS.set('mock:ws', ws) },
   canvas: { load: async (id) => LS.get(`mock:canvas:${id}`, null), save: async (id, d) => LS.set(`mock:canvas:${id}`, d), remove: async (id) => localStorage.removeItem(`mock:canvas:${id}`) },
   pty: {
@@ -80,6 +80,7 @@ export const mockNative = {
       const ev = (type, p = {}) => emit('agentchat:event', { reqId, type, ...p });
       const steps = [
         () => ev('session', { sessionId: 'demo-session-1234' }),
+        () => ev('info', { model: kind === 'codex' ? 'gpt-5-codex' : 'claude-sonnet-5-5' }),
         () => ev('delta', { text: 'Смотрю структуру проекта.' }),
         () => ev('break'),
         () => ev('tool', { id: 't1', name: kind === 'codex' ? 'Команда' : 'Bash', input: 'ls -la' }),
@@ -99,7 +100,7 @@ export const mockNative = {
       }, 90);
       return true;
     },
-    abort: async () => {}, onEvent: on('agentchat:event'),
+    abort: async () => {}, defaults: async () => ({ claude: { model: 'sonnet' }, codex: { model: 'gpt-5-codex', effort: 'medium', models: [] } }), onEvent: on('agentchat:event'),
   },
   setBg: async () => {},
   limits: {
