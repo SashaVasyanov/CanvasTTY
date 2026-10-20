@@ -1217,11 +1217,7 @@ export class CanvasView extends Emitter {
         if (edgeEl) this.emit('editEdge', edgeEl.dataset.id);
         return;
       }
-      // double-click on empty canvas → sticky
-      const p = this.toWorld(e.clientX, e.clientY);
-      const s = this.addNode('sticky', { x: p.x, y: p.y });
-      this.views.get(s.id)?.inst?.edit?.();
-      return;
+      return; // a double-click on empty canvas does nothing (stickies: S or the toolbar)
     }
     if (this.lod && NODE_TYPES[n.type].chrome === 'window') { this.focusNode(n.id); return; }
     const v = this.views.get(n.id);
