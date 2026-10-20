@@ -112,7 +112,7 @@ uv tool install kimi-cli             # Kimi
 | `npm run dist` | собрать установщик для текущей ОС в `release/` |
 | `npm run dist:win` / `dist:mac` / `dist:linux` | собрать под конкретную ОС |
 
-**Релиз:** поставьте тег `vX.Y.Z` и отправьте его (`git tag v1.1.0 && git push --tags`). GitHub Actions соберёт Windows, macOS и Linux и прикрепит файлы к релизу.
+**Релиз:** создайте релиз на GitHub (Releases → Draft a new release, тег `vX.Y.Z` → Publish) или отправьте тег (`git tag v1.3.0 && git push --tags`). GitHub Actions соберёт Windows, macOS (Apple Silicon и Intel) и Linux и прикрепит файлы к релизу.
 
 ### Как это устроено
 - **Без нативных модулей.** Терминал на Windows работает через крошечный C#-мост к ConPTY (`main/pty/ptybridge.cs`), который при первом запуске компилируется встроенным в Windows `csc.exe`. На macOS и Linux используется Python-модуль `pty`. Поэтому сборка не требует node-gyp и Visual Studio.
