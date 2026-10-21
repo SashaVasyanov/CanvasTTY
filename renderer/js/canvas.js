@@ -846,6 +846,7 @@ export class CanvasView extends Emitter {
       try {
         const text = await native.vault.read(src);
         const p = await native.vault.create(dir, src.split('/').pop().replace(/\.md$/i, ''), text);
+        try { const { noteStyles } = await import('./notestyle.js'); const st = noteStyles.get(src); if (Object.keys(st).length) await noteStyles.set(p, st); } catch {}
         if (this.node(n.id)) this.updateNode(n.id, { data: { path: p } });
         else native.vault.remove?.(p); // the copy was undone meanwhile
       } catch {}

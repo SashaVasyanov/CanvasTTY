@@ -365,6 +365,22 @@ svg.guides line { stroke: #ff5ca8; stroke-width: 1; }
 .tb-sep { width: 1px; height: 18px; background: var(--line-2); margin: 0 4px; flex: none; }
 .tb-flex { flex: 1; }
 .rich-editor.compact .tb-inline { display: none; }
+/* note font & size */
+.ns-fontbtn { width: auto !important; max-width: 128px; display: inline-flex !important; align-items: center; gap: 3px; padding: 0 6px !important; font-size: 12.5px; color: var(--text-2); }
+.ns-fontbtn.on { color: var(--text-strong); }
+.ns-fontname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ns-caret { display: flex; opacity: 0.6; flex: none; }
+.ns-sizebox { display: inline-flex; align-items: center; gap: 0; flex: none; }
+.ns-step { width: 22px !important; font-size: 14px; font-weight: 600; }
+.ns-size { width: 34px; height: 24px; font-size: 12px; }
+.rich-editor.compact .ns-fontbtn { max-width: 96px; }
+.ns-pop { min-width: 220px; max-width: 300px; padding: 4px; }
+.ns-list { max-height: 320px; overflow-y: auto; }
+.ns-list.tall { max-height: 380px; }
+.ns-font .menu-label { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ns-more .menu-label { font-size: 12.5px; color: var(--accent-2); }
+.ns-search { width: calc(100% - 8px); margin: 4px; height: 30px; }
+.ns-hint { padding: 10px; font-size: 12px; }
 .aa-pop { padding: 6px; width: 250px; }
 .aa-style .menu-ic { color: var(--accent-2); font-weight: 700; }
 .aa-h1 .menu-label { font-size: 19px; font-weight: 750; }
@@ -394,7 +410,7 @@ svg.guides line { stroke: #ff5ca8; stroke-width: 1; }
 .md li[data-checked="true"]::after { content: ''; position: absolute; left: 5.5px; top: calc(0.22em + 3.5px); width: 4px; height: 8px; border: solid var(--bg); border-width: 0 2px 2px 0; transform: rotate(45deg); pointer-events: none; }
 .md li[data-checked="true"] { color: var(--muted); text-decoration: line-through; text-decoration-color: rgba(var(--fg-rgb), 0.25); }
 .md blockquote { margin: 0.6em 0; padding: 2px 0 2px 14px; border-left: 3px solid var(--accent); color: var(--text-2); }
-.md pre { background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; font: 12.5px/1.5 var(--mono); white-space: pre-wrap; overflow-x: auto; }
+.md pre { background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; font: 0.88em/1.5 var(--mono); white-space: pre-wrap; overflow-x: auto; }
 .md code { font: 0.88em var(--mono); background: rgba(var(--fg-rgb), 0.07); padding: 1px 5px; border-radius: 4px; }
 .md pre code { background: none; padding: 0; }
 .md mark { background: rgba(240, 200, 90, 0.35); color: inherit; padding: 0 2px; border-radius: 3px; }

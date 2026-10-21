@@ -3,6 +3,7 @@ import { h, icon, debounce, menu, prompt, toast, esc, readFileAsDataURL, Emitter
 import { mdToHtml, htmlToMd, splitFrontmatter } from './md.js';
 import { native } from './state.js';
 import { vaultIndex } from './vaultIndex.js';
+import { noteStyles, fontPicker, sizeControl, stackOf } from './notestyle.js';
 
 document.execCommand('defaultParagraphSeparator', false, 'p');
 
@@ -24,6 +25,7 @@ export class RichEditor extends Emitter {
     this.content = h('div', { class: 'rich-content md', contenteditable: 'true', spellcheck: 'false', 'data-placeholder': placeholder });
     this.el.append(this.toolbar, this.content);
     this.save = debounce(() => this.saveNow(), 450);
+    this.offStyles = noteStyles.on('change', (p) => { if (!p || p === this.path) this.applyStyle(); });
     LIVE_EDITORS.add(this);
     this.bind();
   }
@@ -40,8 +42,19 @@ export class RichEditor extends Emitter {
     const aa = h('button', { class: 'tb-btn tb-aa', title: 'Стиль текста' }, h('span', { class: 'aa' }, 'Aa'));
     aa.addEventListener('mousedown', (e) => e.preventDefault());
     aa.addEventListener('click', () => this.formatPopover(aa));
+    // font and size of this note
+    this.fontBtn = h('button', { class: 'tb-btn ns-fontbtn', title: 'Шрифт заметки' }, h('span', { class: 'ns-fontname' }, 'Шрифт'), h('span', { class: 'ns-caret', html: icon('chevronDown', 11) }));
+    this.fontBtn.addEventListener('mousedown', (e) => e.preventDefault());
+    this.fontBtn.addEventListener('click', () => { if (this.path) fontPicker(this.fontBtn, noteStyles.get(this.path).font || '', (f) => noteStyles.set(this.path, { font: f })); });
+    this.sizeCtl = sizeControl({
+      get: () => (this.path ? noteStyles.get(this.path).size : 0),
+      placeholder: () => (this.content?.isConnected ? Math.round(parseFloat(getComputedStyle(this.content).fontSize) || 14) : ''),
+      onSet: (n) => { if (this.path) noteStyles.set(this.path, { size: n }); },
+    });
     tb.append(
       aa,
+      this.fontBtn, this.sizeCtl.el,
+      h('span', { class: 'tb-sep' }),
       btn('checklist', 'Чек-лист (Ctrl+Shift+L)', () => this.toggleChecklist()),
       btn('table', 'Таблица', (e, b) => this.tableMenu(b)),
       btn('paperclip', 'Вложение (изображение)', () => this.attach()),
@@ -477,6 +490,18 @@ export class RichEditor extends Emitter {
     let md = '';
     try { md = await native.vault.read(path); } catch { md = ''; }
     this.setMarkdown(md);
+    await noteStyles.load();
+    this.applyStyle();
+  }
+  applyStyle() {
+    const st = this.path ? noteStyles.get(this.path) : {};
+    this.content.style.fontFamily = stackOf(st.font);
+    this.content.style.fontSize = st.size ? `${st.size}px` : '';
+    const name = this.fontBtn.querySelector('.ns-fontname');
+    name.textContent = st.font || 'Шрифт';
+    name.style.fontFamily = stackOf(st.font);
+    this.fontBtn.classList.toggle('on', !!st.font);
+    this.sizeCtl.show();
   }
 
   setMarkdown(md) {
@@ -518,5 +543,5 @@ export class RichEditor extends Emitter {
   }
 
   focus() { this.content.focus(); }
-  destroy() { this.save.flush(); LIVE_EDITORS.delete(this); this.closeAc(); this.el.remove(); }
+  destroy() { this.save.flush(); this.offStyles?.(); LIVE_EDITORS.delete(this); this.closeAc(); this.el.remove(); }
 }

@@ -122,6 +122,34 @@ class Vault {
     return rel;
   }
 
+  // per-note look (font, size) lives next to the notes, invisible to Obsidian and synced with them
+  stylesFile() { return path.join(this.root, '.canvastty', 'note-styles.json'); }
+  async styles() { try { return JSON.parse(await fsp.readFile(this.stylesFile(), 'utf8')) || {}; } catch { return {}; } }
+  async writeStyles(all) {
+    const f = this.stylesFile();
+    await fsp.mkdir(path.dirname(f), { recursive: true });
+    const tmp = `${f}.${process.pid}.${Math.random().toString(36).slice(2, 7)}.tmp`;
+    await fsp.writeFile(tmp, JSON.stringify(all, null, 1));
+    await fsp.rename(tmp, f);
+  }
+  async setStyle(rel, style) {
+    const all = await this.styles();
+    const clean = {};
+    if (style?.font) clean.font = String(style.font).slice(0, 120);
+    if (style?.size) clean.size = Math.min(72, Math.max(8, Math.round(Number(style.size) || 0))) || undefined;
+    if (Object.keys(clean).filter((k) => clean[k] != null).length) all[rel] = clean; else delete all[rel];
+    await this.writeStyles(all);
+    return all[rel] || null;
+  }
+  async moveStyles(oldRel, newRel) {
+    const all = await this.styles();
+    let changed = false;
+    for (const k of Object.keys(all)) {
+      if (k === oldRel || k.startsWith(oldRel + '/')) { all[newRel + k.slice(oldRel.length)] = all[k]; delete all[k]; changed = true; }
+    }
+    if (changed) await this.writeStyles(all);
+  }
+
   async mkdir(rel) { await fsp.mkdir(this.abs(rel), { recursive: true }); return rel; }
 
   async rename(oldRel, newRel) {
@@ -130,6 +158,7 @@ class Vault {
     if (fs.existsSync(to)) throw new Error('Файл с таким именем уже существует');
     await fsp.mkdir(path.dirname(to), { recursive: true });
     await fsp.rename(from, to);
+    await this.moveStyles(oldRel, newRel).catch(() => {});
     // update [[links]] like Obsidian does
     if (oldRel.endsWith('.md') && newRel.endsWith('.md')) {
       const oldName = path.basename(oldRel, '.md');

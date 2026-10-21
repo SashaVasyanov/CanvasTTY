@@ -164,6 +164,8 @@ export const mockNative = {
     async rename(a, b) { files[b] = files[a]; delete files[a]; saveFiles(); emit('vault:changed', {}); return b; },
     remove: async (p) => { delete files[p]; for (const k of Object.keys(files)) if (k.startsWith(p + '/')) delete files[k]; saveFiles(); emit('vault:changed', {}); return true; },
     async search(q) { q = q.toLowerCase(); return Object.entries(files).filter(([p, t]) => p.endsWith('.md') && (p.toLowerCase().includes(q) || t.toLowerCase().includes(q))).map(([p, t]) => { const i = t.toLowerCase().indexOf(q); return { path: p, name: p.split('/').pop().replace(/\.md$/, ''), matches: i >= 0 ? [{ before: t.slice(Math.max(0, i - 40), i), hit: t.slice(i, i + q.length), after: t.slice(i + q.length, i + q.length + 60) }] : [] }; }); },
+    styles: async () => { try { return JSON.parse(localStorage.getItem('mock:noteStyles') || '{}'); } catch { return {}; } },
+    setStyle: async (p, st) => { let all = {}; try { all = JSON.parse(localStorage.getItem('mock:noteStyles') || '{}'); } catch {} const c = {}; if (st?.font) c.font = st.font; if (st?.size) c.size = Math.min(72, Math.max(8, Math.round(st.size))); if (Object.keys(c).length) all[p] = c; else delete all[p]; localStorage.setItem('mock:noteStyles', JSON.stringify(all)); return all[p] || null; },
     saveAsset: async (dataUrl) => { const p = `attachments/img-${Date.now()}.png`; files[p] = dataUrl; saveFiles(); return p; },
     readAsset: async (p) => files[p] || '',
     reveal: async () => {}, onChanged: on('vault:changed'),
