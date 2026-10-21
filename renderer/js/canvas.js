@@ -1,7 +1,8 @@
 // Infinite canvas engine: viewport, nodes, edges, selection, snapping, history.
 import { h, icon, uid, clamp, Emitter, isEditable, menu, deepClone, throttle, toast, keyName } from './util.js';
 import { state, native } from './state.js';
-import { NODE_TYPES, strokePath, PEN_WIDTHS } from './nodes.js';
+import { NODE_TYPES, strokePath } from './nodes.js';
+import { PEN_TOOLS, penSettings, currentTool, cssColor, swatch, spectrumButton, BAR_COLORS } from './pentools.js';
 import { Comments } from './comments.js';
 
 const MIN_Z = 0.08, MAX_Z = 3;
@@ -651,15 +652,21 @@ export class CanvasView extends Emitter {
     }
     if (nodes.length && nodes.every((n) => n.type === 'drawing')) {
       const ids = nodes.map((n) => n.id);
-      const setAll = (data) => { this.checkpoint(); for (const id of ids) this.updateNode(id, { data }); this.updateOverlay(); };
-      if (nodes.length > 1) {
-        for (const c of NODE_TYPES.drawing.colors) tb.append(h('button', { class: `swatch${c === 'auto' ? ' auto' : ''}${nodes.every((n) => (n.data.color || 'auto') === c) ? ' on' : ''}`, style: { background: c === 'auto' ? 'var(--text-strong)' : c }, title: c === 'auto' ? 'Под тему' : c, onclick: (e) => { e.stopPropagation(); setAll({ color: c }); } }));
-        tb.append(h('span', { class: 'st-sep' }));
-      }
-      for (const wd of PEN_WIDTHS) {
-        const on = nodes.every((n) => (n.data.width || 4) === wd);
-        tb.append(h('button', { class: `st-btn st-width${on ? ' on' : ''}`, title: `Толщина ${wd}`, html: `<svg viewBox="0 0 20 20" width="18" height="18"><line x1="3" y1="10" x2="17" y2="10" stroke="currentColor" stroke-linecap="round" stroke-width="${Math.min(9, Math.max(1.5, wd / 1.8))}"/></svg>`, onclick: (e) => { e.stopPropagation(); setAll({ width: wd }); } }));
-      }
+      let pickerCheckpointed = false;
+      const setAll = (data, cp = true) => { if (cp) this.checkpoint(); for (const id of ids) this.updateNode(id, { data }); this.updateOverlay(); };
+      const cur = nodes.every((n) => (n.data.color || 'auto') === (nodes[0].data.color || 'auto')) ? nodes[0].data.color || 'auto' : null;
+      for (const c of BAR_COLORS) tb.append(swatch(c, cur === c, (v) => setAll({ color: v })));
+      // live colour from the picker: one undo step for the whole picking session
+      tb.append(spectrumButton(cur, (v) => { setAll({ color: v }, !pickerCheckpointed); pickerCheckpointed = true; }, () => { pickerCheckpointed = false; }));
+      tb.append(h('span', { class: 'st-sep' }));
+      const kind = PEN_TOOLS[nodes[0].data.tool] && nodes.every((n) => n.data.tool === nodes[0].data.tool) ? nodes[0].data.tool : 'pen';
+      PEN_TOOLS[kind].widths.forEach((wd, i) => {
+        const on = nodes.every((n) => (n.data.width || 3) === wd);
+        const b = h('button', { class: `st-btn st-wdot${on ? ' on' : ''}`, title: `Толщина ${wd}`, onclick: (e) => { e.stopPropagation(); setAll({ width: wd }); } }, h('span'));
+        const px = Math.min(16, 3 + i * 3.2);
+        Object.assign(b.firstChild.style, { width: `${px}px`, height: `${px}px` });
+        tb.append(b);
+      });
       tb.append(h('span', { class: 'st-sep' }));
     }
     if (nodes.length && nodes.every((n) => n.type === 'text')) {
@@ -1102,14 +1109,16 @@ export class CanvasView extends Emitter {
   // Freehand line. Every pointer sample is used (coalesced events), the stroke is simplified to
   // what is visible at the current zoom and saved as a 'drawing' object. Shift — straight line.
   startPencil(e) {
-    const color = state.settings.pencilColor || 'auto';
-    const width = state.settings.pencilWidth || 4;
+    const tool = currentTool();
+    if (tool === 'eraser') { this.startEraser(e); return; }
+    const { color, width, opacity } = penSettings(tool);
     const start = this.toWorld(e.clientX, e.clientY);
     let pts = [[start.x, start.y]];
     const minStep = 0.75 / this.vp.z;
     const live = this.pencilPath;
     live.setAttribute('stroke-width', width);
-    live.style.stroke = color === 'auto' ? '' : color;
+    live.style.stroke = cssColor(color);
+    live.style.strokeOpacity = String(opacity ?? 1);
     this.pencilSvg.style.display = 'block';
     let raf = 0;
     const paint = () => { raf = 0; live.setAttribute('d', strokePath(pts)); };
@@ -1131,14 +1140,58 @@ export class CanvasView extends Emitter {
       cancelAnimationFrame(raf);
       live.setAttribute('d', ''); this.pencilSvg.style.display = 'none';
       this.dragging = null;
-      if (commit) this.addDrawing(simplify(pts, 0.6 / this.vp.z), color, width);
+      if (commit) this.addDrawing(simplify(pts, 0.6 / this.vp.z), { color, width, opacity, tool });
     };
     const up = () => finish(true);
     const esc = (ev) => { if (ev.key === 'Escape') { ev.stopPropagation(); finish(false); } };
     window.addEventListener('pointermove', move); window.addEventListener('pointerup', up); window.addEventListener('keydown', esc, true);
     this.dragging = { kind: 'pencil', noOverlay: true, move: () => {}, up: () => {}, cancel: () => finish(false) };
   }
-  addDrawing(pts, color, width) {
+  // eraser: every drawing the eraser touches disappears (one undo step)
+  startEraser(e) {
+    const r = (penSettings('eraser').width / 2) / this.vp.z;
+    const NS = 'http://www.w3.org/2000/svg';
+    const ring = document.createElementNS(NS, 'circle');
+    ring.setAttribute('class', 'eraser-ring'); ring.setAttribute('r', r);
+    this.pencilSvg.append(ring); this.pencilSvg.style.display = 'block';
+    const hits = new Set();
+    const dist = (px, py, ax, ay, bx, by) => { const dx = bx - ax, dy = by - ay, l = dx * dx + dy * dy; const t = l ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / l)) : 0; return Math.hypot(px - ax - t * dx, py - ay - t * dy); };
+    const test = (x, y) => {
+      for (const n of this.doc.nodes) {
+        if (n.type !== 'drawing' || n.locked || hits.has(n.id)) continue;
+        const reach = r + (n.data.width || 3) / 2;
+        if (x < n.x - reach || y < n.y - reach || x > n.x + n.w + reach || y > n.y + n.h + reach) continue;
+        const pts = (n.data.pts || []).map(([u, v]) => [n.x + u * n.w, n.y + v * n.h]);
+        let hit = pts.length === 1 ? Math.hypot(x - pts[0][0], y - pts[0][1]) <= reach : false;
+        for (let i = 1; !hit && i < pts.length; i++) if (dist(x, y, pts[i - 1][0], pts[i - 1][1], pts[i][0], pts[i][1]) <= reach) hit = true;
+        if (hit) { hits.add(n.id); this.views.get(n.id)?.el.classList.add('erasing'); }
+      }
+    };
+    let last = this.toWorld(e.clientX, e.clientY);
+    const at = (p) => { ring.setAttribute('cx', p.x); ring.setAttribute('cy', p.y); };
+    at(last); test(last.x, last.y);
+    try { this.root.setPointerCapture(e.pointerId); } catch {}
+    const move = (ev) => {
+      for (const ce of ev.getCoalescedEvents?.() || [ev]) {
+        const p = this.toWorld(ce.clientX, ce.clientY);
+        const steps = Math.max(1, Math.ceil(Math.hypot(p.x - last.x, p.y - last.y) / (r * 0.7)));
+        for (let i = 1; i <= steps; i++) test(last.x + ((p.x - last.x) * i) / steps, last.y + ((p.y - last.y) * i) / steps);
+        last = p;
+      }
+      at(last);
+    };
+    const finish = (commit) => {
+      window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('keydown', esc, true);
+      ring.remove(); this.pencilSvg.style.display = 'none'; this.dragging = null;
+      for (const id of hits) this.views.get(id)?.el.classList.remove('erasing');
+      if (commit && hits.size) this.removeNodes([...hits]);
+    };
+    const up = () => finish(true);
+    const esc = (ev) => { if (ev.key === 'Escape') { ev.stopPropagation(); finish(false); } };
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up); window.addEventListener('keydown', esc, true);
+    this.dragging = { kind: 'pencil', noOverlay: true, move: () => {}, up: () => {}, cancel: () => finish(false) };
+  }
+  addDrawing(pts, { color = 'auto', width = 3, opacity = 1, tool = 'pen' } = {}) {
     if (!pts.length) return null;
     let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
     for (const [x, y] of pts) { x1 = Math.min(x1, x); y1 = Math.min(y1, y); x2 = Math.max(x2, x); y2 = Math.max(y2, y); }
@@ -1146,7 +1199,7 @@ export class CanvasView extends Emitter {
     x1 -= pad; y1 -= pad; x2 += pad; y2 += pad;
     const w = Math.max(6, x2 - x1), hh = Math.max(6, y2 - y1);
     const norm = pts.map(([x, y]) => [Math.round(((x - x1) / w) * 10000) / 10000, Math.round(((y - y1) / hh) * 10000) / 10000]);
-    return this.addNode('drawing', { x: x1, y: y1, w, h: hh, data: { pts: norm, color, width } }, { center: false, select: false });
+    return this.addNode('drawing', { x: x1, y: y1, w, h: hh, data: { pts: norm, color, width, opacity, tool } }, { center: false, select: false });
   }
 
   editAt(n, e) { requestAnimationFrame(() => this.views.get(n.id)?.inst?.edit?.(e)); }
@@ -1640,6 +1693,8 @@ export class CanvasView extends Emitter {
     if (k === 'm' && !e.altKey) { this.toggleMinimap(); return true; }
     if (k === 'g' && !e.altKey) { this.emit('addGallery'); return true; }
     if (k === 'c' && e.shiftKey && !e.altKey) { this.comments.toggleVisible(); return true; }
+    if (k === 'e' && !e.altKey) { state.setSetting('penTool', 'eraser'); this.setTool('pencil'); this.emit('penTool'); return true; }
+    if (k === 'p' && !e.altKey) { if (currentTool() === 'eraser') state.setSetting('penTool', state.settings.lastPenTool || 'pen'); this.setTool('pencil'); this.emit('penTool'); return true; }
     const tools = { v: 'select', h: 'hand', s: 'sticky', t: 'text', r: 'rect', o: 'ellipse', f: 'frame', a: 'arrow', l: 'arrow', c: 'comment', p: 'pencil' };
     if (tools[k] && !e.altKey) { this.setTool(tools[k]); return true; }
     if (k === '-' || k === '_') { this.zoomBy(0.8); return true; }

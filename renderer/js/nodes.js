@@ -1,5 +1,6 @@
 // Node type definitions for the canvas.
 import { h, icon, badge, esc, bus, toast, prompt, debounce, throttle, uid, readFileAsDataURL, keyName } from './util.js';
+import { cssColor, BAR_COLORS } from './pentools.js';
 import { state, native, PROVIDER_META } from './state.js';
 import { renderChatMarkdown } from './md.js';
 import { RichEditor } from './editor.js';
@@ -19,8 +20,7 @@ native.agentChat.onEvent((ev) => chatRoutes.get(ev.reqId)?.(ev));
 export const STICKY_COLORS = ['#ffe58a', '#ffcd9e', '#ffb8d1', '#d6c2ff', '#a8d8ff', '#b5f0c0', '#e2e5ea'];
 const SHAPE_COLORS = ['#7c8cff', '#4fd1a5', '#f6a04d', '#e86a92', '#5bc0eb', '#e3c565', '#9aa3b2'];
 // pencil: 'auto' follows the theme (light lines on dark, dark lines on light)
-export const PEN_COLORS = ['auto', '#e5534b', '#f08c2e', '#e9c13b', '#3fb950', '#4f8cff', '#a371f7', '#ec6cb9', '#8b949e'];
-export const PEN_WIDTHS = [2, 4, 8, 16];
+export const PEN_COLORS = BAR_COLORS;
 const r1 = (v) => Math.round(v * 10) / 10;
 // smooth line through the points (quadratic curves via midpoints)
 export function strokePath(pts) {
@@ -1226,9 +1226,9 @@ export const NODE_TYPES = {
   },
 
   drawing: {
-    chrome: 'bare', defaultSize: { w: 100, h: 100 }, minSize: { w: 6, h: 6 }, colors: PEN_COLORS,
-    defaultData: () => ({ pts: [], color: 'auto', width: 4 }),
-    title: () => 'Рисунок',
+    chrome: 'bare', defaultSize: { w: 100, h: 100 }, minSize: { w: 6, h: 6 },
+    defaultData: () => ({ pts: [], color: 'auto', width: 3, opacity: 1, tool: 'pen' }),
+    title: (n) => ({ marker: 'Маркер', pencil: 'Карандаш' })[n.data.tool] || 'Рисунок',
     mount: ({ node, body }) => {
       const NS = 'http://www.w3.org/2000/svg';
       const svg = document.createElementNS(NS, 'svg');
@@ -1246,7 +1246,8 @@ export const NODE_TYPES = {
         const sw = n.data.width || 4;
         line.setAttribute('d', d); hit.setAttribute('d', d);
         line.setAttribute('stroke-width', sw); hit.setAttribute('stroke-width', sw + 12);
-        line.style.stroke = !n.data.color || n.data.color === 'auto' ? '' : n.data.color;
+        line.style.stroke = cssColor(n.data.color || 'auto');
+        line.style.strokeOpacity = String(n.data.opacity ?? 1);
       };
       paint();
       return { update: (n) => { cur = n; paint(); }, onResize: (n) => paint(n || cur) };
