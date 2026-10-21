@@ -233,7 +233,11 @@ svg.guides line { stroke: #ff5ca8; stroke-width: 1; }
 .ghost-shape { display: none; border: 1.5px dashed var(--accent); background: rgba(124, 140, 255, 0.06); }
 .sel-box { display: none; border: 1.5px solid var(--accent); border-radius: 3px; }
 .sel-box.window-sel { border-radius: 11px; }
-.sel-box.multi { border-style: dashed; }
+.sel-box.multi { border: 1px solid color-mix(in srgb, var(--accent) 75%, transparent); border-radius: 4px; }
+.sel-box.multi::before { content: attr(data-count); position: absolute; left: -1px; top: calc(100% + 5px); padding: 1px 7px; border-radius: 5px; background: var(--accent); color: #fff; font: 600 11px/18px var(--font); white-space: nowrap; pointer-events: none; }
+/* every selected object of a multiple selection gets its own outline, one screen pixel at any zoom */
+.canvas-root.multi-sel .node.selected { outline: calc(1.5px / var(--z, 1)) solid var(--accent); outline-offset: calc(2px / var(--z, 1)); }
+.canvas-root.multi-sel .node.window.selected { outline-offset: calc(1px / var(--z, 1)); border-radius: 10px; }
 .handle { position: absolute; width: 10px; height: 10px; background: #fff; border: 1.5px solid var(--accent); border-radius: 3px; pointer-events: auto; }
 .sel-box.no-handles .handle { display: none; }
 .h-nw { left: -6px; top: -6px; cursor: nwse-resize; } .h-n { left: calc(50% - 5px); top: -6px; cursor: ns-resize; } .h-ne { right: -6px; top: -6px; cursor: nesw-resize; }

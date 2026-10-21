@@ -36,7 +36,7 @@ function defaultSettings() {
     grid: true,
     snap: true,
     pet: true,
-    lodZoom: 0.5,
+    lodZoom: 0.3,
     agents: DEFAULT_AGENTS.map((a) => ({ ...a })),
     providers: {},
     defaultProvider: 'openai',
@@ -72,6 +72,8 @@ class State extends Emitter {
       };
     }
     ws.settings = { ...defaultSettings(), ...(ws.settings || {}) };
+    // windows used to turn into cards already at 50 %: the untouched old default moves to the new one
+    if (!ws.settings.lodV2) { if (ws.settings.lodZoom === 0.5) ws.settings.lodZoom = 0.3; ws.settings.lodV2 = true; }
     // merge in new default agents without overriding user's edits
     for (const a of DEFAULT_AGENTS) {
       const mine = ws.settings.agents.find((x) => x.id === a.id);

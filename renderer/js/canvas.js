@@ -167,7 +167,7 @@ export class CanvasView extends Emitter {
     const noGrid = !state.settings.grid || z < 0.2;
     if (noGrid !== this._noGrid) { this._noGrid = noGrid; this.bg.classList.toggle('no-grid', noGrid); }
     // enter card mode immediately (cheaper), leave it only when the gesture ends
-    const lod = z < (state.settings.lodZoom || 0.5);
+    const lod = z < (state.settings.lodZoom || 0.3);
     if (lod && this.lod !== true) this.setLod(true);
     else if (!lod && this.lod !== false && (!this._moving || this.lod == null)) this.setLod(false);
     if (this.lod == null) this.setLod(lod);
@@ -228,7 +228,7 @@ export class CanvasView extends Emitter {
       if (sx !== this.vp.x || sy !== this.vp.y) { this.vp.x = sx; this.vp.y = sy; this.saveViewport(); }
       this.applyLayoutZoom();
       this.root.style.setProperty('--z', this.vp.z);
-      const lod = this.vp.z < (state.settings.lodZoom || 0.5);
+      const lod = this.vp.z < (state.settings.lodZoom || 0.3);
       if (lod !== this.lod) this.setLod(lod);
       this.cull();
       this.updateGridTile();
@@ -667,13 +667,16 @@ export class CanvasView extends Emitter {
     this.selBox.style.display = show ? 'block' : 'none';
     this.connDots.style.display = 'none';
     this.selToolbar.style.display = 'none';
-    if (!show) return;
+    if (!show) { this.root.classList.remove('multi-sel'); return; }
     const b = this.bounds(nodes);
     const p = this.toScreen(b.x, b.y);
     const w = b.w * this.vp.z, hh = b.h * this.vp.z;
     this.placeBox(this.selBox, p.x, p.y, w, hh);
     const single = nodes.length === 1 ? nodes[0] : null;
+    // several objects: a thin frame around all of them with the count, each one outlined (like Figma)
     this.selBox.classList.toggle('multi', !single);
+    if (!single) this.selBox.dataset.count = `Выбрано: ${nodes.length}`;
+    this.root.classList.toggle('multi-sel', !single);
     this.selBox.classList.toggle('window-sel', !!single && NODE_TYPES[single.type]?.chrome === 'window');
     this.selBox.classList.toggle('no-handles', !single || !!single.locked || this.lod && NODE_TYPES[single.type]?.chrome === 'window' && false);
     if (single && !single.locked && !this.dragging) {
