@@ -18,6 +18,22 @@ native.agentChat.onEvent((ev) => chatRoutes.get(ev.reqId)?.(ev));
 
 export const STICKY_COLORS = ['#ffe58a', '#ffcd9e', '#ffb8d1', '#d6c2ff', '#a8d8ff', '#b5f0c0', '#e2e5ea'];
 const SHAPE_COLORS = ['#7c8cff', '#4fd1a5', '#f6a04d', '#e86a92', '#5bc0eb', '#e3c565', '#9aa3b2'];
+// pencil: 'auto' follows the theme (light lines on dark, dark lines on light)
+export const PEN_COLORS = ['auto', '#e5534b', '#f08c2e', '#e9c13b', '#3fb950', '#4f8cff', '#a371f7', '#ec6cb9', '#8b949e'];
+export const PEN_WIDTHS = [2, 4, 8, 16];
+const r1 = (v) => Math.round(v * 10) / 10;
+// smooth line through the points (quadratic curves via midpoints)
+export function strokePath(pts) {
+  if (!pts.length) return '';
+  if (pts.length === 1) return `M${r1(pts[0][0])} ${r1(pts[0][1])}l0.01 0`;
+  let d = `M${r1(pts[0][0])} ${r1(pts[0][1])}`;
+  for (let i = 1; i < pts.length - 1; i++) {
+    const [x, y] = pts[i], [nx, ny] = pts[i + 1];
+    d += `Q${r1(x)} ${r1(y)} ${r1((x + nx) / 2)} ${r1((y + ny) / 2)}`;
+  }
+  const l = pts[pts.length - 1];
+  return `${d}L${r1(l[0])} ${r1(l[1])}`;
+}
 const FRAME_COLORS = ['#5566d6', '#3aa6b9', '#3fae7c', '#d08a3a', '#cf5a86', '#8a5cd6', '#6b7385'];
 
 const TERM_THEME = {
@@ -1206,6 +1222,34 @@ export const NODE_TYPES = {
       const fitH = () => { const n = view.node(cur.id); if (!n) return; txt.style.minHeight = '0'; const need = Math.max(24, txt.scrollHeight + 4); txt.style.minHeight = ''; if (Math.abs(need - n.h) > 1) { n.h = need; view.syncView(n); view.updateOverlay(); } };
       let lastSize = node.data.size;
       return { edit, update: (n) => { const resized = (n.data.size || 20) !== (lastSize || 20); lastSize = n.data.size; cur = n; if (!txt.isContentEditable) { paint(); resized ? fitH() : grow(); } else if (resized) { txt.style.fontSize = `${n.data.size || 20}px`; fitH(); } } };
+    },
+  },
+
+  drawing: {
+    chrome: 'bare', defaultSize: { w: 100, h: 100 }, minSize: { w: 6, h: 6 }, colors: PEN_COLORS,
+    defaultData: () => ({ pts: [], color: 'auto', width: 4 }),
+    title: () => 'Рисунок',
+    mount: ({ node, body }) => {
+      const NS = 'http://www.w3.org/2000/svg';
+      const svg = document.createElementNS(NS, 'svg');
+      svg.setAttribute('class', 'draw-svg');
+      const hit = document.createElementNS(NS, 'path'); hit.setAttribute('class', 'draw-hit');
+      const line = document.createElementNS(NS, 'path'); line.setAttribute('class', 'draw-line');
+      svg.append(hit, line);
+      body.append(svg);
+      let cur = node;
+      // points are stored relative to the box (0..1), so resizing scales the drawing but not the line width
+      const paint = (n = cur) => {
+        const w = Math.max(1, n.w), hh = Math.max(1, n.h);
+        svg.setAttribute('viewBox', `0 0 ${w} ${hh}`);
+        const d = strokePath((n.data.pts || []).map(([u, v]) => [u * w, v * hh]));
+        const sw = n.data.width || 4;
+        line.setAttribute('d', d); hit.setAttribute('d', d);
+        line.setAttribute('stroke-width', sw); hit.setAttribute('stroke-width', sw + 12);
+        line.style.stroke = !n.data.color || n.data.color === 'auto' ? '' : n.data.color;
+      };
+      paint();
+      return { update: (n) => { cur = n; paint(); }, onResize: (n) => paint(n || cur) };
     },
   },
 

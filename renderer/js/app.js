@@ -2,7 +2,7 @@ import { h, icon, badge, bus, menu, prompt, confirmBox, toast, modal, isEditable
 import { renderChatMarkdown } from './md.js';
 import { state, native, PROVIDER_META, DEFAULT_AGENTS } from './state.js';
 import { CanvasView } from './canvas.js';
-import { NODE_TYPES, imageNodeFromFile } from './nodes.js';
+import { NODE_TYPES, imageNodeFromFile, PEN_COLORS, PEN_WIDTHS } from './nodes.js';
 import { vaultIndex } from './vaultIndex.js';
 import { Sidebar, NotePanel, openGraph } from './notes.js';
 import { setFpsMeter, toggleFpsMeter, runPerfTest } from './perf.js';
@@ -188,7 +188,7 @@ class App {
     tb.append(
       tool('select', 'cursor', 'Выделение (V)'), tool('hand', 'hand', 'Рука (H, или пробел)'),
       h('span', { class: 'tsep' }),
-      tool('sticky', 'sticky', 'Стикер (S)'), tool('text', 'text', 'Текст (T)'),
+      tool('sticky', 'sticky', 'Стикер (S)'), tool('text', 'text', 'Текст (T)'), tool('pencil', 'pencil', 'Карандаш (P). Shift — прямая линия'),
       h('span', { class: 'tool-group' }, this.shapeBtn, caret),
       tool('arrow', 'arrow', 'Стрелка-связь (A)'), tool('frame', 'area', 'Область с названием (F)'),
       this.commentBtn = tool('comment', 'comment', 'Комментарий (C). ПКМ — показать / скрыть комментарии'),
@@ -210,7 +210,20 @@ class App {
         { label: `Подпись: ${state.settings.userName || 'не задана'}…`, icon: 'pen', onClick: async () => { const n = await prompt('Имя в комментариях', state.settings.userName || ''); if (n != null && n.trim()) state.setSetting('userName', n.trim()); } },
       ], e.clientX, e.clientY - 120);
     });
+    // pencil options: colour and line width, shown while the pencil is active
+    this.penBar = h('div', { class: 'pen-bar' });
+    const paintPenBar = () => {
+      const cur = state.settings.pencilColor || 'auto', wd = state.settings.pencilWidth || 4;
+      this.penBar.replaceChildren(
+        ...PEN_COLORS.map((c) => h('button', { class: `swatch${c === 'auto' ? ' auto' : ''}${c === cur ? ' on' : ''}`, style: { background: c === 'auto' ? 'var(--text-strong)' : c }, title: c === 'auto' ? 'Под тему' : c, onclick: () => { state.setSetting('pencilColor', c); paintPenBar(); } })),
+        h('span', { class: 'st-sep' }),
+        ...PEN_WIDTHS.map((w) => h('button', { class: `st-btn st-width${w === wd ? ' on' : ''}`, title: `Толщина ${w}`, html: `<svg viewBox="0 0 20 20" width="18" height="18"><line x1="3" y1="10" x2="17" y2="10" stroke="currentColor" stroke-linecap="round" stroke-width="${Math.min(9, Math.max(1.5, w / 1.8))}"/></svg>`, onclick: () => { state.setSetting('pencilWidth', w); paintPenBar(); } })),
+      );
+    };
+    paintPenBar();
+    this.canvasHost.append(this.penBar);
     const sync = (t) => {
+      this.penBar.classList.toggle('show', t === 'pencil');
       for (const [id, b] of Object.entries(tools)) b.classList.toggle('active', id === t);
       const shapeActive = ['rect', 'ellipse', 'diamond'].includes(t);
       this.shapeBtn.classList.toggle('active', shapeActive);

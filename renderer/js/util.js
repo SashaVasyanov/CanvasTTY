@@ -136,6 +136,7 @@ const P = {
   chevronDown: '<path d="M6 9l6 6 6-6"/>',
   chevronRight: '<path d="M9 6l6 6-6 6"/>',
   more: '<circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/>',
+  pencil: '<path d="M4 20c1.5-.3 2.6-.8 3.4-1.6L19.5 6.3a2 2 0 0 0-2.8-2.8L4.6 15.6c-.8.8-1.3 1.9-1.6 3.4z"/><path d="M14.5 5.5l4 4"/>',
   pen: '<path d="M4 20l4-1L19 8l-3-3L5 16zM14 7l3 3"/>',
   palette: '<path d="M12 3a9 9 0 100 18c1 0 1.5-.8 1.5-1.5 0-1.2-1-1.5-1-2.5s.8-1.5 2-1.5H17a4 4 0 004-4c0-4.7-4-8.5-9-8.5z"/><circle cx="7.5" cy="11" r="1"/><circle cx="10" cy="7" r="1"/><circle cx="15" cy="7.5" r="1"/>',
   save: '<path d="M5 3h11l3 3v15H5z"/><path d="M8 3v5h7M8 21v-7h8v7"/>',

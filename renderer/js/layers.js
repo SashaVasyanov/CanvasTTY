@@ -5,8 +5,8 @@ import { h, icon, debounce } from './util.js';
 import { state } from './state.js';
 import { NODE_TYPES } from './nodes.js';
 
-const TYPE_ICON = { terminal: 'terminal', chat: 'chat', agentchat: 'sparkle', note: 'note', web: 'globe', sticky: 'sticky', text: 'text', frame: 'area', gallery: 'gallery', image: 'image', hub: 'gauge' };
-const TYPE_NAME = { terminal: 'Терминал', chat: 'API-чат', agentchat: 'Чат агента', note: 'Заметка', web: 'Веб-страница', sticky: 'Стикер', text: 'Текст', shape: 'Фигура', frame: 'Область', gallery: 'Галерея', image: 'Изображение', hub: 'Пульт' };
+const TYPE_ICON = { drawing: 'pencil', terminal: 'terminal', chat: 'chat', agentchat: 'sparkle', note: 'note', web: 'globe', sticky: 'sticky', text: 'text', frame: 'area', gallery: 'gallery', image: 'image', hub: 'gauge' };
+const TYPE_NAME = { drawing: 'Рисунок', terminal: 'Терминал', chat: 'API-чат', agentchat: 'Чат агента', note: 'Заметка', web: 'Веб-страница', sticky: 'Стикер', text: 'Текст', shape: 'Фигура', frame: 'Область', gallery: 'Галерея', image: 'Изображение', hub: 'Пульт' };
 const ORDER = { frame: 0, gallery: 1 };
 
 function lsGet(k, d) { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } }

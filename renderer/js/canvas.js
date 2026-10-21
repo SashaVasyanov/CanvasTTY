@@ -1,11 +1,25 @@
 // Infinite canvas engine: viewport, nodes, edges, selection, snapping, history.
 import { h, icon, uid, clamp, Emitter, isEditable, menu, deepClone, throttle, toast, keyName } from './util.js';
 import { state, native } from './state.js';
-import { NODE_TYPES } from './nodes.js';
+import { NODE_TYPES, strokePath, PEN_WIDTHS } from './nodes.js';
 import { Comments } from './comments.js';
 
 const MIN_Z = 0.08, MAX_Z = 3;
 const SNAP_PX = 6;
+function simplify(pts, tol) {
+  if (pts.length < 3) return pts;
+  const keep = new Uint8Array(pts.length); keep[0] = keep[pts.length - 1] = 1;
+  const stack = [[0, pts.length - 1]];
+  while (stack.length) {
+    const [a, b] = stack.pop();
+    const [ax, ay] = pts[a], [bx, by] = pts[b];
+    const dx = bx - ax, dy = by - ay, len = Math.hypot(dx, dy) || 1e-9;
+    let far = -1, fd = tol;
+    for (let i = a + 1; i < b; i++) { const d = Math.abs(dy * pts[i][0] - dx * pts[i][1] + bx * ay - by * ax) / len; if (d > fd) { fd = d; far = i; } }
+    if (far > 0) { keep[far] = 1; stack.push([a, far], [far, b]); }
+  }
+  return pts.filter((_, i) => keep[i]);
+}
 const NAMED_COPY = { frame: 'title', gallery: 'title', image: 'name', chat: 'title', agentchat: 'title' };
 const FONT_SIZES = [8, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 40, 48, 56, 64, 72, 96, 128];
 const TEXT_EDIT_TYPES = new Set(['text', 'sticky', 'shape']);
@@ -52,6 +66,11 @@ export class CanvasView extends Emitter {
     this.zoomLayer = h('div', { class: 'zoom-layer' });
     this.zoomLayer.append(this.edgeSvg, this.nodesLayer);
     this.world.append(this.zoomLayer);
+    this.pencilSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    this.pencilSvg.classList.add('pencil-live');
+    this.pencilPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    this.pencilSvg.append(this.pencilPath);
+    this.zoomLayer.append(this.pencilSvg);
     this.layoutZoom = 1;
     this.overlay = h('div', { class: 'canvas-overlay' });
     this.marquee = h('div', { class: 'marquee' });
@@ -621,13 +640,26 @@ export class CanvasView extends Emitter {
     const def = single && NODE_TYPES[single.type];
     if (single && def.colors) {
       for (const c of def.colors) {
-        const sw = h('button', { class: `swatch${single.data.color === c ? ' on' : ''}`, style: { background: c }, title: c, onclick: (e) => { e.stopPropagation(); this.updateNode(single.id, { data: { color: c } }, { checkpoint: true }); this.updateOverlay(); } });
+        const sw = h('button', { class: `swatch${(single.data.color || def.colors[0]) === c ? ' on' : ''}${c === 'auto' ? ' auto' : ''}`, style: { background: c === 'auto' ? 'var(--text-strong)' : c }, title: c === 'auto' ? 'Под тему' : c, onclick: (e) => { e.stopPropagation(); this.updateNode(single.id, { data: { color: c } }, { checkpoint: true }); this.updateOverlay(); } });
         tb.append(sw);
       }
       tb.append(h('span', { class: 'st-sep' }));
     }
     if (single && single.type === 'shape') {
       for (const k of ['rect', 'ellipse', 'diamond']) tb.append(btn(k, k, () => { this.updateNode(single.id, { data: { kind: k } }, { checkpoint: true }); this.updateOverlay(); }, single.data.kind === k ? 'on' : ''));
+      tb.append(h('span', { class: 'st-sep' }));
+    }
+    if (nodes.length && nodes.every((n) => n.type === 'drawing')) {
+      const ids = nodes.map((n) => n.id);
+      const setAll = (data) => { this.checkpoint(); for (const id of ids) this.updateNode(id, { data }); this.updateOverlay(); };
+      if (nodes.length > 1) {
+        for (const c of NODE_TYPES.drawing.colors) tb.append(h('button', { class: `swatch${c === 'auto' ? ' auto' : ''}${nodes.every((n) => (n.data.color || 'auto') === c) ? ' on' : ''}`, style: { background: c === 'auto' ? 'var(--text-strong)' : c }, title: c === 'auto' ? 'Под тему' : c, onclick: (e) => { e.stopPropagation(); setAll({ color: c }); } }));
+        tb.append(h('span', { class: 'st-sep' }));
+      }
+      for (const wd of PEN_WIDTHS) {
+        const on = nodes.every((n) => (n.data.width || 4) === wd);
+        tb.append(h('button', { class: `st-btn st-width${on ? ' on' : ''}`, title: `Толщина ${wd}`, html: `<svg viewBox="0 0 20 20" width="18" height="18"><line x1="3" y1="10" x2="17" y2="10" stroke="currentColor" stroke-linecap="round" stroke-width="${Math.min(9, Math.max(1.5, wd / 1.8))}"/></svg>`, onclick: (e) => { e.stopPropagation(); setAll({ width: wd }); } }));
+      }
       tb.append(h('span', { class: 'st-sep' }));
     }
     if (nodes.length && nodes.every((n) => n.type === 'text')) {
@@ -973,6 +1005,7 @@ export class CanvasView extends Emitter {
       return;
     }
     if (this.tool === 'comment') { e.preventDefault(); this.comments.startNew(e); return; }
+    if (this.tool === 'pencil') { e.preventDefault(); this.startPencil(e); return; }
     if (this.tool === 'text' && n?.type === 'text') { e.preventDefault(); this.setTool('select'); this.select([n.id]); this.editAt(n, e); return; }
     if (creating && (!n || n.type === 'frame')) { e.preventDefault(); this.startCreate(e); return; }
 
@@ -1063,6 +1096,57 @@ export class CanvasView extends Emitter {
       },
       up: () => { this.marquee.style.display = 'none'; this.afterSelect(); },
     };
+  }
+
+  // ---------------- pencil (P) ----------------
+  // Freehand line. Every pointer sample is used (coalesced events), the stroke is simplified to
+  // what is visible at the current zoom and saved as a 'drawing' object. Shift — straight line.
+  startPencil(e) {
+    const color = state.settings.pencilColor || 'auto';
+    const width = state.settings.pencilWidth || 4;
+    const start = this.toWorld(e.clientX, e.clientY);
+    let pts = [[start.x, start.y]];
+    const minStep = 0.75 / this.vp.z;
+    const live = this.pencilPath;
+    live.setAttribute('stroke-width', width);
+    live.style.stroke = color === 'auto' ? '' : color;
+    this.pencilSvg.style.display = 'block';
+    let raf = 0;
+    const paint = () => { raf = 0; live.setAttribute('d', strokePath(pts)); };
+    paint();
+    try { this.root.setPointerCapture(e.pointerId); } catch {}
+    const move = (ev) => {
+      if (ev.shiftKey) { const p = this.toWorld(ev.clientX, ev.clientY); pts = [pts[0], [p.x, p.y]]; }
+      else {
+        for (const ce of ev.getCoalescedEvents?.() || [ev]) {
+          const p = this.toWorld(ce.clientX, ce.clientY);
+          const l = pts[pts.length - 1];
+          if (Math.hypot(p.x - l[0], p.y - l[1]) >= minStep) pts.push([p.x, p.y]);
+        }
+      }
+      if (!raf) raf = requestAnimationFrame(paint);
+    };
+    const finish = (commit) => {
+      window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('keydown', esc, true);
+      cancelAnimationFrame(raf);
+      live.setAttribute('d', ''); this.pencilSvg.style.display = 'none';
+      this.dragging = null;
+      if (commit) this.addDrawing(simplify(pts, 0.6 / this.vp.z), color, width);
+    };
+    const up = () => finish(true);
+    const esc = (ev) => { if (ev.key === 'Escape') { ev.stopPropagation(); finish(false); } };
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up); window.addEventListener('keydown', esc, true);
+    this.dragging = { kind: 'pencil', noOverlay: true, move: () => {}, up: () => {}, cancel: () => finish(false) };
+  }
+  addDrawing(pts, color, width) {
+    if (!pts.length) return null;
+    let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
+    for (const [x, y] of pts) { x1 = Math.min(x1, x); y1 = Math.min(y1, y); x2 = Math.max(x2, x); y2 = Math.max(y2, y); }
+    const pad = width / 2 + 2;
+    x1 -= pad; y1 -= pad; x2 += pad; y2 += pad;
+    const w = Math.max(6, x2 - x1), hh = Math.max(6, y2 - y1);
+    const norm = pts.map(([x, y]) => [Math.round(((x - x1) / w) * 10000) / 10000, Math.round(((y - y1) / hh) * 10000) / 10000]);
+    return this.addNode('drawing', { x: x1, y: y1, w, h: hh, data: { pts: norm, color, width } }, { center: false, select: false });
   }
 
   editAt(n, e) { requestAnimationFrame(() => this.views.get(n.id)?.inst?.edit?.(e)); }
@@ -1556,7 +1640,7 @@ export class CanvasView extends Emitter {
     if (k === 'm' && !e.altKey) { this.toggleMinimap(); return true; }
     if (k === 'g' && !e.altKey) { this.emit('addGallery'); return true; }
     if (k === 'c' && e.shiftKey && !e.altKey) { this.comments.toggleVisible(); return true; }
-    const tools = { v: 'select', h: 'hand', s: 'sticky', t: 'text', r: 'rect', o: 'ellipse', f: 'frame', a: 'arrow', l: 'arrow', c: 'comment' };
+    const tools = { v: 'select', h: 'hand', s: 'sticky', t: 'text', r: 'rect', o: 'ellipse', f: 'frame', a: 'arrow', l: 'arrow', c: 'comment', p: 'pencil' };
     if (tools[k] && !e.altKey) { this.setTool(tools[k]); return true; }
     if (k === '-' || k === '_') { this.zoomBy(0.8); return true; }
     if (k === '=' || k === '+') { this.zoomBy(1.25); return true; }
