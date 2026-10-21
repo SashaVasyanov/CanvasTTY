@@ -199,8 +199,9 @@ kbd { font: 11px var(--mono); background: rgba(var(--fg-rgb), 0.07); border: 1px
 .canvas-root.moving .node:not(.dragged) { pointer-events: none; }
 .canvas-root.vp-moving .node, .canvas-root.vp-moving .edge, .canvas-root.vp-moving .sel-box { pointer-events: none; }
 .canvas-root.vp-moving *, .canvas-root.vp-moving *::before, .canvas-root.vp-moving *::after { animation-play-state: paused !important; transition: none !important; }
-.node.culled { visibility: hidden; }
+.node.culled { visibility: hidden; content-visibility: hidden; } /* off-screen: no layout/paint of the contents (cheap zoom relayout), state is kept */
 .node.culled .term-wrap, .canvas-root.lod .node-terminal .term-wrap { display: none; }
+.zoom-layer { position: absolute; left: 0; top: 0; }
 .nodes-layer { position: absolute; left: 0; top: 0; }
 svg.edges { position: absolute; left: 0; top: 0; width: 1px; height: 1px; overflow: visible; z-index: 500; pointer-events: none; }
 .edge { pointer-events: auto; cursor: pointer; }
@@ -291,7 +292,7 @@ svg.guides line { stroke: #ff5ca8; stroke-width: 1; }
 .card-status { font-size: clamp(10px, calc(10px / var(--z)), 50px); color: var(--muted); }
 .card-status.busy { color: var(--green); }
 .card-status.na { color: #e9938f; }
-.canvas-root.lod .node.window .node-body { visibility: hidden; }
+.canvas-root.lod .node.window .node-body { visibility: hidden; content-visibility: hidden; }
 .canvas-root.lod .node.window .node-card { display: flex; }
 .canvas-root.lod .node-head { cursor: grab; }
 .canvas-root.lod .node.window { cursor: grab; }

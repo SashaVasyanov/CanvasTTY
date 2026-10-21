@@ -113,13 +113,22 @@ class TerminalInstance {
 
   get agent() { return state.agent(this.node.data.agentId); }
 
+  // Refit only when the window itself changed size. Zooming the canvas (CSS zoom at rest) also
+  // fires the ResizeObserver and rounds the cell size a little differently, which would resize the
+  // pty by a column and make TUIs (Claude Code, Codex) redraw on every zoom.
   doFit = throttle(() => {
     if (!this.wrap.offsetWidth || !this.wrap.offsetHeight) return;
+    const n = this.view.node(this.node.id) || this.node;
+    const key = `${n.w}x${n.h}x${n.data.fontSize || ''}`;
+    if (!this._forceFit && key === this._fitKey && this.term.cols) return;
+    this._forceFit = false;
     try {
       this.fit.fit();
+      this._fitKey = key;
       if (this.sessionId) native.pty.resize(this.sessionId, this.term.cols, this.term.rows);
     } catch {}
   }, 60);
+  refit() { this._forceFit = true; this.doFit(); }
 
   async start() {
     if (this.sessionId) {
@@ -131,7 +140,7 @@ class TerminalInstance {
         this.notFound = att.notFound;
         this.state = att.exited ? 'exited' : 'running';
         if (att.exited) this.showEnded(att.exitCode);
-        setTimeout(() => this.doFit(), 30);
+        setTimeout(() => this.refit(), 30);
         this.syncHead();
         return;
       }
@@ -166,7 +175,7 @@ class TerminalInstance {
     if (res.notFound && a.cmd) {
       this.term.write(`\x1b[33m⚠ Команда «${a.cmd}» не найдена в PATH.\x1b[0m\r\n${a.install ? `  Установите: \x1b[36m${a.install}\x1b[0m\r\n` : ''}  Или укажите полный путь в Настройки → Агенты.\r\n\r\n`);
     }
-    setTimeout(() => this.doFit(), 50);
+    setTimeout(() => this.refit(), 50);
     this.syncHead();
   }
 

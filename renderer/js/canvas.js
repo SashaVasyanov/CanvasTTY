@@ -42,7 +42,12 @@ export class CanvasView extends Emitter {
     this.edgeGroup = this.edgeSvg.querySelector('.edge-group');
     this.edgePreview = this.edgeSvg.querySelector('.edge-preview');
     this.nodesLayer = h('div', { class: 'nodes-layer' });
-    this.world.append(this.edgeSvg, this.nodesLayer);
+    // the world is moved by a transform; its contents get CSS zoom at rest, so text is laid out and
+    // rasterised at its real on-screen size (crisp) instead of being a scaled bitmap
+    this.zoomLayer = h('div', { class: 'zoom-layer' });
+    this.zoomLayer.append(this.edgeSvg, this.nodesLayer);
+    this.world.append(this.zoomLayer);
+    this.layoutZoom = 1;
     this.overlay = h('div', { class: 'canvas-overlay' });
     this.marquee = h('div', { class: 'marquee' });
     this.ghost = h('div', { class: 'ghost-shape' });
@@ -102,7 +107,7 @@ export class CanvasView extends Emitter {
     const { x, y, z } = this.vp;
     if (this._lastZ !== undefined && this._lastZ !== z) this._zoomedSinceRest = true;
     this._lastZ = z;
-    this.world.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${z})`;
+    this.world.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${z / this.layoutZoom})`;
     this.positionBg();
     const noGrid = !state.settings.grid || z < 0.2;
     if (noGrid !== this._noGrid) { this._noGrid = noGrid; this.bg.classList.toggle('no-grid', noGrid); }
@@ -165,11 +170,8 @@ export class CanvasView extends Emitter {
       // Snap the resting view to the device pixel grid (invisible, < half a pixel).
       const dpr = window.devicePixelRatio || 1;
       const sx = Math.round(this.vp.x * dpr) / dpr, sy = Math.round(this.vp.y * dpr) / dpr;
-      if (sx !== this.vp.x || sy !== this.vp.y) {
-        this.vp.x = sx; this.vp.y = sy;
-        this.world.style.transform = `translate3d(${sx}px, ${sy}px, 0) scale(${this.vp.z})`;
-        this.saveViewport();
-      }
+      if (sx !== this.vp.x || sy !== this.vp.y) { this.vp.x = sx; this.vp.y = sy; this.saveViewport(); }
+      this.applyLayoutZoom();
       this.root.style.setProperty('--z', this.vp.z);
       const lod = this.vp.z < (state.settings.lodZoom || 0.5);
       if (lod !== this.lod) this.setLod(lod);
@@ -183,6 +185,13 @@ export class CanvasView extends Emitter {
       this._zoomedSinceRest = false;
       this.root.classList.remove('world-layer');
     }, 160);
+  }
+
+  // at rest: contents zoomed by layout (crisp text), the world only translated
+  applyLayoutZoom() {
+    const z = this.vp.z;
+    if (this.layoutZoom !== z) { this.layoutZoom = z; this.zoomLayer.style.zoom = String(z); }
+    this.world.style.transform = `translate3d(${this.vp.x}px, ${this.vp.y}px, 0)`;
   }
 
   cullSoon = throttle(() => this.cull(), 120);
