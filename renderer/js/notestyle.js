@@ -1,4 +1,4 @@
-// Font and size of a note. Stored per note (vault/.canvastty/note-styles.json) and shared by every
+// Font and size of a note. Stored per note (vault/.vibetabula/note-styles.json) and shared by every
 // editor showing that note (canvas window and side panel), so they always look the same.
 import { h, icon, menu, toast, Emitter } from './util.js';
 import { native } from './state.js';

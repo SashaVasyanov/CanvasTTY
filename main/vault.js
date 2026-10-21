@@ -3,7 +3,7 @@ const fs = require('fs');
 const fsp = fs.promises;
 const path = require('path');
 
-const IGNORE = new Set(['.obsidian', '.git', '.trash', 'node_modules', '.canvastty']);
+const IGNORE = new Set(['.obsidian', '.git', '.trash', 'node_modules', '.vibetabula', '.canvastty']);
 const WIKILINK_RE = /\[\[([^\]|#\n]+)(?:#[^\]|\n]*)?(?:\|[^\]\n]*)?\]\]/g;
 const TAG_RE = /(^|[\s(])#([\p{L}\p{N}_\-/]+)/gu;
 
@@ -138,8 +138,13 @@ class Vault {
   }
 
   // per-note look (font, size) lives next to the notes, invisible to Obsidian and synced with them
-  stylesFile() { return path.join(this.root, '.canvastty', 'note-styles.json'); }
-  async styles() { try { return JSON.parse(await fsp.readFile(this.stylesFile(), 'utf8')) || {}; } catch { return {}; } }
+  stylesFile() { return path.join(this.root, '.vibetabula', 'note-styles.json'); }
+  async styles() {
+    for (const f of [this.stylesFile(), path.join(this.root, '.canvastty', 'note-styles.json')]) { // .canvastty — the app's former name
+      try { return JSON.parse(await fsp.readFile(f, 'utf8')) || {}; } catch {}
+    }
+    return {};
+  }
   async writeStyles(all) {
     const f = this.stylesFile();
     await fsp.mkdir(path.dirname(f), { recursive: true });

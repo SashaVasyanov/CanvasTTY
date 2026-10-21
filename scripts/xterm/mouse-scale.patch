@@ -6,7 +6,7 @@ index c40a7cc..6a26847 100644
    const elementStyle = window.getComputedStyle(element);
    const leftPadding = parseInt(elementStyle.getPropertyValue('padding-left'));
    const topPadding = parseInt(elementStyle.getPropertyValue('padding-top'));
-+  // CanvasTTY patch: compensate CSS transform scale of the canvas
++  // VibeTabula patch: compensate CSS transform scale of the canvas
 +  const sx = element.offsetWidth ? rect.width / element.offsetWidth : 1;
 +  const sy = element.offsetHeight ? rect.height / element.offsetHeight : 1;
    return [

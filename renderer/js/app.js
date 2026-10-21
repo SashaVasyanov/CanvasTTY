@@ -4,6 +4,7 @@ import { state, native, PROVIDER_META, DEFAULT_AGENTS } from './state.js';
 import { CanvasView } from './canvas.js';
 import { NODE_TYPES, imageNodeFromFile } from './nodes.js';
 import { PenBar } from './pentools.js';
+import { WIDGETS, openWidgetPicker } from './widgets.js';
 import { vaultIndex } from './vaultIndex.js';
 import { Sidebar, NotePanel, openGraph } from './notes.js';
 import { setFpsMeter, toggleFpsMeter, runPerfTest } from './perf.js';
@@ -53,7 +54,7 @@ class App {
     const title = h('header', { class: 'titlebar' },
       h('div', { class: 'tb-left' },
         h('img', { class: 'app-logo', src: 'assets/logo64.png', alt: '' }),
-        h('span', { class: 'app-name', title: `CanvasTTY ${state.info.version || VERSION}` }, 'CanvasTTY'),
+        h('span', { class: 'app-name', title: `VibeTabula ${state.info.version || VERSION}` }, 'VibeTabula'),
       ),
       h('div', { class: 'tb-center' }, this.projBtn, this.tabs),
       h('div', { class: 'tb-right' },
@@ -96,7 +97,7 @@ class App {
   async openHelp() {
     let md = '';
     try { md = await (await fetch('help.md')).text(); } catch { md = '# Инструкция\n\nФайл справки не найден. Откройте README.md в папке приложения.'; }
-    modal({ title: 'Инструкция CanvasTTY', body: h('div', { class: 'md', html: renderChatMarkdown(md) }), width: 'min(860px, 94vw)', className: 'help-modal' });
+    modal({ title: 'Инструкция VibeTabula', body: h('div', { class: 'md', html: renderChatMarkdown(md) }), width: 'min(860px, 94vw)', className: 'help-modal' });
   }
 
   renderTabs() {
@@ -196,7 +197,7 @@ class App {
       h('span', { class: 'tsep' }),
       action('note', 'Заметка', (e) => this.noteMenu(e)),
       action('image', 'Изображение', () => this.pickImage()),
-      action('gallery', 'Галерея фото (G)', () => this.addGallery()),
+      this.widgetBtn = action('gallery', 'Виджеты на canvas (W): часы, таймер, чек-лист, календарь…', () => this.widgetPicker()),
       h('span', { class: 'tsep' }),
       h('button', { class: 'tool agent-btn', title: 'Позвать нейросеть', onclick: (e) => this.launchMenu(e) }, h('span', { html: icon('sparkle', 17) }), h('span', {}, 'Агент')),
     );
@@ -293,6 +294,14 @@ class App {
       }
     }
     return { x: cx, y: cy };
+  }
+  widgetPicker() { openWidgetPicker(this.widgetBtn, (kind) => this.addWidget(kind)); }
+  addWidget(kind, world) {
+    const d = WIDGETS[kind];
+    if (!d) return null;
+    const n = this.place('widget', { world, data: { kind, ...(d.defaults?.() || {}) }, w: d.size?.w, h: d.size?.h });
+    this.canvas.select([n.id]);
+    return n;
   }
   place(type, { world, from, near, data, w, h: hh } = {}) {
     const def = NODE_TYPES[type];
@@ -445,15 +454,7 @@ class App {
     toast(`Хранилище: ${p}`);
   }
 
-  addGallery(world) {
-    const n = world ? this.canvas.addNode('gallery', { x: world.x, y: world.y }) : this.place('gallery', {});
-    setTimeout(() => this.canvas.views.get(n.id)?.inst?.editTitle?.(), 60);
-    return n;
-  }
-  galleryAt(clientX, clientY, exclude = new Set()) {
-    const w = this.canvas.toWorld(clientX, clientY);
-    return state.doc.nodes.filter((n) => n.type === 'gallery' && !exclude.has(n.id) && w.x >= n.x && w.x <= n.x + n.w && w.y >= n.y && w.y <= n.y + n.h).sort((a, b) => (b.z || 0) - (a.z || 0))[0] || null;
-  }
+
 
   pickImage(world) {
     const input = h('input', { type: 'file', accept: 'image/*', multiple: true });
@@ -474,9 +475,9 @@ class App {
         { label: 'Текст', icon: 'text', kbd: 'T', onClick: () => { const n = cv.addNode('text', { x: world.x, y: world.y }); setTimeout(() => cv.views.get(n.id)?.inst?.edit?.(), 30); } },
         { label: 'Фигура', icon: 'rect', children: [['rect', 'Прямоугольник'], ['ellipse', 'Эллипс'], ['diamond', 'Ромб']].map(([k, l]) => ({ label: l, icon: k, onClick: () => cv.addNode('shape', { x: world.x, y: world.y, data: { kind: k } }) })) },
         { label: 'Область с названием', icon: 'area', kbd: 'F', onClick: () => cv.addNode('frame', { x: world.x, y: world.y }) },
-        { label: 'Галерея фото', icon: 'gallery', kbd: 'G', onClick: () => this.addGallery(world) },
         { label: 'Заметка', icon: 'note', children: [{ label: 'Новая заметка', icon: 'plus', onClick: () => this.newNoteOnCanvas(world) }, { label: 'Из хранилища…', icon: 'search', onClick: () => this.quickOpen(true, world) }] },
         { label: 'Изображение…', icon: 'image', onClick: () => this.pickImage(world) },
+        { label: 'Виджет', icon: 'gallery', children: Object.entries(WIDGETS).map(([k, d]) => ({ label: d.name, icon: d.icon, onClick: () => this.addWidget(k, world) })) },
         '-',
         { label: 'Чат с агентом', icon: 'chat', children: state.settings.agents.filter((a) => a.chat).map((a) => ({ label: a.name, badge: badge(a.mono, a.color, 16, a.dark), onClick: () => this.launchAgentChat({ agentId: a.id, world }) })) },
         { label: 'Агент в терминале', icon: 'terminal', children: state.settings.agents.map((a) => ({ label: a.name, badge: badge(a.mono, a.color, 16, a.dark), onClick: () => this.launchAgent({ agentId: a.id, world }) })) },
@@ -507,17 +508,7 @@ class App {
       cv.checkpoint(); e.label = t; cv.renderEdges(); cv.changed();
     });
     cv.on('drop', (e) => this.onDrop(e));
-    cv.on('addGallery', () => this.addGallery());
-    cv.on('moveEnd', ({ nodes, clientX, clientY }) => {
-      // dropping image(s) onto a gallery puts them inside it
-      if (!nodes.length || !nodes.every((n) => n.type === 'image' && n.data.vault)) return;
-      const gal = this.galleryAt(clientX, clientY, new Set(nodes.map((n) => n.id)));
-      if (!gal) return;
-      const inst = cv.views.get(gal.id)?.inst;
-      inst?.addEntries(nodes.map((n) => ({ id: 'ph_' + n.id, vault: n.data.vault, thumb: n.data.vault, w: n.w, h: n.h })));
-      cv.removeNodes(nodes.map((n) => n.id), { checkpoint: false });
-      toast(`Добавлено в «${gal.data.title || 'Галерея'}»`);
-    });
+    cv.on('widgets', () => this.widgetPicker());
     document.addEventListener('paste', (e) => this.onPaste(e));
   }
 
@@ -525,13 +516,11 @@ class App {
     e.preventDefault();
     const world = this.canvas.toWorld(e.clientX, e.clientY);
     let notePaths = [];
-    try { notePaths = JSON.parse(e.dataTransfer.getData('application/x-canvastty-notes') || '[]'); } catch {}
+    try { notePaths = JSON.parse(e.dataTransfer.getData('application/x-vibetabula-notes') || '[]'); } catch {}
     if (notePaths.length > 1) { this.addNotesToCanvas(notePaths, world); return; }
-    const notePath = e.dataTransfer.getData('application/x-canvastty-note');
+    const notePath = e.dataTransfer.getData('application/x-vibetabula-note');
     if (notePath) { this.addNoteToCanvas(notePath, world); return; }
     const files = [...e.dataTransfer.files];
-    const gal = files.length ? this.galleryAt(e.clientX, e.clientY) : null;
-    if (gal) { this.canvas.views.get(gal.id)?.inst?.addFiles(files); return; }
     if (files.length) {
       let i = 0;
       for (const f of files) {
@@ -557,10 +546,8 @@ class App {
     const cd = e.clipboardData;
     const text = cd.getData('text/plain');
     const world = this.canvas.lastPointer && this.pointerInCanvas() ? this.canvas.toWorld(this.canvas.lastPointer.x, this.canvas.lastPointer.y) : this.canvas.centerWorld();
-    if (text && text.startsWith('{"canvastty"')) { try { e.preventDefault(); this.canvas.pastePayload(JSON.parse(text), { x: world.x, y: world.y }); return; } catch {} }
+    if (text && (text.startsWith('{"vibetabula"') || text.startsWith('{"canvastty"'))) { try { e.preventDefault(); this.canvas.pastePayload(JSON.parse(text), { x: world.x, y: world.y }); return; } catch {} }
     const img = [...cd.items].find((i) => i.type.startsWith('image/'));
-    const selGal = this.canvas.selectedNodes().length === 1 && this.canvas.selectedNodes()[0].type === 'gallery' ? this.canvas.selectedNodes()[0] : null;
-    if (img && selGal) { e.preventDefault(); this.canvas.views.get(selGal.id)?.inst?.addFiles([img.getAsFile()]); return; }
     if (img) { e.preventDefault(); await imageNodeFromFile(this.canvas, img.getAsFile(), world); return; }
     if (text) {
       e.preventDefault();
@@ -889,7 +876,7 @@ class App {
   settings_keys() {
     const keys = [
       ['V / H', 'Выделение / рука'], ['Пробел + тянуть, средняя кнопка', 'Перемещение по canvas'], ['Колесо, Ctrl + колесо', 'Масштаб'],
-      ['S, T, R, O, F, A', 'Стикер, текст, прямоугольник, эллипс, область, стрелка'], ['G', 'Галерея фото'],
+      ['S, T, R, O, F, A', 'Стикер, текст, прямоугольник, эллипс, область, стрелка'], ['W', 'Виджеты'],
       ['Shift + клик, рамка', 'Множественное выделение'], ['Shift при перемещении', 'Только по оси'], ['Alt при перемещении', 'Без привязки'],
       ['Ctrl+Z / Ctrl+Shift+Z', 'Отменить / повторить'], ['Ctrl+C / X / V / D', 'Копировать / вырезать / вставить / дублировать'],
       ['Ctrl+G', 'Сгруппировать в область'], ['Ctrl+L', 'Закрепить'], ['[ / ]', 'Назад / вперёд по слоям'], ['Стрелки (+Shift)', 'Сдвиг на 1 (10) px'],

@@ -6,7 +6,7 @@ const path = require('path');
 const os = require('os');
 const readline = require('readline');
 
-// ---------------- CanvasTTY's own history ----------------
+// ---------------- VibeTabula's own history ----------------
 class HistoryStore {
   constructor(dir, { readOnly = false } = {}) {
     this.dir = dir;

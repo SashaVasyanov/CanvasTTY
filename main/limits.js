@@ -86,7 +86,7 @@ async function claudeLimits() {
   if (!token) return { status: 'na', note: 'Нет OAuth-токена' };
   try {
     const res = await fetch('https://api.anthropic.com/api/oauth/usage', {
-      headers: { Authorization: `Bearer ${token}`, 'anthropic-beta': 'oauth-2025-04-20', 'User-Agent': 'CanvasTTY/1.0', Accept: 'application/json' },
+      headers: { Authorization: `Bearer ${token}`, 'anthropic-beta': 'oauth-2025-04-20', 'User-Agent': 'VibeTabula/1.0', Accept: 'application/json' },
     });
     if (!res.ok) return { status: 'error', note: `HTTP ${res.status}` };
     const j = await res.json();

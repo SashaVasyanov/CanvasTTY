@@ -1,5 +1,5 @@
 // Conversation history for chat windows: a panel on the left, like in the ChatGPT / Claude apps.
-// "CanvasTTY" lists conversations made in this app; for agent windows a second tab lists the
+// "VibeTabula" lists conversations made in this app; for agent windows a second tab lists the
 // sessions Claude Code / Codex keep on disk (also those started in a terminal) and resumes them.
 import { h, icon, uid, toast, debounce } from './util.js';
 import { native } from './state.js';
@@ -97,7 +97,7 @@ export class ChatHistory {
     this.tabs.replaceChildren();
     if (!this.isAgent) { this.tabs.style.display = 'none'; return; }
     const mk = (id, label) => h('button', { class: `hist-tab ${this.tab === id ? 'on' : ''}`, onclick: () => { this.tab = id; this.renderTabs(); this.load(); } }, label);
-    this.tabs.append(mk('app', 'В CanvasTTY'), mk('cli', `Сессии ${this.cliName}`));
+    this.tabs.append(mk('app', 'В VibeTabula'), mk('cli', `Сессии ${this.cliName}`));
   }
 
   async load() {

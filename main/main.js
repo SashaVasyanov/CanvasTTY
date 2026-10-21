@@ -31,12 +31,28 @@ function fixPath() {
 }
 fixPath();
 
-app.setName('CanvasTTY');
+app.setName('VibeTabula');
+// The app used to be called CanvasTTY: its data folder (workspace, canvases, chats, approved
+// commands…) moves to the new name once. If Electron already created the new folder at start-up
+// (crash reporter, caches), the old entries are moved into it; if moving is impossible, the old
+// folder is simply used as is.
+(function migrateUserData() {
+  try {
+    const appData = app.getPath('appData');
+    const oldDir = path.join(appData, 'CanvasTTY'), newDir = path.join(appData, 'VibeTabula');
+    if (!fs.existsSync(path.join(oldDir, 'workspace.json')) || fs.existsSync(path.join(newDir, 'workspace.json'))) return;
+    if (!fs.existsSync(newDir)) { fs.renameSync(oldDir, newDir); return; }
+    for (const name of fs.readdirSync(oldDir)) {
+      const to = path.join(newDir, name);
+      if (!fs.existsSync(to)) fs.renameSync(path.join(oldDir, name), to);
+    }
+  } catch { try { app.setPath('userData', path.join(app.getPath('appData'), 'CanvasTTY')); } catch {} }
+})();
 // rendering performance: GPU rasterization even on blocklisted drivers
 app.commandLine.appendSwitch('enable-gpu-rasterization');
 app.commandLine.appendSwitch('ignore-gpu-blocklist');
 app.commandLine.appendSwitch('enable-zero-copy');
-if (process.platform === 'win32') app.setAppUserModelId('CanvasTTY');
+if (process.platform === 'win32') app.setAppUserModelId('VibeTabula');
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } },
@@ -95,12 +111,15 @@ function loadWorkspace() {
 }
 
 function ensureVault(ws) {
-  const vp = (ws && ws.settings && ws.settings.vaultPath) || path.join(app.getPath('documents'), 'CanvasTTY Vault');
+  // default vault: a "CanvasTTY Vault" from the old name stays in use (it may also be open in Obsidian)
+  const docs = app.getPath('documents');
+  const oldVault = path.join(docs, 'CanvasTTY Vault'), newVault = path.join(docs, 'VibeTabula Vault');
+  const vp = (ws && ws.settings && ws.settings.vaultPath) || (!fs.existsSync(newVault) && fs.existsSync(oldVault) ? oldVault : newVault);
   const fresh = !fs.existsSync(vp) || fs.readdirSync(vp).length === 0;
   vault.setRoot(vp);
   if (fresh) {
     const welcome = [
-      '# Добро пожаловать в CanvasTTY',
+      '# Добро пожаловать в VibeTabula',
       '',
       'Это хранилище заметок — обычная папка с файлами **Markdown**, совместимая с Obsidian.',
       '',
@@ -113,8 +132,8 @@ function ensureVault(ws) {
       '> Панель инструментов сверху работает как в Apple Notes: стили, чек-листы, таблицы, вложения.',
       '',
     ].join('\n');
-    const ideas = '# Идеи\n\nСюда можно складывать идеи для проектов. Обратная ссылка: [[Добро пожаловать в CanvasTTY]]\n\n- Сделать агента для ревью кода #идея\n';
-    fs.writeFileSync(path.join(vp, 'Добро пожаловать в CanvasTTY.md'), welcome);
+    const ideas = '# Идеи\n\nСюда можно складывать идеи для проектов. Обратная ссылка: [[Добро пожаловать в VibeTabula]]\n\n- Сделать агента для ревью кода #идея\n';
+    fs.writeFileSync(path.join(vp, 'Добро пожаловать в VibeTabula.md'), welcome);
     fs.writeFileSync(path.join(vp, 'Идеи.md'), ideas);
   }
   return vp;
@@ -144,7 +163,7 @@ function createWindow() {
     { label: 'Вид', submenu: [{ role: 'reload' }, { role: 'toggleDevTools' }, { type: 'separator' }, { role: 'togglefullscreen' }] },
     { role: 'windowMenu' },
   ]) : null);
-  win.loadURL('app://canvastty/index.html');
+  win.loadURL('app://vibetabula/index.html');
   win.once('ready-to-show', () => win.show());
   // let the page write pending edits (debounced saves) before the window goes away
   let allowClose = false;

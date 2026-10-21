@@ -258,7 +258,7 @@ export function openPetPicker() {
     for (const p of codexPets.list) {
       const sp = new SpritePet({ url: p.url, rows: p.rows, size: 78 });
       sprites.push(sp);
-      const del = h('span', { class: 'pet-del', title: 'Удалить питомца (из CanvasTTY и Codex)', html: icon('x', 12), onclick: async (e) => {
+      const del = h('span', { class: 'pet-del', title: 'Удалить питомца (из VibeTabula и Codex)', html: icon('x', 12), onclick: async (e) => {
         e.stopPropagation();
         if (!(await confirmBox('Удалить питомца?', `«${p.displayName}» будет удалён из ~/.codex/pets и пропадёт и из приложения Codex.`))) return;
         await native.codexPets.remove(p.id);

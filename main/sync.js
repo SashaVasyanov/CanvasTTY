@@ -65,7 +65,10 @@ class SyncManager {
   saveState() { clearTimeout(this._stT); this._stT = setTimeout(() => fsp.writeFile(this.stateFile, JSON.stringify(this.st)).catch(() => {}), 200); }
   get root() {
     if (!this.cfg.dir) return '';
-    return path.basename(this.cfg.dir) === 'CanvasTTY Sync' ? this.cfg.dir : path.join(this.cfg.dir, 'CanvasTTY Sync');
+    if (['VibeTabula Sync', 'CanvasTTY Sync'].includes(path.basename(this.cfg.dir))) return this.cfg.dir;
+    // the folder made under the app's former name keeps working, so all computers keep syncing
+    const old = path.join(this.cfg.dir, 'CanvasTTY Sync'), cur = path.join(this.cfg.dir, 'VibeTabula Sync');
+    return !fs.existsSync(cur) && fs.existsSync(old) ? old : cur;
   }
   get on() { return !!(this.cfg.enabled && this.cfg.dir); }
   info() {

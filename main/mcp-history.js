@@ -1,14 +1,14 @@
 #!/usr/bin/env node
-// MCP server (stdio) that lets the agents in CanvasTTY chat windows search and read the
-// user's previous conversations: CanvasTTY chat history plus Claude Code and Codex sessions.
-// Started by CanvasTTY itself (Electron binary with ELECTRON_RUN_AS_NODE=1).
+// MCP server (stdio) that lets the agents in VibeTabula chat windows search and read the
+// user's previous conversations: VibeTabula chat history plus Claude Code and Codex sessions.
+// Started by VibeTabula itself (Electron binary with ELECTRON_RUN_AS_NODE=1).
 const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
 const { HistoryStore, listSessions, readSession, sessionFiles } = require('./history');
 
 const store = new HistoryStore(path.join(process.env.CANVASTTY_USERDATA || '.', 'chats'), { readOnly: true });
-const SOURCES = ['canvastty', 'claude', 'codex'];
+const SOURCES = ['vibetabula', 'claude', 'codex'];
 const MAX_OUT = 60000;
 
 const fmtDate = (ts) => (ts ? new Date(ts).toISOString().slice(0, 16).replace('T', ' ') : '');
@@ -32,13 +32,13 @@ async function search({ query = '', source = 'all', limit = 10 }) {
   if (!terms.length) throw new Error('пустой запрос');
   const want = (s) => source === 'all' || source === s;
   const hits = [];
-  if (want('canvastty')) {
+  if (want('vibetabula')) {
     for (const meta of store.list({})) {
       const rec = await store.get(meta.id);
       if (!rec) continue;
       const text = `${rec.title || ''}\n${convText(rec.messages || [])}`;
       const low = text.toLowerCase();
-      if (terms.every((t) => low.includes(t))) hits.push({ source: 'canvastty', ref: rec.id, title: meta.title, date: rec.updated, cwd: rec.cwd || '', agent: rec.agent, snippet: snippet(text, terms) });
+      if (terms.every((t) => low.includes(t))) hits.push({ source: 'vibetabula', ref: rec.id, title: meta.title, date: rec.updated, cwd: rec.cwd || '', agent: rec.agent, snippet: snippet(text, terms) });
     }
   }
   for (const kind of ['claude', 'codex']) {
@@ -66,9 +66,10 @@ async function search({ query = '', source = 'all', limit = 10 }) {
 }
 
 async function read({ source, ref, offset = 0 }) {
-  if (!SOURCES.includes(source)) throw new Error('source должен быть canvastty, claude или codex');
+  if (source === 'canvastty') source = 'vibetabula'; // the app's former name
+  if (!SOURCES.includes(source)) throw new Error('source должен быть vibetabula, claude или codex');
   let title = '', messages = [], cwd = '';
-  if (source === 'canvastty') {
+  if (source === 'vibetabula') {
     const rec = await store.get(ref);
     if (!rec) throw new Error('чат не найден');
     title = rec.title || ''; messages = rec.messages || []; cwd = rec.cwd || '';
@@ -84,7 +85,7 @@ async function read({ source, ref, offset = 0 }) {
 
 async function list({ source = 'all', limit = 20 }) {
   const rows = [];
-  if (source === 'all' || source === 'canvastty') for (const r of store.list({})) rows.push({ source: 'canvastty', ref: r.id, title: r.title, date: r.updated, cwd: r.cwd });
+  if (source === 'all' || source === 'vibetabula') for (const r of store.list({})) rows.push({ source: 'vibetabula', ref: r.id, title: r.title, date: r.updated, cwd: r.cwd });
   for (const kind of ['claude', 'codex']) if (source === 'all' || source === kind) for (const s of await listSessions(kind)) rows.push({ source: kind, ref: s.file, title: s.title, date: s.updated, cwd: s.cwd });
   rows.sort((a, b) => (b.date || 0) - (a.date || 0));
   return rows.slice(0, limit).map((x, i) => `${i + 1}. [${x.source}] ${x.title} — ${fmtDate(x.date)}${x.cwd ? ` · ${x.cwd}` : ''}\n   source="${x.source}" ref="${x.ref}"`).join('\n') || 'Чатов пока нет.';
@@ -93,7 +94,7 @@ async function list({ source = 'all', limit = 20 }) {
 const TOOLS = [
   {
     name: 'search_chats',
-    description: "Full-text search in the user's previous AI conversations: CanvasTTY chat history and Claude Code / Codex sessions stored on this computer (including ones started in a terminal). Use it whenever the user refers to something from an earlier chat. All words must match (case-insensitive).",
+    description: "Full-text search in the user's previous AI conversations: VibeTabula chat history and Claude Code / Codex sessions stored on this computer (including ones started in a terminal). Use it whenever the user refers to something from an earlier chat. All words must match (case-insensitive).",
     inputSchema: { type: 'object', properties: { query: { type: 'string', description: 'Words to look for' }, source: { type: 'string', enum: ['all', ...SOURCES], default: 'all' }, limit: { type: 'number', default: 10 } }, required: ['query'] },
   },
   {
@@ -118,7 +119,7 @@ rl.on('line', async (line) => {
   const { id, method, params } = msg;
   const reply = (result) => id !== undefined && send({ jsonrpc: '2.0', id, result });
   try {
-    if (method === 'initialize') reply({ protocolVersion: params?.protocolVersion || '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'canvastty-history', version: '1.0.0' } });
+    if (method === 'initialize') reply({ protocolVersion: params?.protocolVersion || '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'vibetabula-history', version: '1.0.0' } });
     else if (method === 'tools/list') reply({ tools: TOOLS });
     else if (method === 'tools/call') {
       const fn = HANDLERS[params?.name];

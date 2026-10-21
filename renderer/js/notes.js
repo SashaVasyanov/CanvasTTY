@@ -151,8 +151,8 @@ export class Sidebar {
     row.addEventListener('click', (e) => this.clickFile(n, e));
     row.addEventListener('dragstart', (e) => {
       const paths = this.picked.has(n.path) && this.picked.size > 1 ? this.pickedInOrder() : [n.path];
-      e.dataTransfer.setData('application/x-canvastty-note', paths[0]);
-      if (paths.length > 1) e.dataTransfer.setData('application/x-canvastty-notes', JSON.stringify(paths));
+      e.dataTransfer.setData('application/x-vibetabula-note', paths[0]);
+      if (paths.length > 1) e.dataTransfer.setData('application/x-vibetabula-notes', JSON.stringify(paths));
       e.dataTransfer.setData('text/plain', paths.map((p) => `[[${p.split('/').pop().replace(/\.md$/i, '')}]]`).join('\n'));
       e.dataTransfer.effectAllowed = 'copyMove';
       if (paths.length > 1) { const ghost = h('div', { class: 'drag-count' }, `${paths.length} заметки`); document.body.append(ghost); e.dataTransfer.setDragImage(ghost, 10, 10); setTimeout(() => ghost.remove()); }
@@ -166,15 +166,15 @@ export class Sidebar {
   }
   // dropping notes on a folder moves them there
   dropTarget(row, folder) {
-    const isNote = (e) => [...(e.dataTransfer?.types || [])].includes('application/x-canvastty-note');
+    const isNote = (e) => [...(e.dataTransfer?.types || [])].includes('application/x-vibetabula-note');
     row.addEventListener('dragover', (e) => { if (!isNote(e)) return; e.preventDefault(); e.dataTransfer.dropEffect = 'move'; row.classList.add('drop-into'); });
     row.addEventListener('dragleave', () => row.classList.remove('drop-into'));
     row.addEventListener('drop', (e) => {
       if (!isNote(e)) return;
       e.preventDefault(); e.stopPropagation(); row.classList.remove('drop-into');
       let paths = [];
-      try { paths = JSON.parse(e.dataTransfer.getData('application/x-canvastty-notes') || '[]'); } catch {}
-      if (!paths.length) paths = [e.dataTransfer.getData('application/x-canvastty-note')].filter(Boolean);
+      try { paths = JSON.parse(e.dataTransfer.getData('application/x-vibetabula-notes') || '[]'); } catch {}
+      if (!paths.length) paths = [e.dataTransfer.getData('application/x-vibetabula-note')].filter(Boolean);
       this.moveNotes(paths, folder);
     });
   }

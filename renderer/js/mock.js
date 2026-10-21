@@ -8,8 +8,8 @@ const on = (ch) => (cb) => { (listeners[ch] = listeners[ch] || []).push(cb); ret
 const emit = (ch, p) => (listeners[ch] || []).forEach((f) => f(p));
 
 const files = LS.get('mock:vault', null) || {
-  'Добро пожаловать в CanvasTTY.md': '# Добро пожаловать в CanvasTTY\n\nЭто хранилище заметок — обычная папка с файлами **Markdown**, совместимая с Obsidian.\n\n## Что умеют заметки\n- [x] Ссылки между заметками: [[Идеи]]\n- [ ] Теги: #старт #canvas\n- [ ] Перетащите заметку из списка слева на canvas\n\n> Панель инструментов сверху работает как в Apple Notes.\n',
-  'Идеи.md': '# Идеи\n\nОбратная ссылка: [[Добро пожаловать в CanvasTTY]]\n\n- Сделать агента для ревью кода #идея\n',
+  'Добро пожаловать в VibeTabula.md': '# Добро пожаловать в VibeTabula\n\nЭто хранилище заметок — обычная папка с файлами **Markdown**, совместимая с Obsidian.\n\n## Что умеют заметки\n- [x] Ссылки между заметками: [[Идеи]]\n- [ ] Теги: #старт #canvas\n- [ ] Перетащите заметку из списка слева на canvas\n\n> Панель инструментов сверху работает как в Apple Notes.\n',
+  'Идеи.md': '# Идеи\n\nОбратная ссылка: [[Добро пожаловать в VibeTabula]]\n\n- Сделать агента для ревью кода #идея\n',
   'Проекты/Монтаж видео.md': '# Монтаж видео\n\n| Шаг | Статус |\n| --- | --- |\n| Сценарий | готов |\n| Нарезка | в работе |\n\nСм. [[Идеи]]\n',
 };
 const saveFiles = () => LS.set('mock:vault', files);
@@ -35,7 +35,7 @@ export const mockNative = {
       const out = (d) => { s.buffer += d; s.last = Date.now(); emit('pty:data', { id, data: d }); };
       s.out = out;
       setTimeout(() => {
-        out(`\x1b[38;5;111mCanvasTTY demo shell\x1b[0m — запущено в браузере, настоящий терминал работает в приложении.\r\n`);
+        out(`\x1b[38;5;111mVibeTabula demo shell\x1b[0m — запущено в браузере, настоящий терминал работает в приложении.\r\n`);
         if (cmd) out(`\x1b[90m$ ${cmd}\x1b[0m\r\n\x1b[32m●\x1b[0m ${cmd}: агент готов. Напишите что-нибудь.\r\n`);
         out('\x1b[36m❯\x1b[0m ');
       }, 120);
@@ -64,7 +64,7 @@ export const mockNative = {
     }),
     async send({ reqId, messages, system }) {
       const last = messages[messages.length - 1]?.content || '';
-      const text = `Это **демо-ответ** (в браузере нет доступа к API).\n\nВы написали: _${last.slice(0, 80)}_\n\n${system ? `Контекст получен: ${system.length} символов.\n\n` : ''}\`\`\`js\nconsole.log('hello from CanvasTTY');\n\`\`\``;
+      const text = `Это **демо-ответ** (в браузере нет доступа к API).\n\nВы написали: _${last.slice(0, 80)}_\n\n${system ? `Контекст получен: ${system.length} символов.\n\n` : ''}\`\`\`js\nconsole.log('hello from VibeTabula');\n\`\`\``;
       let i = 0;
       const t = setInterval(() => {
         const chunk = text.slice(i, i + 6); i += 6;
@@ -117,13 +117,13 @@ export const mockNative = {
       remove: async (id) => { inst = inst.filter((x) => x.id !== id); return true; },
     };
   })(),
-  sync: (() => { let cfg = { enabled: false, dir: '', keys: false }; return { info: async () => ({ ...cfg, root: cfg.dir ? cfg.dir + '/CanvasTTY Sync' : '', device: 'demo-pc', status: { state: cfg.enabled ? 'ok' : 'off', last: Date.now(), pushed: 3, pulled: 1 } }), configure: async (p) => { cfg = { ...cfg, ...p }; return cfg; }, now: async () => cfg, ready: async () => cfg, adoptVault: async () => '/demo/CanvasTTY Sync/Заметки', onChanged: () => () => {}, onStatus: () => () => {} }; })(),
+  sync: (() => { let cfg = { enabled: false, dir: '', keys: false }; return { info: async () => ({ ...cfg, root: cfg.dir ? cfg.dir + '/VibeTabula Sync' : '', device: 'demo-pc', status: { state: cfg.enabled ? 'ok' : 'off', last: Date.now(), pushed: 3, pulled: 1 } }), configure: async (p) => { cfg = { ...cfg, ...p }; return cfg; }, now: async () => cfg, ready: async () => cfg, adoptVault: async () => '/demo/VibeTabula Sync/Заметки', onChanged: () => () => {}, onStatus: () => () => {} }; })(),
   history: (() => {
     const db = new Map();
     const now = Date.now();
     db.set('demo1', { id: 'demo1', kind: 'agentchat', agent: 'claude', title: 'Разобрать структуру проекта', model: 'claude-opus-5-5', cwd: '/home/user', count: 2, created: now - 3600e3, updated: now - 3600e3, messages: [{ role: 'user', content: 'Разбери структуру проекта' }, { role: 'assistant', content: 'Проект состоит из main/ и renderer/.', parts: [{ type: 'text', text: 'Проект состоит из **main/** и **renderer/**.' }] }] });
     db.set('demo2', { id: 'demo2', kind: 'agentchat', agent: 'claude', title: 'Починить сборку под Windows', model: 'claude-sonnet-5-5', cwd: '/home/user/app', count: 4, created: now - 30 * 3600e3, updated: now - 30 * 3600e3, messages: [{ role: 'user', content: 'Почини сборку' }, { role: 'assistant', content: 'Готово', parts: [{ type: 'text', text: 'Готово' }] }] });
-    db.set('demo3', { id: 'demo3', kind: 'chat', agent: 'anthropic', provider: 'anthropic', title: 'Идеи для названия', model: 'claude-sonnet-5-5', count: 2, created: now - 5 * 86400e3, updated: now - 5 * 86400e3, messages: [{ role: 'user', content: 'Придумай название' }, { role: 'assistant', content: 'CanvasTTY' }] });
+    db.set('demo3', { id: 'demo3', kind: 'chat', agent: 'anthropic', provider: 'anthropic', title: 'Идеи для названия', model: 'claude-sonnet-5-5', count: 2, created: now - 5 * 86400e3, updated: now - 5 * 86400e3, messages: [{ role: 'user', content: 'Придумай название' }, { role: 'assistant', content: 'VibeTabula' }] });
     const meta = ({ messages, ...r }) => ({ ...r, count: messages.length });
     return {
       list: async ({ kind, agent } = {}) => [...db.values()].filter((r) => (!kind || r.kind === kind) && (!agent || r.agent === agent)).sort((a, b) => b.updated - a.updated).map(meta),
@@ -150,12 +150,12 @@ export const mockNative = {
     usage: async () => ({}),
   },
   vault: {
-    root: async () => '/demo/CanvasTTY Vault',
+    root: async () => '/demo/VibeTabula Vault',
     setRoot: async (p) => p,
     async index() {
       const notes = Object.entries(files).filter(([p]) => p.endsWith('.md')).map(([p, t]) => ({ path: p, name: p.split('/').pop().replace(/\.md$/, ''), mtime: Date.now(), ...parse(t), preview: t.replace(/[#>*`\[\]_~-]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160) }));
       const folders = [...new Set(Object.keys(files).filter((p) => p.includes('/')).map((p) => p.split('/').slice(0, -1).join('/')))];
-      return { root: '/demo/CanvasTTY Vault', notes, folders, assets: [] };
+      return { root: '/demo/VibeTabula Vault', notes, folders, assets: [] };
     },
     read: async (p) => { if (!(p in files)) throw new Error('not found'); return files[p]; },
     write: async (p, c) => { files[p] = c; saveFiles(); emit('vault:changed', { file: p }); return true; },

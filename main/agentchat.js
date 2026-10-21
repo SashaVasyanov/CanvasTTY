@@ -41,8 +41,8 @@ function toolSummary(name, input) {
 
 // The agents get a small MCP server with the user's previous chats (search_chats / read_chat /
 // list_chats), so "find it in my old chats" works from a chat window.
-const HISTORY_TOOLS = ['mcp__canvastty__search_chats', 'mcp__canvastty__read_chat', 'mcp__canvastty__list_chats'];
-const HISTORY_HINT = 'You run inside CanvasTTY. Tools mcp__canvastty__search_chats, read_chat and list_chats search and read the user\'s previous conversations (CanvasTTY chats and Claude Code / Codex sessions on this computer). Use them whenever the user refers to an earlier chat.';
+const HISTORY_TOOLS = ['mcp__vibetabula__search_chats', 'mcp__vibetabula__read_chat', 'mcp__vibetabula__list_chats'];
+const HISTORY_HINT = 'You run inside VibeTabula. Tools mcp__vibetabula__search_chats, read_chat and list_chats search and read the user\'s previous conversations (VibeTabula chats and Claude Code / Codex sessions on this computer). Use them whenever the user refers to an earlier chat.';
 
 class AgentChatManager {
   constructor({ send, ptys, userData, attachments }) {
@@ -70,14 +70,14 @@ class AgentChatManager {
   }
   claudeMcpConfig() {
     if (!this.userData) return null;
-    const file = path.join(this.userData, 'mcp-canvastty.json');
-    try { fs.writeFileSync(file, JSON.stringify({ mcpServers: { canvastty: { type: 'stdio', ...this.historyServer() } } }, null, 1)); return file; } catch { return null; }
+    const file = path.join(this.userData, 'mcp-vibetabula.json');
+    try { fs.writeFileSync(file, JSON.stringify({ mcpServers: { vibetabula: { type: 'stdio', ...this.historyServer() } } }, null, 1)); return file; } catch { return null; }
   }
   codexMcpArgs() {
     const srv = this.historyServer();
     const lit = (v) => `'${String(v).replace(/'/g, '')}'`; // TOML literal string
     const env = Object.entries(srv.env).map(([k, v]) => `${k}=${lit(v)}`).join(',');
-    return ['-c', `mcp_servers.canvastty.command=${lit(srv.command)}`, '-c', `mcp_servers.canvastty.args=[${srv.args.map(lit).join(',')}]`, '-c', `mcp_servers.canvastty.env={${env}}`];
+    return ['-c', `mcp_servers.vibetabula.command=${lit(srv.command)}`, '-c', `mcp_servers.vibetabula.args=[${srv.args.map(lit).join(',')}]`, '-c', `mcp_servers.vibetabula.env={${env}}`];
   }
 
   abort(reqId) {

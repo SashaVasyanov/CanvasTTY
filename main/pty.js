@@ -131,7 +131,7 @@ class PtyManager {
     const cmdLine = this.buildCommandLine(cmd, args);
     const c = Math.max(10, Math.min(500, cols | 0 || 100));
     const r = Math.max(4, Math.min(300, rows | 0 || 30));
-    const childEnv = { ...process.env, COLORTERM: 'truecolor', TERM_PROGRAM: 'CanvasTTY', ...(env || {}) };
+    const childEnv = { ...process.env, COLORTERM: 'truecolor', TERM_PROGRAM: 'VibeTabula', ...(env || {}) };
     if (isWin && process.env.APPDATA) {
       const npmBin = path.join(process.env.APPDATA, 'npm');
       if (!(childEnv.PATH || childEnv.Path || '').includes(npmBin)) {
@@ -156,7 +156,7 @@ class PtyManager {
     });
     proc.stderr.on('data', (chunk) => {
       let data = chunk.toString('utf8').replace(/\n/g, '\r\n');
-      if (/xcrun: error|xcode-select/i.test(data)) data += '\r\n[CanvasTTY] Для терминала нужен python3 из Command Line Tools: выполните в Терминале macOS  xcode-select --install\r\n';
+      if (/xcrun: error|xcode-select/i.test(data)) data += '\r\n[VibeTabula] Для терминала нужен python3 из Command Line Tools: выполните в Терминале macOS  xcode-select --install\r\n';
       session.buffer += data;
       this.send('pty:data', { id, data: `\x1b[90m${data}\x1b[0m` });
     });
@@ -168,7 +168,7 @@ class PtyManager {
     proc.on('error', (err) => {
       session.exited = true; session.exitCode = -1;
       const hint = !isWin && err.code === 'ENOENT' ? (process.platform === 'darwin' ? '\r\nДля терминала нужен python3: выполните в Терминале macOS  xcode-select --install' : '\r\nДля терминала нужен python3') : '';
-      const msg = `\r\n\x1b[31m[CanvasTTY] ${err.message}${hint}\x1b[0m\r\n`;
+      const msg = `\r\n\x1b[31m[VibeTabula] ${err.message}${hint}\x1b[0m\r\n`;
       session.buffer += msg;
       this.send('pty:data', { id, data: msg });
       this.send('pty:exit', { id, code: -1, error: err.message });

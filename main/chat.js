@@ -130,7 +130,7 @@ class ChatManager {
         if (['openai', 'openrouter', 'deepseek'].includes(provider)) body.stream_options = { include_usage: true };
         const headers = { 'content-type': 'application/json' };
         if (cfg.key) headers.Authorization = `Bearer ${cfg.key}`;
-        if (provider === 'openrouter') { headers['HTTP-Referer'] = 'https://canvastty.local'; headers['X-Title'] = 'CanvasTTY'; }
+        if (provider === 'openrouter') { headers['HTTP-Referer'] = 'https://vibetabula.local'; headers['X-Title'] = 'VibeTabula'; }
         res = await fetch(`${cfg.baseUrl}/chat/completions`, { method: 'POST', signal: ctrl.signal, headers, body: JSON.stringify(body) });
       }
 

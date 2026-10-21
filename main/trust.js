@@ -32,7 +32,7 @@ class Trust {
     if (this.pending.has(key)) return this.pending.get(key);
     const win = this.getWin();
     const p = dialog.showMessageBox(win && !win.isDestroyed() ? win : undefined, {
-      type: 'warning', title: 'CanvasTTY', noLink: true,
+      type: 'warning', title: 'VibeTabula', noLink: true,
       buttons: ['Разрешить', 'Отмена'], defaultId: 1, cancelId: 1,
       message: `${what}:`,
       detail: `${key.replace(/^agentchat:/, '')}\n${cwd ? `\nПапка: ${cwd}\n` : ''}\nЭта команда ещё не запускалась на этом компьютере. Она могла прийти с другого компьютера через синхронизацию. Если вы её не задавали — нажмите «Отмена».`,

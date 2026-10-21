@@ -8,6 +8,32 @@ import { safeColor } from './sanitize.js';
 
 const MIN_Z = 0.08, MAX_Z = 3;
 const SNAP_PX = 6;
+// Photo galleries were removed: an old gallery becomes a named area of the same colour with its
+// photos laid out inside as ordinary images (nothing is lost)
+function migrateGalleries(doc) {
+  const gals = (doc.nodes || []).filter((n) => n.type === 'gallery');
+  if (!gals.length) return false;
+  for (const g of gals) {
+    const imgs = (g.data?.images || []).filter((x) => x && x.vault);
+    const pad = 40, head = 70, gap = 20, cell = 220;
+    const cols = Math.max(1, Math.min(imgs.length, Math.floor((Math.max(g.w, 300) - pad * 2 + gap) / (cell + gap)) || 1));
+    let x = 0, y = 0, rowH = 0, maxW = 0;
+    const kids = [];
+    imgs.forEach((it, i) => {
+      if (i && i % cols === 0) { y += rowH + gap; x = 0; rowH = 0; }
+      const w = cell, hh = Math.round(cell * ((it.h || 3) / (it.w || 4)));
+      kids.push({ id: uid('im'), type: 'image', x: Math.round(g.x + pad + x), y: Math.round(g.y + head + y), w, h: hh, z: (g.z || 0) + 1 + i, parent: g.id, data: { vault: it.vault, ...(it.name ? { name: it.name.replace(/\.[a-z0-9]+$/i, '') } : {}) } });
+      x += w + gap; rowH = Math.max(rowH, hh); maxW = Math.max(maxW, x - gap);
+    });
+    g.type = 'frame';
+    g.w = Math.max(g.w, maxW + pad * 2); g.h = Math.max(g.h, head + y + rowH + pad);
+    g.z = Math.min(g.z || 0, -1);
+    g.data = { title: g.data?.title || 'Фото', color: g.data?.color };
+    doc.nodes.push(...kids);
+  }
+  return true;
+}
+
 function simplify(pts, tol) {
   if (pts.length < 3) return pts;
   const keep = new Uint8Array(pts.length); keep[0] = keep[pts.length - 1] = 1;
@@ -22,7 +48,7 @@ function simplify(pts, tol) {
   }
   return pts.filter((_, i) => keep[i]);
 }
-const NAMED_COPY = { frame: 'title', gallery: 'title', image: 'name', chat: 'title', agentchat: 'title' };
+const NAMED_COPY = { frame: 'title', image: 'name', chat: 'title', agentchat: 'title' };
 const FONT_SIZES = [8, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 40, 48, 56, 64, 72, 96, 128];
 const TEXT_EDIT_TYPES = new Set(['text', 'sticky', 'shape']);
 const HANDLE_DIRS = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
@@ -321,6 +347,7 @@ export class CanvasView extends Emitter {
     this.undoStack = []; this.redoStack = [];
     this.forks.clear(); this.forkTrash.clear();
     this.lod = null;
+    if (migrateGalleries(this.doc)) state.touch();
     this.comments?.close(true);
     this.renderAll();
     // older canvases have no membership yet: derive it from geometry once
@@ -868,7 +895,7 @@ export class CanvasView extends Emitter {
     const nodes = this.withContents(this.selectedNodes());
     if (!nodes.length) return false;
     const ids = new Set(nodes.map((n) => n.id));
-    const payload = { canvastty: 1, nodes: deepClone(nodes), edges: deepClone(this.doc.edges.filter((e) => ids.has(e.from) && ids.has(e.to))) };
+    const payload = { vibetabula: 1, nodes: deepClone(nodes), edges: deepClone(this.doc.edges.filter((e) => ids.has(e.from) && ids.has(e.to))) };
     this.clipboard = payload;
     try { navigator.clipboard.writeText(JSON.stringify(payload)); } catch {}
     if (cut) this.removeNodes([...ids]);
@@ -1715,8 +1742,8 @@ export class CanvasView extends Emitter {
     if (k === '[') { this.zOrder('back'); return true; }
     if (k === 'enter' && this.selection.size === 1) { const n = this.selectedNodes()[0]; e.preventDefault(); this.views.get(n.id)?.inst?.edit?.(); return true; }
     if (k === 'm' && !e.altKey) { this.toggleMinimap(); return true; }
-    if (k === 'g' && !e.altKey) { this.emit('addGallery'); return true; }
     if (k === 'c' && e.shiftKey && !e.altKey) { this.comments.toggleVisible(); return true; }
+    if (k === 'w' && !e.altKey && !e.shiftKey) { this.emit('widgets'); return true; }
     if (k === 'e' && !e.altKey) { state.setSetting('penTool', 'eraser'); this.setTool('pencil'); this.emit('penTool'); return true; }
     if (k === 'p' && !e.altKey) { if (currentTool() === 'eraser') state.setSetting('penTool', state.settings.lastPenTool || 'pen'); this.setTool('pencil'); this.emit('penTool'); return true; }
     const tools = { v: 'select', h: 'hand', s: 'sticky', t: 'text', r: 'rect', o: 'ellipse', f: 'frame', a: 'arrow', l: 'arrow', c: 'comment', p: 'pencil' };

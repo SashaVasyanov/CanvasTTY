@@ -1,4 +1,4 @@
-// CanvasTTY ConPTY bridge.
+// VibeTabula ConPTY bridge.
 // Compiled on first run with the csc.exe that ships with .NET Framework on every Windows 10/11.
 // Usage: ptybridge.exe <cols> <rows> <cwdBase64> <commandLineBase64>
 // stdin  : framed messages  [type:1][len:4 LE][payload]   type 0 = input, 1 = resize(u16 cols,u16 rows), 2 = kill
@@ -149,7 +149,7 @@ static class Program
         if (!Native.CreateProcessW(null, cmdLine, IntPtr.Zero, IntPtr.Zero, false, EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT, IntPtr.Zero, cwd, ref si, out pi))
         {
             int err = Marshal.GetLastWin32Error();
-            byte[] msg = Encoding.UTF8.GetBytes("\r\n\x1b[31m[CanvasTTY] Не удалось запустить: " + cmd + " (код " + err + ")\x1b[0m\r\n");
+            byte[] msg = Encoding.UTF8.GetBytes("\r\n\x1b[31m[VibeTabula] Не удалось запустить: " + cmd + " (код " + err + ")\x1b[0m\r\n");
             stdout.Write(msg, 0, msg.Length); stdout.Flush();
             return 127;
         }

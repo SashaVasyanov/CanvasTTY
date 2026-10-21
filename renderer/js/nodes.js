@@ -2,6 +2,7 @@
 import { h, icon, badge, esc, bus, toast, prompt, debounce, throttle, uid, readFileAsDataURL, keyName } from './util.js';
 import { cssColor, BAR_COLORS } from './pentools.js';
 import { sanitizeHtml, htmlText } from './sanitize.js';
+import { WIDGETS, mountWidget } from './widgets.js';
 import { state, native, PROVIDER_META } from './state.js';
 import { renderChatMarkdown } from './md.js';
 import { RichEditor } from './editor.js';
@@ -932,137 +933,6 @@ function fitText(el, box) {
 }
 
 // =====================================================================
-// Photo gallery area
-// =====================================================================
-const assetCache = new Map();
-async function loadAsset(rel) {
-  if (!rel) return '';
-  if (assetCache.has(rel)) return assetCache.get(rel);
-  const p = native.vault.readAsset(rel).catch(() => '');
-  assetCache.set(rel, p);
-  if (assetCache.size > 400) assetCache.delete(assetCache.keys().next().value);
-  return p;
-}
-
-async function makeThumb(dataUrl, max = 480) {
-  const img = new Image();
-  await new Promise((r) => { img.onload = r; img.onerror = r; img.src = dataUrl; });
-  const w = img.naturalWidth || 1, hh = img.naturalHeight || 1;
-  const k = Math.min(1, max / Math.max(w, hh));
-  if (k >= 1) return { url: dataUrl, w, h: hh, same: true };
-  const c = document.createElement('canvas');
-  c.width = Math.round(w * k); c.height = Math.round(hh * k);
-  c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
-  return { url: c.toDataURL('image/jpeg', 0.86), w, h: hh };
-}
-
-export async function imageEntryFromFile(file) {
-  const dataUrl = await readFileAsDataURL(file);
-  const rel = await native.vault.saveAsset(dataUrl, file.name);
-  vaultIndex.addAsset(rel);
-  const t = await makeThumb(dataUrl);
-  let thumb = rel;
-  if (!t.same) { thumb = await native.vault.saveAsset(t.url, `thumb ${file.name.replace(/\.[^.]+$/, '')}.jpg`); vaultIndex.addAsset(thumb); }
-  assetCache.set(thumb, Promise.resolve(t.url));
-  return { id: uid('ph'), vault: rel, thumb, w: t.w, h: t.h, name: file.name };
-}
-
-function lightbox(images, idx, { onExtract } = {}) {
-  const back = h('div', { class: 'lightbox' });
-  const img = h('img', { class: 'lb-img' });
-  const cap = h('div', { class: 'lb-cap' });
-  const show = async () => { const it = images[idx]; cap.textContent = `${idx + 1} / ${images.length}${it.name ? ' · ' + it.name : ''}`; img.src = await loadAsset(it.thumb); img.src = await loadAsset(it.vault); };
-  const close = () => { back.remove(); document.removeEventListener('keydown', key, true); };
-  const go = (d) => { idx = (idx + d + images.length) % images.length; show(); };
-  const key = (e) => { e.stopPropagation(); if (e.key === 'Escape') close(); if (e.key === 'ArrowRight') go(1); if (e.key === 'ArrowLeft') go(-1); };
-  back.append(
-    img, cap,
-    h('button', { class: 'lb-btn lb-prev', html: icon('chevronRight', 26), onclick: (e) => { e.stopPropagation(); go(-1); } }),
-    h('button', { class: 'lb-btn lb-next', html: icon('chevronRight', 26), onclick: (e) => { e.stopPropagation(); go(1); } }),
-    h('div', { class: 'lb-tools' },
-      onExtract ? h('button', { class: 'btn sm', onclick: (e) => { e.stopPropagation(); onExtract(images[idx]); close(); } }, 'Вынести на canvas') : null,
-      h('button', { class: 'btn sm', onclick: (e) => { e.stopPropagation(); close(); } }, 'Закрыть')),
-  );
-  back.addEventListener('click', (e) => { if (e.target === back) close(); });
-  document.addEventListener('keydown', key, true);
-  document.body.append(back);
-  show();
-}
-
-class GalleryInstance {
-  constructor({ node, view, body }) {
-    this.node = node; this.view = view;
-    this.root = h('div', { class: 'gallery' });
-    this.title = h('div', { class: 'gal-title txt' });
-    this.count = h('span', { class: 'gal-count' });
-    this.addBtn = h('button', { class: 'gal-add no-drag', html: `${icon('plus', 14)}<span>Фото</span>`, title: 'Добавить фото', onclick: (e) => { e.stopPropagation(); this.pick(); } });
-    this.grid = h('div', { class: 'gal-grid scrollable' });
-    this.root.append(h('div', { class: 'gal-head' }, this.title, this.count, h('span', { class: 'flex' }), this.addBtn), this.grid);
-    body.append(this.root);
-    this.editTitle = editableText(this.title, { onCommit: (v) => view.updateNode(this.node.id, { data: { title: v.trim() || 'Галерея' } }, { checkpoint: true, silent: true }) });
-    this.grid.addEventListener('click', (e) => {
-      const del = e.target.closest('[data-del]');
-      if (del) { e.stopPropagation(); this.remove(del.dataset.del); return; }
-      const cell = e.target.closest('.gal-cell');
-      if (cell && !this.view.justMoved()) { const imgs = this.images; const i = imgs.findIndex((x) => x.id === cell.dataset.id); if (i >= 0) lightbox(imgs, i, { onExtract: (it) => this.extract(it) }); }
-    });
-    this.paint();
-  }
-  get images() { return this.node.data.images || []; }
-  paint() {
-    const n = this.node;
-    this.root.style.setProperty('--fc', n.data.color || FRAME_COLORS[0]);
-    if (!this.title.isContentEditable) this.title.textContent = n.data.title || 'Галерея';
-    const imgs = this.images;
-    this.count.textContent = imgs.length ? `${imgs.length} фото` : '';
-    const key = imgs.map((x) => x.id).join(',');
-    if (key === this.gridKey) return;
-    this.gridKey = key;
-    this.grid.innerHTML = '';
-    if (!imgs.length) { this.grid.append(h('div', { class: 'gal-empty' }, h('span', { html: icon('image', 28) }), h('div', {}, 'Перетащите сюда фото'), h('div', { class: 'muted small' }, 'или нажмите «+ Фото», вставьте из буфера, перетащите картинку с canvas'))); return; }
-    for (const it of imgs) {
-      const im = h('img', { loading: 'lazy', decoding: 'async', draggable: 'false', alt: '' });
-      loadAsset(it.thumb || it.vault).then((u) => { im.src = u; });
-      this.grid.append(h('div', { class: 'gal-cell', 'data-id': it.id, title: it.name || '' }, im, h('button', { class: 'gal-del no-drag', 'data-del': it.id, title: 'Убрать из галереи', html: icon('x', 12) })));
-    }
-  }
-  async pick() {
-    const input = h('input', { type: 'file', accept: 'image/*', multiple: true });
-    input.onchange = () => this.addFiles([...input.files]);
-    input.click();
-  }
-  async addFiles(files) {
-    const list = files.filter((f) => f.type.startsWith('image/'));
-    if (!list.length) return;
-    toast(`Добавляю фото: ${list.length}`);
-    const entries = [];
-    for (const f of list) { try { entries.push(await imageEntryFromFile(f)); } catch (e) { toast(`Не удалось: ${f.name}`, 'error'); } }
-    this.addEntries(entries);
-  }
-  addEntries(entries) {
-    if (!entries.length) return;
-    this.view.updateNode(this.node.id, { data: { images: [...this.images, ...entries] } }, { checkpoint: true });
-    this.autoGrow();
-  }
-  remove(id) { this.view.updateNode(this.node.id, { data: { images: this.images.filter((x) => x.id !== id) } }, { checkpoint: true }); }
-  extract(it) {
-    const n = this.view.node(this.node.id);
-    const k = Math.min(1, 420 / Math.max(it.w || 420, it.h || 300));
-    this.view.addNode('image', { x: n.x + n.w + 40, y: n.y, w: Math.round((it.w || 420) * k), h: Math.round((it.h || 300) * k), data: { vault: it.vault } }, { center: false });
-    this.remove(it.id);
-  }
-  autoGrow() {
-    requestAnimationFrame(() => {
-      const n = this.view.node(this.node.id); if (!n) return;
-      const need = this.grid.scrollHeight + this.grid.offsetTop + 16;
-      if (need > n.h) this.view.updateNode(n.id, { h: Math.min(need, 4000) });
-    });
-  }
-  update(n) { this.node = n; this.paint(); }
-  edit(e) { if (!e || e.target.closest('.gal-title') || e.target.closest('.gal-head')) this.editTitle(); }
-}
-
-// =====================================================================
 // Registry
 // =====================================================================
 export const NODE_TYPES = {
@@ -1314,15 +1184,12 @@ export const NODE_TYPES = {
     ],
   },
 
-  gallery: {
-    chrome: 'bare', defaultSize: { w: 660, h: 440 }, minSize: { w: 260, h: 180 }, colors: FRAME_COLORS,
-    defaultData: () => ({ title: 'Фото проекта', color: FRAME_COLORS[0], images: [] }),
-    title: (n) => n.data.title || 'Галерея',
-    mount: (ctx) => new GalleryInstance(ctx),
-    menu: (n, view, inst) => [
-      { label: 'Добавить фото…', icon: 'image', onClick: () => inst?.pick() },
-      { label: 'Переименовать', icon: 'pen', onClick: () => inst?.editTitle() },
-    ],
+  widget: {
+    chrome: 'bare', defaultSize: { w: 300, h: 240 }, minSize: { w: 150, h: 110 },
+    defaultData: () => ({ kind: 'clock' }),
+    title: (n) => WIDGETS[n.data.kind]?.name || 'Виджет',
+    mount: (ctx) => mountWidget(ctx),
+    menu: (n, view, inst) => inst?.menu?.() || [],
   },
 
   image: {

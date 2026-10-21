@@ -57,7 +57,7 @@ jobs:
       - name: Upload build
         uses: actions/upload-artifact@v4
         with:
-          name: CanvasTTY-${{ runner.os }}
+          name: VibeTabula-${{ runner.os }}
           path: ${{ matrix.files }}
           if-no-files-found: warn
       - name: Attach to release

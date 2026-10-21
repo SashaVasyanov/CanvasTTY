@@ -14,7 +14,7 @@ const safeId = (id) => String(id || '').replace(/[^\w.-]/g, '-').replace(/^\.+/,
 const SORTS = new Set(['new', 'popular', 'views', 'discussed', 'random']);
 
 async function getJson(url) {
-  const r = await net.fetch(url, { headers: { accept: 'application/json', 'user-agent': 'CanvasTTY' } });
+  const r = await net.fetch(url, { headers: { accept: 'application/json', 'user-agent': 'VibeTabula' } });
   if (!r.ok) throw new Error(`codex-pets.net ответил ${r.status}`);
   return r.json();
 }
@@ -80,7 +80,7 @@ async function readInstalled() {
       const st = await fsp.stat(file);
       out.push({
         id: d.name, displayName: meta.displayName || meta.id || d.name, description: meta.description || '', kind: meta.kind || '',
-        rows, url: `app://canvastty/__codexpets/${encodeURIComponent(d.name)}/${encodeURIComponent(sheet)}?v=${Math.round(st.mtimeMs)}`,
+        rows, url: `app://vibetabula/__codexpets/${encodeURIComponent(d.name)}/${encodeURIComponent(sheet)}?v=${Math.round(st.mtimeMs)}`,
       });
     } catch {}
   }
@@ -110,7 +110,7 @@ module.exports = {
   async install(pet) {
     const url = new URL(pet.downloadUrl, API);
     if (url.origin !== new URL(API).origin) throw new Error('чужой адрес загрузки');
-    const r = await net.fetch(url.toString(), { headers: { 'user-agent': 'CanvasTTY' } });
+    const r = await net.fetch(url.toString(), { headers: { 'user-agent': 'VibeTabula' } });
     if (!r.ok) throw new Error(`загрузка не удалась: ${r.status}`);
     const zipBuf = Buffer.from(await r.arrayBuffer());
     if (zipBuf.length > MAX_TOTAL) throw new Error('архив слишком большой');

@@ -1,5 +1,5 @@
 // Files attached to chat messages. They are copied into <userData>/attachments and shown via
-// app://canvastty/__attach/<file>; messages keep only a small description plus a thumbnail.
+// app://vibetabula/__attach/<file>; messages keep only a small description plus a thumbnail.
 // When a message is sent, images / PDFs / text files are turned into the parts each API expects.
 const fs = require('fs');
 const fsp = fs.promises;
@@ -25,7 +25,7 @@ class Attachments {
   meta(file, name, size) {
     const ext = path.extname(name).toLowerCase();
     const mime = MIME[ext] || 'application/octet-stream';
-    return { id: file.split('-')[0], file, name, size, mime, kind: IMAGE[ext] ? 'image' : 'file', ext: ext.slice(1), url: `app://canvastty/__attach/${encodeURIComponent(file)}` };
+    return { id: file.split('-')[0], file, name, size, mime, kind: IMAGE[ext] ? 'image' : 'file', ext: ext.slice(1), url: `app://vibetabula/__attach/${encodeURIComponent(file)}` };
   }
   fileName(name) {
     const safe = path.basename(String(name || 'file')).replace(/[^\p{L}\p{N}._ -]/gu, '_').replace(/\s+/g, ' ').slice(-80) || 'file';

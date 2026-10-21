@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# CanvasTTY POSIX pty bridge (Linux/macOS). Same framing protocol as ptybridge.cs.
+# VibeTabula POSIX pty bridge (Linux/macOS). Same framing protocol as ptybridge.cs.
 import os, sys, pty, struct, select, base64, fcntl, termios, signal
 
 def b64(s):
