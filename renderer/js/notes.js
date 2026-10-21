@@ -3,6 +3,7 @@ import { h, icon, bus, menu, prompt, confirmBox, toast, debounce, modal, esc, ba
 import { state, native } from './state.js';
 import { vaultIndex } from './vaultIndex.js';
 import { RichEditor } from './editor.js';
+import { LayersPanel } from './layers.js';
 
 // =====================================================================
 // Sidebar
@@ -13,6 +14,9 @@ export class Sidebar {
     this.collapsed = new Set(JSON.parse(localStorageGet('collapsedFolders') || '[]'));
     this.filterTag = null;
     this.query = '';
+    this.picked = new Set(); // notes chosen with Ctrl / Shift
+    this.anchor = null;
+    this.visibleFiles = [];
     this.el = h('aside', { class: 'sidebar' });
     host.append(this.el);
     this.build();
@@ -28,19 +32,42 @@ export class Sidebar {
     this.search = h('input', { class: 'input sb-search', placeholder: 'Поиск по заметкам…' });
     this.search.addEventListener('input', debounce(() => { this.query = this.search.value.trim(); this.renderTree(); }, 180));
     this.search.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Escape') { this.search.value = ''; this.query = ''; this.renderTree(); } });
-    const notesHead = h('div', { class: 'sb-head' },
-      h('span', { class: 'sb-title' }, 'Заметки'),
-      h('span', { class: 'flex' }),
+    this.notesTools = h('div', { class: 'sb-tools' },
       h('button', { class: 'icon-btn sm', title: 'Новая заметка (Ctrl+N)', html: icon('plus', 14), onclick: () => this.newNote() }),
       h('button', { class: 'icon-btn sm', title: 'Новая папка', html: icon('folder', 14), onclick: () => this.newFolder() }),
       h('button', { class: 'icon-btn sm', title: 'Граф связей', html: icon('graph', 14), onclick: () => openGraph(this.app) }),
       h('button', { class: 'icon-btn sm', title: 'Хранилище…', html: icon('more', 14), onclick: (e) => this.vaultMenu(e) }),
     );
+    this.layersTools = h('div', { class: 'sb-tools' },
+      h('button', { class: 'icon-btn sm', title: 'Показать все объекты', html: icon('maximize', 14), onclick: () => this.app.canvas.fit() }),
+    );
+    // notes and layers share the space as two tabs, so they never overlap or squeeze each other
+    this.tabNotes = h('button', { class: 'sb-tab', onclick: () => this.setTab('notes') }, 'Заметки');
+    this.layersCount = h('span', { class: 'sb-tab-n' });
+    this.tabLayers = h('button', { class: 'sb-tab', title: 'Объекты этого холста', onclick: () => this.setTab('layers') }, 'Слои', this.layersCount);
+    const head = h('div', { class: 'sb-head sb-tabs-row' }, h('div', { class: 'sb-tabs' }, this.tabNotes, this.tabLayers), h('span', { class: 'flex' }), this.notesTools, this.layersTools);
     this.tree = h('div', { class: 'sb-tree scrollable' });
+    this.tree.addEventListener('click', (e) => { if (e.target === this.tree) this.setPicked([]); });
     this.tagsBox = h('div', { class: 'sb-tags' });
-    this.el.append(this.canvasSec, h('div', { class: 'sb-section grow' }, notesHead, this.search, this.tree, this.tagsBox));
+    this.notesPane = h('div', { class: 'sb-pane' }, this.search, this.tree, this.tagsBox);
+    this.layers = new LayersPanel(this.app);
+    this.el.append(this.canvasSec, h('div', { class: 'sb-section grow' }, head, this.notesPane, this.layers.el));
+    const count = debounce(() => { this.layersCount.textContent = String(this.layers.count() || ''); }, 150);
+    this.app.canvas.on('changed', count);
+    state.on('canvas', count);
+    count();
     this.renderCanvases();
     this.renderTree();
+    this.setTab(localStorageGet('sidebarTab') === 'layers' ? 'layers' : 'notes');
+  }
+  setTab(tab) {
+    this.tab = tab;
+    localStorageSet('sidebarTab', tab);
+    const notes = tab === 'notes';
+    this.tabNotes.classList.toggle('on', notes); this.tabLayers.classList.toggle('on', !notes);
+    this.notesPane.style.display = notes ? '' : 'none'; this.notesTools.style.display = notes ? '' : 'none';
+    this.layers.el.style.display = notes ? 'none' : ''; this.layersTools.style.display = notes ? 'none' : '';
+    this.layers.show(!notes);
   }
 
   renderCanvases() {
@@ -67,6 +94,7 @@ export class Sidebar {
   async renderTree() {
     const tree = this.tree;
     tree.innerHTML = '';
+    this.visibleFiles = [];
     if (this.query) {
       const res = await native.vault.search(this.query);
       if (!res.length) tree.append(h('div', { class: 'muted sb-empty' }, 'Ничего не найдено'));
@@ -94,6 +122,7 @@ export class Sidebar {
           const row = h('div', { class: 'sb-item folder', style: { paddingLeft: `${8 + depth * 14}px` }, onclick: () => { open ? this.collapsed.add(f.path) : this.collapsed.delete(f.path); localStorageSet('collapsedFolders', JSON.stringify([...this.collapsed])); this.renderTree(); } },
             h('span', { class: 'sb-ic', html: icon(open ? 'chevronDown' : 'chevronRight', 12) }), h('span', { class: 'sb-ic', html: icon(open ? 'folderOpen' : 'folder', 14) }), h('span', { class: 'sb-label' }, name));
           row.addEventListener('contextmenu', (e) => { e.preventDefault(); this.folderMenu(f.path, e.clientX, e.clientY); });
+          this.dropTarget(row, f.path);
           tree.append(row);
           if (open) walk(f, depth + 1);
         }
@@ -114,14 +143,99 @@ export class Sidebar {
   }
 
   fileRow(n, depth) {
+    this.visibleFiles.push(n.path);
     const active = this.app.notePanel?.path === n.path;
     const onCanvas = state.doc?.nodes.some((x) => x.type === 'note' && x.data.path === n.path);
-    const row = h('div', { class: `sb-item file${active ? ' active' : ''}`, draggable: 'true', style: { paddingLeft: `${22 + depth * 14}px` }, title: `${n.path}\nПеретащите на canvas`,
-      onclick: () => this.app.openNote(n.path) },
+    const row = h('div', { class: `sb-item file${active ? ' active' : ''}${this.picked.has(n.path) ? ' picked' : ''}`, draggable: 'true', style: { paddingLeft: `${22 + depth * 14}px` }, title: `${n.path}\nCtrl — выбрать несколько, Shift — диапазон. Перетащите на canvas`, dataset: { path: n.path } },
       h('span', { class: 'sb-ic', html: icon('file', 14) }), h('span', { class: 'sb-label' }, n.name), onCanvas ? h('span', { class: 'on-canvas', title: 'Есть на canvas' }) : null);
-    row.addEventListener('dragstart', (e) => { e.dataTransfer.setData('application/x-canvastty-note', n.path); e.dataTransfer.setData('text/plain', `[[${n.name}]]`); e.dataTransfer.effectAllowed = 'copy'; });
-    row.addEventListener('contextmenu', (e) => { e.preventDefault(); this.fileMenu(n, e.clientX, e.clientY); });
+    row.addEventListener('click', (e) => this.clickFile(n, e));
+    row.addEventListener('dragstart', (e) => {
+      const paths = this.picked.has(n.path) && this.picked.size > 1 ? this.pickedInOrder() : [n.path];
+      e.dataTransfer.setData('application/x-canvastty-note', paths[0]);
+      if (paths.length > 1) e.dataTransfer.setData('application/x-canvastty-notes', JSON.stringify(paths));
+      e.dataTransfer.setData('text/plain', paths.map((p) => `[[${p.split('/').pop().replace(/\.md$/i, '')}]]`).join('\n'));
+      e.dataTransfer.effectAllowed = 'copyMove';
+      if (paths.length > 1) { const ghost = h('div', { class: 'drag-count' }, `${paths.length} заметки`); document.body.append(ghost); e.dataTransfer.setDragImage(ghost, 10, 10); setTimeout(() => ghost.remove()); }
+    });
+    row.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      if (!this.picked.has(n.path)) this.setPicked([n.path]);
+      if (this.picked.size > 1) this.multiMenu(e.clientX, e.clientY); else this.fileMenu(n, e.clientX, e.clientY);
+    });
     return row;
+  }
+  // dropping notes on a folder moves them there
+  dropTarget(row, folder) {
+    const isNote = (e) => [...(e.dataTransfer?.types || [])].includes('application/x-canvastty-note');
+    row.addEventListener('dragover', (e) => { if (!isNote(e)) return; e.preventDefault(); e.dataTransfer.dropEffect = 'move'; row.classList.add('drop-into'); });
+    row.addEventListener('dragleave', () => row.classList.remove('drop-into'));
+    row.addEventListener('drop', (e) => {
+      if (!isNote(e)) return;
+      e.preventDefault(); e.stopPropagation(); row.classList.remove('drop-into');
+      let paths = [];
+      try { paths = JSON.parse(e.dataTransfer.getData('application/x-canvastty-notes') || '[]'); } catch {}
+      if (!paths.length) paths = [e.dataTransfer.getData('application/x-canvastty-note')].filter(Boolean);
+      this.moveNotes(paths, folder);
+    });
+  }
+  pickedInOrder() { const order = this.visibleFiles; return [...this.picked].sort((a, b) => order.indexOf(a) - order.indexOf(b)); }
+  setPicked(paths) {
+    this.picked = new Set(paths);
+    for (const r of this.tree.querySelectorAll('.sb-item.file')) r.classList.toggle('picked', this.picked.has(r.dataset.path));
+  }
+  clickFile(n, e) {
+    if (e.shiftKey && this.anchor && this.visibleFiles.includes(this.anchor)) {
+      const a = this.visibleFiles.indexOf(this.anchor), b = this.visibleFiles.indexOf(n.path);
+      const range = this.visibleFiles.slice(Math.min(a, b), Math.max(a, b) + 1);
+      this.setPicked(e.ctrlKey || e.metaKey ? [...this.picked, ...range] : range);
+      return;
+    }
+    if (e.ctrlKey || e.metaKey) {
+      const next = new Set(this.picked);
+      // the note that is open counts as the first chosen one
+      if (!next.size && this.app.notePanel?.path && this.app.notePanel.path !== n.path && this.visibleFiles.includes(this.app.notePanel.path)) next.add(this.app.notePanel.path);
+      next.has(n.path) ? next.delete(n.path) : next.add(n.path);
+      this.setPicked([...next]);
+      this.anchor = n.path;
+      return;
+    }
+    this.setPicked([n.path]);
+    this.anchor = n.path;
+    this.app.openNote(n.path);
+  }
+  multiMenu(x, y) {
+    const paths = this.pickedInOrder();
+    const k = paths.length;
+    const folders = ['', ...vaultIndex.folders.filter((f) => !f.split('/').includes('attachments')).sort((a, b) => a.localeCompare(b, 'ru'))];
+    menu([
+      { header: `Выбрано заметок: ${k}` },
+      { label: 'Вывести на canvas', icon: 'plus', onClick: () => this.app.addNotesToCanvas(paths) },
+      { label: 'Переместить в папку', icon: 'folder', children: folders.map((f) => ({ label: f || 'Корень хранилища', onClick: () => this.moveNotes(paths, f) })) },
+      '-',
+      { label: 'Снять выбор', icon: 'x', onClick: () => this.setPicked([]) },
+      { label: `Удалить (${k})`, icon: 'trash', danger: true, onClick: async () => {
+        if (!(await confirmBox(`Удалить ${k} заметки?`, 'Они будут перемещены в корзину.'))) return;
+        for (const p of paths) { try { await native.vault.remove(p); } catch {} if (this.app.notePanel?.path === p) this.app.closeNote(); }
+        this.setPicked([]); vaultIndex.refresh();
+      } },
+    ], x, y, { minWidth: 220 });
+  }
+  async moveNotes(paths, folder) {
+    let moved = 0;
+    for (const p of paths) {
+      const name = p.split('/').pop();
+      const np = folder ? `${folder}/${name}` : name;
+      if (np === p) continue;
+      try {
+        await native.vault.rename(p, np);
+        for (const x of state.doc.nodes) if (x.type === 'note' && x.data.path === p) this.app.canvas.updateNode(x.id, { data: { path: np } });
+        if (this.app.notePanel?.path === p) this.app.openNote(np);
+        moved++;
+      } catch (e) { toast(`«${name}»: ${e.message}`, 'error'); }
+    }
+    this.setPicked([]);
+    await vaultIndex.refresh();
+    if (moved) toast(`Перемещено: ${moved}`);
   }
 
   fileMenu(n, x, y) {

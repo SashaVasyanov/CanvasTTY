@@ -344,6 +344,39 @@ class App {
     this.sidebar.renderTree();
     return n;
   }
+  // several notes at once: a neat grid on free space (near the drop point), nothing overlaps
+  addNotesToCanvas(paths, world) {
+    const fresh = paths.filter((p) => !state.doc.nodes.some((n) => n.type === 'note' && n.data.path === p));
+    const already = paths.length - fresh.length;
+    if (!fresh.length) { const ids = state.doc.nodes.filter((n) => n.type === 'note' && paths.includes(n.data.path)).map((n) => n.id); this.canvas.select(ids); this.canvas.fit(ids); toast('Эти заметки уже на canvas'); return []; }
+    const { w, h: hh } = NODE_TYPES.note.defaultSize;
+    const gap = 40;
+    const cols = Math.min(fresh.length, Math.ceil(Math.sqrt(fresh.length)));
+    const rows = Math.ceil(fresh.length / cols);
+    const bw = cols * w + (cols - 1) * gap, bh = rows * hh + (rows - 1) * gap;
+    const at = world ? this.freeSpotAt(bw, bh, world) : this.freeSpot(bw, bh, null);
+    this.canvas.checkpoint();
+    const ids = fresh.map((p, i) => this.canvas.addNode('note', { x: at.x + (i % cols) * (w + gap), y: at.y + Math.floor(i / cols) * (hh + gap), w, h: hh, data: { path: p } }, { center: false, select: false, checkpoint: false }).id);
+    this.canvas.select(ids);
+    this.canvas.fit(ids);
+    this.sidebar.renderTree();
+    if (already) toast(`Уже были на canvas: ${already}`);
+    return ids;
+  }
+  // like freeSpot, but the search starts at a given point (the block is centred on it if it fits)
+  freeSpotAt(w, hh, c) {
+    const nodes = state.doc.nodes;
+    const overlaps = (x, y) => nodes.some((n) => x < n.x + n.w + 24 && x + w + 24 > n.x && y < n.y + n.h + 24 && y + hh + 24 > n.y);
+    for (let r = 0; r < 8000; r += 60) {
+      const steps = r ? Math.max(8, Math.floor(r / 30)) : 1;
+      for (let i = 0; i < steps; i++) {
+        const a = (i / steps) * Math.PI * 2;
+        const x = Math.round((c.x - w / 2 + Math.cos(a) * r) / 8) * 8, y = Math.round((c.y - hh / 2 + Math.sin(a) * r) / 8) * 8;
+        if (!overlaps(x, y)) return { x, y };
+      }
+    }
+    return { x: c.x - w / 2, y: c.y - hh / 2 };
+  }
   async newNoteOnCanvas(world, from) {
     const name = await prompt('Новая заметка', '', 'Название');
     if (name == null) return;
@@ -474,6 +507,9 @@ class App {
   async onDrop(e) {
     e.preventDefault();
     const world = this.canvas.toWorld(e.clientX, e.clientY);
+    let notePaths = [];
+    try { notePaths = JSON.parse(e.dataTransfer.getData('application/x-canvastty-notes') || '[]'); } catch {}
+    if (notePaths.length > 1) { this.addNotesToCanvas(notePaths, world); return; }
     const notePath = e.dataTransfer.getData('application/x-canvastty-note');
     if (notePath) { this.addNoteToCanvas(notePath, world); return; }
     const files = [...e.dataTransfer.files];
