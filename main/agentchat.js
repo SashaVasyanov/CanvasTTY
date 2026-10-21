@@ -45,11 +45,21 @@ const HISTORY_TOOLS = ['mcp__canvastty__search_chats', 'mcp__canvastty__read_cha
 const HISTORY_HINT = 'You run inside CanvasTTY. Tools mcp__canvastty__search_chats, read_chat and list_chats search and read the user\'s previous conversations (CanvasTTY chats and Claude Code / Codex sessions on this computer). Use them whenever the user refers to an earlier chat.';
 
 class AgentChatManager {
-  constructor({ send, ptys, userData }) {
+  constructor({ send, ptys, userData, attachments }) {
+    this.attachments = attachments;
     this.send = send;
     this.ptys = ptys;
     this.userData = userData;
     this.runs = new Map();
+  }
+
+  // absolute paths of the files attached to this message
+  attachedFiles(opts) {
+    return (opts.attachments || []).map((a) => ({ ...a, abs: this.attachments?.pathOf(a.file) })).filter((a) => a.abs && fs.existsSync(a.abs));
+  }
+  withFiles(prompt, files, hint) {
+    if (!files.length) return prompt;
+    return `${prompt || 'Посмотри приложенные файлы.'}\n\n${hint}\n${files.map((f) => `- ${f.abs}  (${f.name})`).join('\n')}`;
   }
 
   historyServer() {
@@ -107,6 +117,9 @@ class AgentChatManager {
     if (model) args.push('--model', model);
     if (opts.effort && !opts.noEffort) args.push('--effort', opts.effort);
     if (sessionId) args.push('--resume', sessionId);
+    const files = this.attachedFiles(opts);
+    if (files.length) args.push('--add-dir', this.attachments.dir);
+    const fullPrompt = this.withFiles(prompt, files, 'Пользователь приложил файлы. Открой их инструментом Read (он читает и картинки, и PDF):');
     const mcpFile = !opts.noMcp && this.claudeMcpConfig();
     if (mcpFile) args.push('--mcp-config', mcpFile, '--allowedTools', HISTORY_TOOLS.join(','), '--append-system-prompt', HISTORY_HINT);
     const proc = spawnCli(resolved, args, { cwd: safeCwd(cwd), env: this.env(), stdio: ['pipe', 'pipe', 'pipe'] });
@@ -171,7 +184,7 @@ class AgentChatManager {
       }
     });
     proc.stdin.on('error', () => {});
-    proc.stdin.end(prompt);
+    proc.stdin.end(fullPrompt);
   }
 
   // ---------------- Codex ----------------
@@ -183,6 +196,11 @@ class AgentChatManager {
     if (model) args.push('-m', model);
     if (opts.effort) args.push('-c', `model_reasoning_effort=${opts.effort}`);
     if (!opts.noMcp && this.userData) args.push(...this.codexMcpArgs());
+    const files = this.attachedFiles(opts);
+    const resuming = !!(sessionId && withResume);
+    // new sessions get images directly; a resumed session looks at them with view_image
+    if (!resuming) for (const f of files) if (f.kind === 'image') args.push('-i', f.abs);
+    const fullPrompt = this.withFiles(prompt, resuming ? files : files.filter((f) => f.kind !== 'image'), resuming ? 'Пользователь приложил файлы (картинки можно открыть инструментом view_image):' : 'Пользователь приложил файлы:');
     if (sessionId && withResume) args.push('resume', sessionId);
     const proc = spawnCli(resolved, args, { cwd: safeCwd(cwd), env: this.env(), stdio: ['pipe', 'pipe', 'pipe'] });
     const run = { proc, aborted: false };
@@ -253,7 +271,7 @@ class AgentChatManager {
       emit('done', { sessionId: sid, usage });
     });
     proc.stdin.on('error', () => {});
-    proc.stdin.end(prompt);
+    proc.stdin.end(fullPrompt);
   }
 }
 

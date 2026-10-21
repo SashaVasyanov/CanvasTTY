@@ -21,7 +21,7 @@ const snippet = (text, terms, n = 220) => {
   return (s > 0 ? '…' : '') + text.slice(s, s + n).replace(/\s+/g, ' ') + (s + n < text.length ? '…' : '');
 };
 const msgText = (m) => {
-  if (m.role === 'user') return m.content || '';
+  if (m.role === 'user') return [m.content || '', ...(m.attachments || []).map((a) => `[вложение: ${a.name}]`)].filter(Boolean).join('\n');
   const parts = m.parts || [{ type: 'text', text: m.content }];
   return parts.map((p) => (p.type === 'text' ? p.text : p.type === 'tool' ? `[${p.name}: ${String(p.input || '').slice(0, 300)}]${p.output ? `\n${String(p.output).slice(0, 1500)}` : ''}` : '')).filter(Boolean).join('\n');
 };

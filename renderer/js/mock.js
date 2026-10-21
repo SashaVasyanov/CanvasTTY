@@ -103,6 +103,10 @@ export const mockNative = {
     abort: async () => {}, defaults: async () => ({ claude: { model: 'sonnet' }, codex: { model: 'gpt-5-codex', effort: 'medium', models: [] } }), onEvent: on('agentchat:event'),
   },
   setBg: async () => {},
+  attach: {
+    saveBytes: async ({ name, bytes }) => { const ext = (name.split('.').pop() || '').toLowerCase(); const img = /^(png|jpe?g|gif|webp)$/.test(ext); const url = URL.createObjectURL(new Blob([bytes], { type: img ? `image/${ext === 'jpg' ? 'jpeg' : ext}` : 'application/octet-stream' })); return { id: String(Math.random()).slice(2, 8), file: name, name, size: bytes.length, mime: '', kind: img ? 'image' : 'file', ext, url }; },
+    importPath: async () => { throw new Error('нет в браузере'); }, open: async () => 'В браузере файлы не открываются', reveal: async () => {}, pathForFile: () => '',
+  },
   codexPets: (() => {
     let inst = [{ id: 'test-pet', displayName: 'Тестовый пет', description: 'Синтетический лист для проверки', rows: 11, url: '__test/sheet.webp' }];
     const cat = Array.from({ length: 24 }, (_, i) => ({ id: `cat-${i}`, displayName: `Пет №${i + 1}`, description: 'демо', owner: 'demo', tags: [], rows: i % 2 ? 11 : 9, spritesheetUrl: '__test/sheet.webp', downloadUrl: 'x', installed: false }));

@@ -9,6 +9,8 @@ const { ChatManager, PROVIDERS } = require('./chat');
 const { getLimits } = require('./limits');
 const { AgentChatManager, agentDefaults } = require('./agentchat');
 const { HistoryStore, listSessions, readSession } = require('./history');
+const { Attachments } = require('./attachments');
+const attachments = new Attachments(app.getPath('userData'));
 const { SyncManager } = require('./sync');
 const codexPets = require('./codexpets');
 
@@ -48,8 +50,9 @@ let usageLog = {};
 const send = (channel, payload) => { if (win && !win.isDestroyed()) win.webContents.send(channel, payload); };
 const ptys = new PtyManager({ userData: app.getPath('userData'), send });
 const vault = new Vault({ send });
-const agentChat = new AgentChatManager({ send, ptys, userData: app.getPath('userData') });
+const agentChat = new AgentChatManager({ send, ptys, userData: app.getPath('userData'), attachments });
 const chat = new ChatManager({
+  attachments, nativeImage,
   send,
   onUsage: (provider, u) => {
     const day = new Date().toISOString().slice(0, 10);
@@ -151,6 +154,11 @@ app.whenReady().then(() => {
     let p = decodeURIComponent(u.pathname);
     if (p === '/' || !p) p = '/index.html';
     // Codex pets are read straight from ~/.codex/pets
+    if (p.startsWith('/__attach/')) {
+      const file = attachments.pathOf(p.slice('/__attach/'.length));
+      if (!file) return new Response('forbidden', { status: 403 });
+      return net.fetch(pathToFileURL(file).toString());
+    }
     if (p.startsWith('/__codexpets/')) {
       const root = codexPets.petsDir();
       const file = path.join(root, path.normalize(p.slice('/__codexpets/'.length)));
@@ -226,6 +234,10 @@ app.whenReady().then(() => {
   ipcMain.handle('history:remove', (e, id) => history.remove(id));
   ipcMain.handle('sessions:list', (e, kind, opts) => listSessions(kind, opts || {}).catch(() => []));
   ipcMain.handle('sessions:read', (e, kind, file) => readSession(kind, file));
+  ipcMain.handle('attach:saveBytes', (e, f) => attachments.saveBytes(f));
+  ipcMain.handle('attach:importPath', (e, p) => attachments.importPath(p));
+  ipcMain.handle('attach:open', (e, file) => { const p = attachments.pathOf(file); return p && fs.existsSync(p) ? shell.openPath(p) : 'Файл недоступен на этом компьютере'; });
+  ipcMain.handle('attach:reveal', (e, file) => { const p = attachments.pathOf(file); if (p) shell.showItemInFolder(p); });
   ipcMain.handle('codexPets:installed', () => codexPets.installed());
   ipcMain.handle('codexPets:catalog', (e, q) => codexPets.catalog(q || {}));
   ipcMain.handle('codexPets:install', (e, pet) => codexPets.install(pet));

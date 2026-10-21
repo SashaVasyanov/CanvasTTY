@@ -6,6 +6,7 @@ import { RichEditor } from './editor.js';
 import { vaultIndex } from './vaultIndex.js';
 import { mountHub } from './hub.js';
 import { ChatHistory, saveConversation } from './chathistory.js';
+import { AttachBar, renderAttachments } from './attach.js';
 
 // ---------------- routers for main-process events ----------------
 const ptyRoutes = new Map();
@@ -257,6 +258,27 @@ class TerminalInstance {
 // =====================================================================
 // API chat
 // =====================================================================
+// Long conversations render only the newest messages; older ones load on demand
+// (a chat with hundreds of answers would otherwise create tens of thousands of DOM nodes).
+const MSG_PAGE = 40;
+function renderWindowed(inst) {
+  const msgs = inst.messages;
+  inst.shown = Math.min(msgs.length, Math.max(inst.shown || MSG_PAGE, MSG_PAGE));
+  const from = msgs.length - inst.shown;
+  if (from > 0) {
+    inst.list.append(h('button', { class: 'msg-more no-drag', onclick: (e) => {
+      e.stopPropagation();
+      const before = inst.list.scrollHeight;
+      inst.shown += MSG_PAGE;
+      inst._keepScroll = true;
+      inst.renderAll();
+      inst.list.scrollTop = inst.list.scrollHeight - before; // stay where the reader was
+      inst._keepScroll = false;
+    } }, `Показать предыдущие сообщения (${from})`));
+  }
+  for (let i = Math.max(0, from); i < msgs.length; i++) inst.list.append(inst.renderMsg(msgs[i], i));
+}
+
 class ChatInstance {
   constructor({ node, view, body }) {
     this.node = node; this.view = view;
@@ -272,9 +294,11 @@ class ChatInstance {
     this.ctxRow = h('div', { class: 'chat-ctx' });
     this.input = h('textarea', { class: 'chat-input', rows: 2, placeholder: 'Сообщение… (Enter — отправить, Shift+Enter — новая строка)' });
     this.sendBtn = h('button', { class: 'chat-send', title: 'Отправить', html: icon('send', 16), onclick: () => this.streaming ? this.stop() : this.send() });
-    this.foot = h('div', { class: 'chat-foot' }, this.input, this.sendBtn);
+    this.attach = new AttachBar({ root: this.root, input: this.input });
+    this.list.addEventListener('load', (e) => { if (e.target.tagName === 'IMG' && this.list.scrollHeight - this.list.scrollTop - this.list.clientHeight < 400) this.list.scrollTop = this.list.scrollHeight; }, true);
+    this.foot = h('div', { class: 'chat-foot' }, this.attach.button, this.input, this.sendBtn);
     this.usage = h('div', { class: 'chat-usage' });
-    this.root.append(this.bar, this.list, this.ctxRow, this.foot, this.usage);
+    this.root.append(this.bar, this.list, this.ctxRow, this.attach.chips, this.foot, this.usage);
     this.hist = new ChatHistory(this);
     this.bar.prepend(this.hist.button);
     body.append(this.root);
@@ -325,13 +349,13 @@ class ChatInstance {
         h('div', { class: 'chat-empty-title' }, 'Новый чат'),
         h('div', { class: 'muted' }, 'Соедините заметки, стикеры или терминалы с этим чатом стрелкой — они попадут в контекст.')));
     }
-    this.messages.forEach((m, i) => this.list.append(this.renderMsg(m, i)));
-    this.scrollDown(true);
+    renderWindowed(this);
+    if (!this._keepScroll) this.scrollDown(true);
   }
 
   renderMsg(m, i) {
     const el = h('div', { class: `msg ${m.role}${m.error ? ' error' : ''}` });
-    if (m.role === 'user') el.append(h('div', { class: 'msg-text' }, m.content));
+    if (m.role === 'user') { const atts = renderAttachments(m.attachments); if (atts) el.append(atts); if (m.content) el.append(h('div', { class: 'msg-text' }, m.content)); }
     else {
       if (m.reasoning) el.append(h('details', { class: 'msg-reason' }, h('summary', {}, 'Размышления'), h('div', { class: 'reason-text' }, m.reasoning)));
       el.append(h('div', { class: 'msg-text md', html: m.error ? esc(m.content) : renderChatMarkdown(m.content) }));
@@ -378,15 +402,17 @@ class ChatInstance {
 
   async send() {
     const text = this.input.value.trim();
-    if (!text || this.streaming) return;
+    if ((!text && !this.attach.items.length) || this.streaming) return;
+    if (this.attach.busy) { toast('Файлы ещё загружаются…'); return; }
+    const attachments = this.attach.take();
     this.input.value = ''; this.input.style.height = 'auto';
-    const msgs = [...this.messages, { role: 'user', content: text, ts: Date.now() }];
+    const msgs = [...this.messages, { role: 'user', content: text, ts: Date.now(), ...(attachments.length ? { attachments } : {}) }];
     const ctx = await this.buildContext();
     const system = [this.node.data.system, ctx ? `Ниже контекст, связанный с этим чатом на canvas пользователя:\n\n${ctx}` : ''].filter(Boolean).join('\n\n');
     const asst = { role: 'assistant', content: '', ts: Date.now() };
     const all = [...msgs, asst];
     this.view.setData(this.node.id, { messages: all });
-    if (!this.node.data.title || this.node.data.title === 'Новый чат') this.view.setData(this.node.id, { title: text.slice(0, 40) });
+    if (!this.node.data.title || this.node.data.title === 'Новый чат') this.view.setData(this.node.id, { title: (text || attachments[0]?.name || 'Чат').slice(0, 40) });
     this.renderAll();
     const el = this.list.lastElementChild;
     const textEl = el.querySelector('.msg-text');
@@ -395,14 +421,17 @@ class ChatInstance {
     this.streaming = reqId;
     this.sendBtn.innerHTML = icon('stop', 15); this.sendBtn.classList.add('stop');
     this.view.syncHead(this.view.node(this.node.id));
-    const paint = throttle(() => { textEl.innerHTML = renderChatMarkdown(asst.content); this.scrollDown(); }, 60);
+    let lastPaint = 0, pending = 0;
+    const paintNow = () => { pending = 0; lastPaint = performance.now(); textEl.innerHTML = renderChatMarkdown(asst.content); this.scrollDown(); };
+    // long answers: markdown is re-parsed less often (60 ms … 250 ms)
+    const paint = () => { if (pending) return; const gap = Math.min(250, Math.max(60, asst.content.length / 40)); const wait = Math.max(0, gap - (performance.now() - lastPaint)); pending = setTimeout(paintNow, wait); };
     chatRoutes.set(reqId, (ev) => {
       if (ev.type === 'delta') { asst.content += ev.text; paint(); }
       else if (ev.type === 'reasoning') { asst.reasoning = (asst.reasoning || '') + ev.text; }
       else if (ev.type === 'error') { asst.content = `⚠ ${ev.message}`; asst.error = true; this.finish(reqId, all); }
       else if (ev.type === 'done') { if (ev.usage) { asst.usage = ev.usage; } if (!asst.content && ev.aborted) asst.content = '_(остановлено)_'; this.finish(reqId, all); }
     });
-    await native.chat.send({ reqId, provider: this.node.data.provider || 'openai', model: this.node.data.model, system, messages: msgs.map(({ role, content }) => ({ role, content })), settings: state.settings });
+    await native.chat.send({ reqId, provider: this.node.data.provider || 'openai', model: this.node.data.model, system, messages: msgs.map(({ role, content, attachments: a }) => ({ role, content, ...(a?.length ? { attachments: a } : {}) })), settings: state.settings });
   }
 
   finish(reqId, all) {
@@ -496,7 +525,9 @@ class AgentChatInstance {
     this.input = h('textarea', { class: 'chat-input', rows: 2, placeholder: 'Задача для агента… (Enter — отправить, Shift+Enter — новая строка)' });
     this.sendBtn = h('button', { class: 'chat-send', title: 'Отправить', html: icon('send', 16), onclick: () => (this.running ? this.stop() : this.send()) });
     this.usage = h('div', { class: 'chat-usage' });
-    this.root.append(this.bar, this.infoBar, this.list, this.ctxRow, h('div', { class: 'chat-foot' }, this.input, this.sendBtn), this.usage);
+    this.attach = new AttachBar({ root: this.root, input: this.input });
+    this.list.addEventListener('load', (e) => { if (e.target.tagName === 'IMG' && this.list.scrollHeight - this.list.scrollTop - this.list.clientHeight < 400) this.list.scrollTop = this.list.scrollHeight; }, true);
+    this.root.append(this.bar, this.infoBar, this.list, this.ctxRow, this.attach.chips, h('div', { class: 'chat-foot' }, this.attach.button, this.input, this.sendBtn), this.usage);
     this.hist = new ChatHistory(this);
     this.bar.prepend(this.hist.button);
     body.append(this.root);
@@ -588,30 +619,49 @@ class AgentChatInstance {
         h('div', { class: 'muted' }, 'Работает по вашей подписке и входу в CLI, без API-ключа. Агент действует в папке, показанной сверху; его команды и правки появятся в ленте.'),
         h('div', { class: 'muted small' }, 'Соедините стрелкой заметку или стикер с этим окном — они уйдут агенту как контекст.')));
     }
-    this.messages.forEach((m, i) => this.list.append(this.renderMsg(m, i)));
-    this.list.scrollTop = this.list.scrollHeight;
+    renderWindowed(this);
+    if (!this._keepScroll) this.list.scrollTop = this.list.scrollHeight;
   }
 
+  // incremental: unchanged parts keep their DOM (so an expanded tool call stays open and long
+  // answers don't re-parse all their markdown on every streamed token)
   renderParts(m, el) {
-    el.innerHTML = '';
-    for (const p of m.parts || [{ type: 'text', text: m.content }]) {
-      if (p.type === 'text' && p.text) el.append(h('div', { class: 'msg-text md', html: renderChatMarkdown(p.text) }));
-      else if (p.type === 'reasoning' && p.text) el.append(h('details', { class: 'msg-reason' }, h('summary', {}, 'Размышления'), h('div', { class: 'reason-text' }, p.text)));
-      else if (p.type === 'tool') {
+    const parts = (m.parts || [{ type: 'text', text: m.content }]).filter((p) => !((p.type === 'text' || p.type === 'reasoning') && !p.text));
+    const cache = el._parts || (el._parts = []);
+    const keyOf = (p) => `${p.type}|${(p.text || '').length}|${p.status || ''}|${(p.output || '').length}|${(p.input || '').length}`;
+    const make = (p) => {
+      if (p.type === 'text') return h('div', { class: 'msg-text md', html: renderChatMarkdown(p.text) });
+      if (p.type === 'reasoning') return h('details', { class: 'msg-reason' }, h('summary', {}, 'Размышления'), h('div', { class: 'reason-text' }, p.text));
+      if (p.type === 'tool') {
         const d = h('details', { class: `tool-call ${p.status || ''}` },
           h('summary', {}, h('span', { class: 'tool-dot' }), h('b', {}, p.name), h('span', { class: 'tool-input' }, (p.input || '').split('\n')[0])));
         if (p.input && p.input.includes('\n')) d.append(h('pre', { class: 'tool-in' }, p.input));
         if (p.output) d.append(h('pre', { class: 'tool-out' }, p.output));
-        el.append(d);
-      } else if (p.type === 'error') el.append(h('div', { class: 'msg-error' }, `⚠ ${p.text}`));
-      else if (p.type === 'notice') el.append(h('div', { class: 'muted small' }, p.text));
-    }
-    if (m.running && !(m.parts || []).length) el.append(h('span', { class: 'typing' }, h('i'), h('i'), h('i')));
+        return d;
+      }
+      if (p.type === 'error') return h('div', { class: 'msg-error' }, `⚠ ${p.text}`);
+      if (p.type === 'notice') return h('div', { class: 'muted small' }, p.text);
+      return null;
+    };
+    el.querySelector(':scope > .typing')?.remove();
+    parts.forEach((p, i) => {
+      const key = keyOf(p);
+      const c = cache[i];
+      if (c && c.key === key) return;
+      const node = make(p);
+      if (!node) return;
+      if (c?.node?.open && node.tagName === 'DETAILS') node.open = true; // keep it expanded
+      if (c?.node?.parentNode === el) c.node.replaceWith(node); else el.append(node);
+      cache[i] = { key, node };
+    });
+    for (let i = parts.length; i < cache.length; i++) cache[i]?.node?.remove();
+    cache.length = Math.min(cache.length, parts.length);
+    if (m.running && !parts.length) el.append(h('span', { class: 'typing' }, h('i'), h('i'), h('i')));
   }
 
   renderMsg(m, i) {
     const el = h('div', { class: `msg ${m.role}` });
-    if (m.role === 'user') el.append(h('div', { class: 'msg-text' }, m.content));
+    if (m.role === 'user') { const atts = renderAttachments(m.attachments); if (atts) el.append(atts); if (m.content) el.append(h('div', { class: 'msg-text' }, m.content)); }
     else { const body = h('div', { class: 'msg-body' }); this.renderParts(m, body); el.append(body); }
     if (!m.running) el.append(h('div', { class: 'msg-actions' },
       h('button', { 'data-act': 'copy', 'data-i': i, title: 'Копировать', html: icon('copy', 12) }),
@@ -635,7 +685,9 @@ class AgentChatInstance {
 
   async send() {
     const text = this.input.value.trim();
-    if (!text || this.running) return;
+    if ((!text && !this.attach.items.length) || this.running) return;
+    if (this.attach.busy) { toast('Файлы ещё загружаются…'); return; }
+    const attachments = this.attach.take();
     this.input.value = ''; this.input.style.height = 'auto';
     let prompt = text;
     const ctx = await buildContextText(this.view, this.node.id);
@@ -644,11 +696,11 @@ class AgentChatInstance {
       prompt = `Контекст с canvas пользователя (заметки и связанные окна):\n\n${ctx}\n\n---\n\n${text}`;
       this.view.setData(this.node.id, { ctxHash: hash });
     }
-    const user = { role: 'user', content: text, ts: Date.now() };
+    const user = { role: 'user', content: text, ts: Date.now(), ...(attachments.length ? { attachments } : {}) };
     const asst = { role: 'assistant', content: '', parts: [], running: true, ts: Date.now() };
     const all = [...this.messages, user, asst];
     this.view.setData(this.node.id, { messages: all });
-    if (!this.node.data.title) this.view.setData(this.node.id, { title: text.slice(0, 40) });
+    if (!this.node.data.title) this.view.setData(this.node.id, { title: (text || attachments[0]?.name || 'Задача').slice(0, 40) });
     this.renderAll();
     const body = this.list.lastElementChild.querySelector('.msg-body');
     const reqId = uid('ag');
@@ -656,7 +708,7 @@ class AgentChatInstance {
     this.sendBtn.innerHTML = icon('stop', 15); this.sendBtn.classList.add('stop');
     this.syncHead();
     let newText = true;
-    const paint = throttle(() => { this.renderParts(asst, body); this.list.scrollTop = this.list.scrollHeight; }, 70);
+    const paint = throttle(() => { const l = this.list; const stick = l.scrollHeight - l.scrollTop - l.clientHeight < 120; this.renderParts(asst, body); if (stick) l.scrollTop = l.scrollHeight; }, 70);
     const lastText = () => { const l = asst.parts[asst.parts.length - 1]; if (newText || !l || l.type !== 'text') { const p = { type: 'text', text: '' }; asst.parts.push(p); newText = false; return p; } return l; };
     chatRoutes.set(reqId, (ev) => {
       switch (ev.type) {
@@ -674,7 +726,7 @@ class AgentChatInstance {
       }
       paint();
     });
-    await native.agentChat.run({ reqId, kind: this.kind, cmd: this.agent.cmd || this.kind, prompt, sessionId: this.node.data.sessionId, mode: this.modeSel.value, model: this.node.data.model || '', effort: this.node.data.effort || '', cwd: this.cwd });
+    await native.agentChat.run({ reqId, kind: this.kind, cmd: this.agent.cmd || this.kind, prompt, sessionId: this.node.data.sessionId, mode: this.modeSel.value, model: this.node.data.model || '', effort: this.node.data.effort || '', cwd: this.cwd, attachments });
   }
 
   finish(reqId, all, asst, ev) {

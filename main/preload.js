@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 const on = (channel) => (cb) => {
   const fn = (e, payload) => cb(payload);
@@ -26,6 +26,7 @@ contextBridge.exposeInMainWorld('native', {
   perf: { info: inv('perf:info'), save: inv('perf:save') },
   history: { list: inv('history:list'), get: inv('history:get'), save: inv('history:save'), remove: inv('history:remove') },
   sessions: { list: inv('sessions:list'), read: inv('sessions:read') },
+  attach: { saveBytes: inv('attach:saveBytes'), importPath: inv('attach:importPath'), open: inv('attach:open'), reveal: inv('attach:reveal'), pathForFile: (f) => { try { return webUtils.getPathForFile(f) || ''; } catch { return ''; } } },
   codexPets: { installed: inv('codexPets:installed'), catalog: inv('codexPets:catalog'), install: inv('codexPets:install'), remove: inv('codexPets:remove') },
   sync: { info: inv('sync:info'), configure: inv('sync:configure'), now: inv('sync:now'), ready: inv('sync:ready'), adoptVault: inv('sync:adoptVault'), onChanged: on('sync:changed'), onStatus: on('sync:status') },
   limits: { get: inv('limits:get'), usage: inv('usage:get') },

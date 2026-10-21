@@ -67,7 +67,9 @@ async function* sseLines(body) {
 }
 
 class ChatManager {
-  constructor({ send, onUsage }) {
+  constructor({ send, onUsage, attachments, nativeImage }) {
+    this.attachments = attachments;
+    this.nativeImage = nativeImage;
     this.send = send;
     this.onUsage = onUsage;
     this.inflight = new Map();
@@ -100,6 +102,12 @@ class ChatManager {
     const emit = (type, payload) => this.send('chat:event', { reqId, type, ...payload });
     let usage = { input: 0, output: 0 };
     try {
+      // messages with attachments become multi-part content (images, PDFs, text files)
+      const apiKind = cfg.kind === 'anthropic' ? 'anthropic' : 'openai';
+      messages = await Promise.all(messages.map(async (m) => ({
+        role: m.role,
+        content: m.role === 'user' && m.attachments?.length && this.attachments ? await this.attachments.toParts(m.content, m.attachments, apiKind, this.nativeImage) : m.content,
+      })));
       if (!cfg.key && !cfg.noKey) throw new Error(`Нет API-ключа для «${cfg.name}». Добавьте его в Настройки → Провайдеры.`);
       let res;
       if (cfg.kind === 'anthropic') {
