@@ -890,13 +890,19 @@ function editableText(el, { html = false, onCommit }) {
     e.preventDefault();
     document.execCommand('insertText', false, e.clipboardData.getData('text/plain'));
   });
-  return () => {
+  return (e) => {
+    if (el.isContentEditable) return;
     before = html ? el.innerHTML : el.innerText;
     el.contentEditable = 'true';
     el.classList.add('editing');
     el.focus();
-    const r = document.createRange(); r.selectNodeContents(el);
-    if (before.trim()) r.collapse(false);
+    // caret where the user clicked; otherwise at the end (empty text: select all)
+    let r = null;
+    if (e && e.clientX != null && before.trim()) {
+      const at = document.caretRangeFromPoint?.(e.clientX, e.clientY);
+      if (at && el.contains(at.startContainer)) r = at;
+    }
+    if (!r) { r = document.createRange(); r.selectNodeContents(el); if (before.trim()) r.collapse(false); }
     const s = getSelection(); s.removeAllRanges(); s.addRange(r);
   };
 }
@@ -1196,7 +1202,10 @@ export const NODE_TYPES = {
       const edit = editableText(txt, { html: true, onCommit: (v) => { view.updateNode(cur.id, { data: { html: v } }, { checkpoint: true, silent: true }); txt.classList.toggle('empty', !txt.textContent.trim()); } });
       txt.addEventListener('input', () => { txt.classList.remove('empty'); grow(); });
       paint();
-      return { edit, update: (n) => { cur = n; if (!txt.isContentEditable) { paint(); grow(); } } };
+      // a new font size: fit the box height to the text (both ways)
+      const fitH = () => { const n = view.node(cur.id); if (!n) return; txt.style.minHeight = '0'; const need = Math.max(24, txt.scrollHeight + 4); txt.style.minHeight = ''; if (Math.abs(need - n.h) > 1) { n.h = need; view.syncView(n); view.updateOverlay(); } };
+      let lastSize = node.data.size;
+      return { edit, update: (n) => { const resized = (n.data.size || 20) !== (lastSize || 20); lastSize = n.data.size; cur = n; if (!txt.isContentEditable) { paint(); resized ? fitH() : grow(); } else if (resized) { txt.style.fontSize = `${n.data.size || 20}px`; fitH(); } } };
     },
   },
 

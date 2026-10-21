@@ -5,6 +5,8 @@ import { NODE_TYPES } from './nodes.js';
 
 const MIN_Z = 0.08, MAX_Z = 3;
 const SNAP_PX = 6;
+const FONT_SIZES = [8, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 40, 48, 56, 64, 72, 96, 128];
+const TEXT_EDIT_TYPES = new Set(['text', 'sticky', 'shape']);
 const HANDLE_DIRS = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
 
 export class CanvasView extends Emitter {
@@ -622,11 +624,8 @@ export class CanvasView extends Emitter {
       for (const k of ['rect', 'ellipse', 'diamond']) tb.append(btn(k, k, () => { this.updateNode(single.id, { data: { kind: k } }, { checkpoint: true }); this.updateOverlay(); }, single.data.kind === k ? 'on' : ''));
       tb.append(h('span', { class: 'st-sep' }));
     }
-    if (single && single.type === 'text') {
-      for (const [lbl, sz] of [['S', 14], ['M', 20], ['L', 32], ['XL', 56]]) {
-        tb.append(h('button', { class: `st-btn txt${(single.data.size || 20) === sz ? ' on' : ''}`, onclick: (e) => { e.stopPropagation(); this.updateNode(single.id, { data: { size: sz } }, { checkpoint: true }); this.updateOverlay(); } }, lbl));
-      }
-      tb.append(h('span', { class: 'st-sep' }));
+    if (nodes.length && nodes.every((n) => n.type === 'text')) {
+      tb.append(this.fontSizeControl(nodes), h('span', { class: 'st-sep' }));
     }
     if (nodes.length > 1) {
       tb.append(
@@ -651,6 +650,49 @@ export class CanvasView extends Emitter {
     let top = p.y - 48;
     if (top < 8) top = Math.min(r.height - 50, p.y + 12);
     tb.style.left = `${left}px`; tb.style.top = `${top}px`;
+  }
+
+  // font size of text objects: a number field (type, wheel, arrows) with − / + and common sizes
+  fontSizeControl(nodes) {
+    const sizes = [...new Set(nodes.map((n) => n.data.size || 20))];
+    const ids = nodes.map((n) => n.id);
+    const apply = (v) => {
+      const size = Math.round(Math.min(400, Math.max(6, Number(v) || 0)));
+      if (!size) { input.value = sizes.length === 1 ? sizes[0] : ''; return; }
+      if (nodes.every((n) => (n.data.size || 20) === size)) { input.value = size; return; }
+      const keepFocus = document.activeElement === input;
+      this.checkpoint();
+      for (const id of ids) this.updateNode(id, { data: { size } });
+      this.updateOverlay();
+      // the toolbar was rebuilt: keep typing / arrowing in the new field
+      if (keepFocus) { const i = this.selToolbar.querySelector('.st-fs-input'); if (i) { i.focus(); i.select(); } }
+    };
+    const cur = () => Number(input.value) || sizes[0] || 20;
+    const step = (d) => {
+      const list = FONT_SIZES;
+      const c = cur();
+      const next = d > 0 ? list.find((x) => x > c) ?? c + 8 : [...list].reverse().find((x) => x < c) ?? Math.max(6, c - 1);
+      apply(next);
+    };
+    const input = h('input', { class: 'st-fs-input', type: 'text', inputmode: 'numeric', value: sizes.length === 1 ? String(sizes[0]) : '', placeholder: sizes.length > 1 ? '—' : '', title: 'Размер шрифта: введите число, ↑/↓ — на 1, Shift — на 10' });
+    input.addEventListener('pointerdown', (e) => e.stopPropagation());
+    input.addEventListener('focus', () => input.select());
+    input.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') { e.preventDefault(); apply(input.value); input.blur(); }
+      else if (e.key === 'Escape') { input.value = sizes.length === 1 ? sizes[0] : ''; input.blur(); }
+      else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') { e.preventDefault(); const d = (e.shiftKey ? 10 : 1) * (e.key === 'ArrowUp' ? 1 : -1); apply(cur() + d); }
+    });
+    input.addEventListener('change', () => apply(input.value));
+    input.addEventListener('wheel', (e) => { e.preventDefault(); e.stopPropagation(); apply(cur() + (e.deltaY < 0 ? 1 : -1)); }, { passive: false });
+    const btn = (label, title, fn) => h('button', { class: 'st-btn st-fs-btn', title, onclick: (e) => { e.stopPropagation(); fn(e); } }, label);
+    const pick = btn('', 'Готовые размеры', (e) => {
+      const r = e.currentTarget.getBoundingClientRect();
+      menu(FONT_SIZES.map((sz) => ({ label: String(sz), checked: sizes.length === 1 && sizes[0] === sz, onClick: () => apply(sz) })), r.left - 40, r.bottom + 6, { minWidth: 90 });
+    });
+    pick.innerHTML = icon('chevronDown', 13);
+    return h('div', { class: 'st-fs', title: 'Размер шрифта' },
+      btn('−', 'Меньше', () => step(-1)), input, btn('+', 'Больше', () => step(1)), pick);
   }
 
   // ---------------- arrange ----------------
@@ -873,6 +915,8 @@ export class CanvasView extends Emitter {
   onPointerDown(e) {
     if (this.dragging) this.cancelDrag();
     if (e.target.closest('.nav-box') || e.target.closest('.sel-toolbar')) return;
+    // a click inside text that is being edited moves the caret / selects words, it must not end editing
+    if (e.button === 0 && e.target.closest('.node [contenteditable="true"]')) return;
     this.root.focus({ preventScroll: true });
     const pan = e.button === 1 || (e.button === 0 && (this.spaceDown || this.tool === 'hand'));
     if (pan) { e.preventDefault(); this.startPan(e); return; }
@@ -899,6 +943,7 @@ export class CanvasView extends Emitter {
       if (n) { e.preventDefault(); this.startConnect(e, n, null); }
       return;
     }
+    if (this.tool === 'text' && n?.type === 'text') { e.preventDefault(); this.setTool('select'); this.select([n.id]); this.editAt(n, e); return; }
     if (creating && (!n || n.type === 'frame')) { e.preventDefault(); this.startCreate(e); return; }
 
     if (n && n.id === this.grabId && !e.target.closest('.node-head button')) {
@@ -929,13 +974,15 @@ export class CanvasView extends Emitter {
         return;
       }
       if (e.shiftKey && (inHead || !isWindow || this.lod)) { this.toggleSelect(n.id); e.preventDefault(); return; }
+      const wasOnlySelected = this.selection.size === 1 && this.selection.has(n.id);
       if (!this.selection.has(n.id)) this.select([n.id]);
       if (inBtn && !this.lod) return;
       if (editing) return;
       if (isWindow && !inHead && !this.lod) { this.bringToFront(n); return; } // let content handle it
       if (n.locked) return;
       e.preventDefault();
-      this.startMove(e);
+      // like Figma / Miro: clicking text that is already selected (without dragging) edits it
+      this.startMove(e, wasOnlySelected && TEXT_EDIT_TYPES.has(n.type) && !this.grabId ? n : null);
       return;
     }
     // background
@@ -988,7 +1035,9 @@ export class CanvasView extends Emitter {
     };
   }
 
-  startMove(e) {
+  editAt(n, e) { requestAnimationFrame(() => this.views.get(n.id)?.inst?.edit?.(e)); }
+
+  startMove(e, editOnClick = null) {
     const start = this.toWorld(e.clientX, e.clientY);
     let nodes, all, ids, orig, b0, others, movingFrames, views;
     // areas carry everything that belongs to them (nested areas included)
@@ -1072,7 +1121,7 @@ export class CanvasView extends Emitter {
           this.renderEdges();
           this.updateOverlay(); this.changed();
           this.emit('moveEnd', { nodes, clientX: ev.clientX, clientY: ev.clientY });
-        }
+        } else if (editOnClick) this.editAt(editOnClick, { clientX: ev.clientX, clientY: ev.clientY });
       },
     };
   }
@@ -1338,6 +1387,7 @@ export class CanvasView extends Emitter {
   }
 
   onDblClick(e) {
+    if (e.target.closest('.node [contenteditable="true"]')) return; // word selection inside text being edited
     const n = this.hitNode(e.target);
     if (!n) {
       if (e.target.closest('.nav-box,.sel-toolbar,.edge')) {
