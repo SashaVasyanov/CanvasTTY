@@ -381,6 +381,13 @@ export class CanvasView extends Emitter {
     if (!def) return;
     const el = h('div', { class: `node node-${n.type} ${def.chrome === 'window' ? 'window' : 'bare'}`, 'data-id': n.id });
     const v = { id: n.id, el, def, inst: null };
+    // pinned objects show a small lock instead of the selection frame; a click on it unpins
+    const lockBtn = (cls, size) => {
+      const b = h('button', { class: cls, title: 'Закреплено. Нажмите, чтобы открепить', html: `<span class="lk-on">${icon('lock', size)}</span><span class="lk-off">${icon('unlock', size)}</span>` });
+      b.addEventListener('pointerdown', (e) => e.stopPropagation());
+      b.addEventListener('click', (e) => { e.stopPropagation(); this.unlockNode(n.id); });
+      return b;
+    };
     if (def.chrome === 'window') {
       v.head = h('div', { class: 'node-head' });
       v.badge = h('span', { class: 'head-badge' });
@@ -392,13 +399,14 @@ export class CanvasView extends Emitter {
       v.card = h('div', { class: 'node-card' }, h('div', { class: 'card-row' }, h('span', { class: 'card-badge' }), h('div', { class: 'card-text' }, h('div', { class: 'card-title' }), h('div', { class: 'card-status' }))));
       el.append(v.head, v.body, v.card);
       v.btns.append(
+        lockBtn('head-btn head-lock', 12),
         h('button', { class: 'head-btn', title: 'Приблизить', html: icon('maximize', 13), onclick: (e) => { e.stopPropagation(); this.focusNode(n.id); } }),
         h('button', { class: 'head-btn', title: 'Ещё', html: icon('more', 13), onclick: (e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); this.nodeMenu(this.node(n.id), r.left, r.bottom + 4); } }),
         h('button', { class: 'head-btn close', title: 'Закрыть', html: icon('x', 13), onclick: (e) => { e.stopPropagation(); this.removeNodes([n.id]); } }),
       );
     } else {
       v.body = h('div', { class: 'node-body' });
-      el.append(v.body);
+      el.append(v.body, lockBtn('lock-badge', 11));
     }
     this.nodesLayer.append(el);
     this.views.set(n.id, v);
@@ -843,6 +851,14 @@ export class CanvasView extends Emitter {
     nodes.forEach((n, i) => { n.z = where === 'front' ? max + 1 + i : min - nodes.length + i; this.syncView(n); });
     this.changed();
   }
+  unlockNode(id) {
+    const n = this.node(id);
+    if (!n?.locked) return;
+    this.checkpoint();
+    n.locked = false;
+    this.syncView(n); this.updateOverlay(); this.changed();
+    toast('Откреплено');
+  }
   toggleLock() {
     const nodes = this.selectedNodes();
     if (!nodes.length) return;
@@ -1065,6 +1081,20 @@ export class CanvasView extends Emitter {
     if (this.tool === 'text' && n?.type === 'text') { e.preventDefault(); this.setTool('select'); this.select([n.id]); this.editAt(n, e); return; }
     if (creating && (!n || n.type === 'frame')) { e.preventDefault(); this.startCreate(e); return; }
 
+    if (n?.locked && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+      // pinned (like locked layers in Figma): no selection frame or toolbar; a window's content
+      // works as usual, any other click acts on the empty canvas. Ctrl+click or the context menu
+      // still select it; the small lock unpins it
+      if (this.grabId === n.id) this.setGrab(null);
+      const v = this.views.get(n.id);
+      const inHead = !!e.target.closest('.node-head');
+      if (v.def.chrome === 'window' && !inHead && !this.lod) { if (this.selection.size) this.clearSelection(); this.bringToFront(n); return; }
+      if (e.target.closest('.node-head button')) return;
+      this.clearSelection();
+      if (document.activeElement && isEditable(document.activeElement)) document.activeElement.blur();
+      this.startMarquee(e);
+      return;
+    }
     if (n && n.id === this.grabId && !e.target.closest('.node-head button')) {
       if (e.shiftKey) { this.toggleSelect(n.id); e.preventDefault(); return; }
       if (!this.selection.has(n.id)) this.select([n.id]);
@@ -1141,6 +1171,7 @@ export class CanvasView extends Emitter {
         const a = this.toWorld(x + r.left, y + r.top), b = this.toWorld(x + w + r.left, y + hh + r.top);
         const sel = new Set(base);
         for (const n of this.doc.nodes) {
+          if (n.locked) continue;
           const hit = n.x < b.x && n.x + n.w > a.x && n.y < b.y && n.y + n.h > a.y;
           // frames only when fully enclosed
           const enclosed = n.x >= a.x && n.y >= a.y && n.x + n.w <= b.x && n.y + n.h <= b.y;
@@ -1643,6 +1674,7 @@ export class CanvasView extends Emitter {
       return; // a double-click on empty canvas does nothing (stickies: S or the toolbar)
     }
     if (this.lod && NODE_TYPES[n.type].chrome === 'window') { this.focusNode(n.id); return; }
+    if (n.locked) return;
     const v = this.views.get(n.id);
     if (this.tool === 'select') {
       // second double-click on a grabbed object returns control to its content

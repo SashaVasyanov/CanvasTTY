@@ -297,6 +297,16 @@ svg.guides line { stroke: #ff5ca8; stroke-width: 1; }
 .node:hover .head-btns, .node.selected .head-btns { opacity: 1; }
 .head-btn { width: 22px; height: 22px; display: grid; place-items: center; border-radius: 5px; color: var(--text-2); }
 .head-btn:hover { background: rgba(var(--fg-rgb), 0.1); color: var(--text); }
+/* pinned: a quiet lock (in the header of windows, on the corner of other objects); hover shows the open lock */
+.head-lock, .lock-badge { display: none; }
+.head-lock .lk-off, .lock-badge .lk-off { display: none; }
+.head-lock:hover .lk-on, .lock-badge:hover .lk-on { display: none; }
+.head-lock:hover .lk-off, .lock-badge:hover .lk-off { display: contents; }
+.node.locked .head-lock { display: grid; color: var(--muted); }
+.node.locked .head-lock:hover { color: var(--accent-2); }
+.lock-badge { position: absolute; top: 0; right: 0; z-index: 5; width: 22px; height: 22px; place-items: center; border-radius: 50%; background: var(--menu); border: 1px solid var(--line-2); color: var(--muted); box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25); transform: translate(40%, -40%) scale(calc(1 / var(--z, 1))); transform-origin: center; cursor: pointer; }
+.node.bare.locked:hover .lock-badge { display: grid; }
+.lock-badge:hover { color: var(--accent-2); border-color: var(--accent); }
 .head-btn.close:hover { background: rgba(229, 72, 77, 0.8); color: #fff; }
 .node-body { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .node.bare .node-body { width: 100%; height: 100%; }
