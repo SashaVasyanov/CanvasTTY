@@ -3,7 +3,7 @@ import { renderChatMarkdown } from './md.js';
 import { state, native, PROVIDER_META, DEFAULT_AGENTS } from './state.js';
 import { CanvasView } from './canvas.js';
 import { NODE_TYPES, imageNodeFromFile } from './nodes.js';
-import { PenBar } from './pentools.js';
+import { PenBar, cssColor, colorRow, openColorPicker, toHex, swatch, OBJECT_COLORS } from './pentools.js';
 import { WIDGETS, openWidgetPicker } from './widgets.js';
 import { vaultIndex } from './vaultIndex.js';
 import { Sidebar, NotePanel, openGraph } from './notes.js';
@@ -102,7 +102,7 @@ class App {
 
   renderTabs() {
     const p = state.project;
-    this.projBtn.replaceChildren(h('span', { class: 'proj-dot', style: { background: p.color } }), h('span', {}, p.name), h('span', { html: icon('chevronDown', 13) }));
+    this.projBtn.replaceChildren(h('span', { class: 'proj-dot', style: { background: cssColor(p.color, 'blue') } }), h('span', {}, p.name), h('span', { html: icon('chevronDown', 13) }));
     this.tabs.innerHTML = '';
     for (const c of p.canvases) {
       const active = c.id === state.ws.activeCanvasId;
@@ -141,7 +141,7 @@ class App {
     const r = e.currentTarget.getBoundingClientRect();
     menu([
       { header: 'Проекты' },
-      ...state.ws.projects.map((p) => ({ label: `${p.name}  ·  ${p.canvases.length}`, badge: h('span', { class: 'proj-dot', style: { background: p.color } }), checked: p.id === state.project.id, onClick: () => state.openCanvas(p.id, p.canvases[0].id) })),
+      ...state.ws.projects.map((p) => ({ label: `${p.name}  ·  ${p.canvases.length}`, badge: h('span', { class: 'proj-dot', style: { background: cssColor(p.color, 'blue') } }), checked: p.id === state.project.id, onClick: () => state.openCanvas(p.id, p.canvases[0].id) })),
       '-',
       { label: 'Новый проект…', icon: 'plus', onClick: () => this.projectDialog() },
       { label: 'Настройки проекта…', icon: 'settings', onClick: () => this.projectDialog(state.project) },
@@ -150,12 +150,11 @@ class App {
   }
 
   projectDialog(project) {
-    const colors = ['#7c8cff', '#4fd1a5', '#f6a04d', '#e86a92', '#5bc0eb', '#b88cff', '#e3c565'];
-    let color = project?.color || colors[state.ws.projects.length % colors.length];
+    let color = project?.color || OBJECT_COLORS[state.ws.projects.length % 7];
     const name = h('input', { class: 'input', value: project?.name || '', placeholder: 'Название проекта' });
     const cwd = h('input', { class: 'input', value: project?.cwd || state.info.home || '', placeholder: 'Рабочая папка для агентов' });
-    const sw = h('div', { class: 'swatches' });
-    const paintSw = () => { sw.innerHTML = ''; for (const c of colors) sw.append(h('button', { class: `swatch${c === color ? ' on' : ''}`, style: { background: c }, onclick: () => { color = c; paintSw(); } })); };
+    const sw = h('div', { class: 'swatches apple' });
+    const paintSw = () => sw.replaceChildren(...colorRow({ colors: OBJECT_COLORS, current: color, onPick: (c) => { color = c; paintSw(); }, onLive: (c) => { color = c; } }));
     paintSw();
     const body = h('div', { class: 'form' },
       h('label', {}, 'Название'), name,
@@ -819,17 +818,20 @@ class App {
       wrap.append(h('p', { class: 'muted' }, 'Агенты запускаются в терминале внутри окна на canvas, в рабочей папке проекта. На Windows команда выполняется через PowerShell, поэтому подходят npm-команды вроде codex, claude, gemini.'));
       for (const a of s.agents) {
         const f = (key, ph, w) => { const i = h('input', { class: 'input sm', value: a[key] || '', placeholder: ph, style: { width: w } }); i.onchange = () => { a[key] = i.value; if (['cmd', 'args', 'resumeArgs'].includes(key)) trustAgent(a); state.saveWs(); state.emit('settings', 'agents'); if (key === 'mono' || key === 'color') render(); }; return i; };
-        const color = h('input', { type: 'color', value: a.color || '#5b7cfa', class: 'color-in' });
-        color.onchange = () => { a.color = color.value; state.saveWs(); state.emit('settings', 'agents'); render(); };
+        // the badge colour: the Apple colour window (system colours, Spectrum, eyedropper, HEX)
+        const bdg = badge(a.mono || '?', a.color, 26, a.dark);
+        const color = swatch(a.color || '#007aff', false, () => {}, 'Цвет значка');
+        color.classList.add('agent-color');
+        color.onclick = (e) => { e.stopPropagation(); let changed = false; openColorPicker(color, a.color || '#007aff', (v) => { a.color = toHex(v); changed = true; bdg.style.setProperty('--b', a.color); color.firstChild.style.background = a.color; state.saveWs(); }, { above: false, onClose: () => { if (changed) { state.emit('settings', 'agents'); render(); } } }); };
         const check = h('span', { class: 'muted small agent-check' }, '');
         if (a.cmd) native.pty.which(a.cmd).then((p) => { check.textContent = p ? '✓ найден' : '✗ не найден'; check.className = `small agent-check ${p ? 'ok' : 'bad'}`; check.title = p || a.install || ''; });
         wrap.append(h('div', { class: 'agent-row' },
-          badge(a.mono || '?', a.color, 26, a.dark), f('name', 'Название', '130px'), f('cmd', 'команда', '110px'), f('args', 'аргументы', '120px'), f('resumeArgs', 'продолжить', '110px'), f('mono', 'Аб', '44px'), color, check,
+          bdg, f('name', 'Название', '130px'), f('cmd', 'команда', '110px'), f('args', 'аргументы', '120px'), f('resumeArgs', 'продолжить', '110px'), f('mono', 'Аб', '44px'), color, check,
           h('button', { class: 'icon-btn sm', title: a.hidden ? 'Показать в доке' : 'Скрыть из дока', html: icon(a.hidden ? 'unlock' : 'lock', 13), onclick: () => { a.hidden = !a.hidden; state.saveWs(); state.emit('settings', 'agents'); render(); } }),
           !DEFAULT_AGENTS.find((d) => d.id === a.id) ? h('button', { class: 'icon-btn sm danger', title: 'Удалить', html: icon('trash', 13), onclick: () => { s.agents = s.agents.filter((x) => x !== a); state.saveWs(); state.emit('settings', 'agents'); render(); } }) : h('span', { style: { width: '26px' } }),
         ));
       }
-      wrap.append(h('button', { class: 'btn', onclick: () => { s.agents.push({ id: `custom_${Date.now().toString(36)}`, name: 'Мой агент', cmd: '', args: '', mono: 'A', color: '#4fd1a5' }); state.saveWs(); render(); } }, '+ Добавить агента'));
+      wrap.append(h('button', { class: 'btn', onclick: () => { s.agents.push({ id: `custom_${Date.now().toString(36)}`, name: 'Мой агент', cmd: '', args: '', mono: 'A', color: '#34c759' }); state.saveWs(); render(); } }, '+ Добавить агента'));
     };
     render();
     return wrap;

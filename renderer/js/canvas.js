@@ -2,9 +2,8 @@
 import { h, icon, uid, clamp, Emitter, isEditable, menu, deepClone, throttle, toast, keyName } from './util.js';
 import { state, native } from './state.js';
 import { NODE_TYPES, strokePath } from './nodes.js';
-import { PEN_TOOLS, penSettings, currentTool, cssColor, swatch, spectrumButton, BAR_COLORS } from './pentools.js';
+import { PEN_TOOLS, penSettings, currentTool, cssColor, resolveColor, normColor, colorRow, openColorPicker, colorName, OBJECT_COLORS } from './pentools.js';
 import { Comments } from './comments.js';
-import { safeColor } from './sanitize.js';
 
 const MIN_Z = 0.08, MAX_Z = 3;
 const SNAP_PX = 6;
@@ -641,7 +640,7 @@ export class CanvasView extends Emitter {
       const grp = document.createElementNS('http://www.w3.org/2000/svg', 'g');
       grp.setAttribute('class', `edge${sel ? ' selected' : ''}`);
       grp.dataset.id = e.id;
-      grp.innerHTML = `<path class="edge-hit" d="${d}"/><path class="edge-line" d="${d}" style="${safeColor(e.color) ? `stroke:${safeColor(e.color)}` : ''}" ${e.arrow !== false ? 'marker-end="url(#arrow)"' : ''}/>`;
+      grp.innerHTML = `<path class="edge-hit" d="${d}"/><path class="edge-line" d="${d}" style="${e.color ? `stroke:${cssColor(e.color, 'gray')}` : ''}" ${e.arrow !== false ? 'marker-end="url(#arrow)"' : ''}/>`;
       if (e.label) {
         const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
         t.setAttribute('x', mid.x); t.setAttribute('y', mid.y - 6); t.setAttribute('class', 'edge-label'); t.textContent = e.label;
@@ -689,11 +688,16 @@ export class CanvasView extends Emitter {
     const btn = (ic, title, fn, cls = '') => h('button', { class: `st-btn ${cls}`, title, html: icon(ic, 15), onclick: (e) => { e.stopPropagation(); fn(e); } });
     const single = nodes.length === 1 ? nodes[0] : null;
     const def = single && NODE_TYPES[single.type];
-    if (single && def.colors) {
-      for (const c of def.colors) {
-        const sw = h('button', { class: `swatch${(single.data.color || def.colors[0]) === c ? ' on' : ''}${c === 'auto' ? ' auto' : ''}`, style: { background: c === 'auto' ? 'var(--text-strong)' : c }, title: c === 'auto' ? 'Под тему' : c, onclick: (e) => { e.stopPropagation(); this.updateNode(single.id, { data: { color: c } }, { checkpoint: true }); this.updateOverlay(); } });
-        tb.append(sw);
-      }
+    // colours: the same row for one or several objects of one type (stickies, shapes, areas, lines)
+    const typeDef = nodes.length && nodes.every((n) => n.type === nodes[0].type) ? NODE_TYPES[nodes[0].type] : null;
+    if (typeDef?.colors) {
+      const ids = nodes.map((n) => n.id);
+      const colorOf = (n) => normColor(n.data.color || typeDef.colors[0]);
+      const cur = nodes.every((n) => colorOf(n) === colorOf(nodes[0])) ? colorOf(nodes[0]) : null;
+      const setAll = (color, cp = true) => { if (cp) this.checkpoint(); for (const id of ids) this.updateNode(id, { data: { color } }); this.updateOverlay(); };
+      // live colour from the Spectrum window: one undo step for the whole picking session
+      let picking = false;
+      tb.append(...colorRow({ colors: typeDef.colors, current: cur, grid: typeDef.colorGrid, onPick: (v) => setAll(v), onLive: (v) => { setAll(v, !picking); picking = true; }, onOpen: () => { picking = false; } }));
       tb.append(h('span', { class: 'st-sep' }));
     }
     if (single && single.type === 'shape') {
@@ -702,13 +706,7 @@ export class CanvasView extends Emitter {
     }
     if (nodes.length && nodes.every((n) => n.type === 'drawing')) {
       const ids = nodes.map((n) => n.id);
-      let pickerCheckpointed = false;
       const setAll = (data, cp = true) => { if (cp) this.checkpoint(); for (const id of ids) this.updateNode(id, { data }); this.updateOverlay(); };
-      const cur = nodes.every((n) => (n.data.color || 'auto') === (nodes[0].data.color || 'auto')) ? nodes[0].data.color || 'auto' : null;
-      for (const c of BAR_COLORS) tb.append(swatch(c, cur === c, (v) => setAll({ color: v })));
-      // live colour from the picker: one undo step for the whole picking session
-      tb.append(spectrumButton(cur, (v) => { setAll({ color: v }, !pickerCheckpointed); pickerCheckpointed = true; }, () => { pickerCheckpointed = false; }));
-      tb.append(h('span', { class: 'st-sep' }));
       const kind = PEN_TOOLS[nodes[0].data.tool] && nodes.every((n) => n.data.tool === nodes[0].data.tool) ? nodes[0].data.tool : 'pen';
       PEN_TOOLS[kind].widths.forEach((wd, i) => {
         const on = nodes.every((n) => (n.data.width || 3) === wd);
@@ -1672,12 +1670,23 @@ export class CanvasView extends Emitter {
     const e = this.doc.edges.find((q) => q.id === id);
     if (!e) return;
     this.selection.clear(); this.selectedEdge = id; this.afterSelect();
-    const colors = [['По умолчанию', null], ['Синий', '#7c8cff'], ['Зелёный', '#4fd1a5'], ['Оранжевый', '#f6a04d'], ['Розовый', '#e86a92']];
+    const cur = normColor(e.color || null);
+    const setColor = (c, cp = true) => { if (cp) this.checkpoint(); e.color = c; this.renderEdges(); this.changed(); };
+    const dot = (c) => h('span', { class: 'menu-dot', style: { background: c ? cssColor(c) : 'var(--edge)' } });
+    const colorItems = [{ label: 'По умолчанию', badge: dot(null), checked: !cur, onClick: () => setColor(null) },
+      ...OBJECT_COLORS.map((c) => ({ label: colorName(c), badge: dot(c), checked: cur === c, onClick: () => setColor(c) })),
+      '-', { label: 'Другой цвет…', icon: 'palette', checked: !!cur && !OBJECT_COLORS.includes(cur), onClick: () => {
+        // the Spectrum window opens where the menu was; one undo step for the whole picking session
+        const anchor = h('div', { class: 'pick-anchor', style: { left: `${x}px`, top: `${y}px` } });
+        document.body.append(anchor);
+        let first = true;
+        openColorPicker(anchor, cur || 'blue', (v) => { setColor(v, first); first = false; }, { above: false, onClose: () => anchor.remove() });
+      } }];
     menu([
       { label: 'Подпись…', icon: 'text', onClick: () => this.emit('editEdge', id) },
       { label: e.arrow !== false ? 'Убрать стрелку' : 'Добавить стрелку', icon: 'arrow', onClick: () => { this.checkpoint(); e.arrow = e.arrow === false; this.renderEdges(); this.changed(); } },
       { label: 'Развернуть направление', icon: 'refresh', onClick: () => { this.checkpoint(); [e.from, e.to] = [e.to, e.from]; this.renderEdges(); this.changed(); this.emit('edges'); } },
-      { label: 'Цвет', icon: 'palette', children: colors.map(([l, c]) => ({ label: l, checked: (e.color || null) === c, onClick: () => { this.checkpoint(); e.color = c; this.renderEdges(); this.changed(); } })) },
+      { label: 'Цвет', icon: 'palette', children: colorItems },
       '-',
       { label: 'Удалить связь', icon: 'trash', danger: true, onClick: () => this.removeEdge(id) },
     ], x, y);
@@ -1774,7 +1783,7 @@ export class CanvasView extends Emitter {
     const tx = (x) => ox + (x - box.x) * s, ty = (y) => oy + (y - box.y) * s;
     for (const n of nodes) {
       const def = NODE_TYPES[n.type];
-      ctx.fillStyle = n.type === 'sticky' ? (n.data.color || '#ffe58a') : n.type === 'frame' ? (light ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.06)') : def?.chrome === 'window' ? (light ? '#c9cfdb' : '#3a4150') : n.type === 'hub' ? (light ? '#9aa3b5' : '#cfd3da') : (light ? '#b5bccb' : '#4a5263');
+      ctx.fillStyle = n.type === 'sticky' ? resolveColor(n.data.color || '#ffe27a') : n.type === 'frame' ? (light ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.06)') : def?.chrome === 'window' ? (light ? '#c9cfdb' : '#3a4150') : n.type === 'hub' ? (light ? '#9aa3b5' : '#cfd3da') : (light ? '#b5bccb' : '#4a5263');
       ctx.fillRect(tx(n.x), ty(n.y), Math.max(2, n.w * s), Math.max(2, n.h * s));
       if (this.selection.has(n.id)) { ctx.strokeStyle = '#7c8cff'; ctx.lineWidth = 1.5; ctx.strokeRect(tx(n.x), ty(n.y), Math.max(2, n.w * s), Math.max(2, n.h * s)); }
     }

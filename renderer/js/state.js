@@ -24,7 +24,8 @@ export const PROVIDER_META = {
   custom: { mono: '⚙', color: '#59606f' },
 };
 
-const PROJECT_COLORS = ['#7c8cff', '#4fd1a5', '#f6a04d', '#e86a92', '#5bc0eb', '#b88cff', '#e3c565'];
+// Apple system colours (theme tokens, see pentools.js)
+const PROJECT_COLORS = ['blue', 'green', 'orange', 'pink', 'cyan', 'purple', 'yellow'];
 
 function defaultSettings() {
   return {

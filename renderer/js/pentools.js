@@ -3,6 +3,7 @@
 // colour picker (with eyedropper, hex and saved colours) and per-tool width / opacity.
 import { h, icon } from './util.js';
 import { state } from './state.js';
+import { safeColor } from './sanitize.js';
 
 export const PEN_TOOLS = {
   pen: { name: 'Ручка', widths: [1.5, 3, 5, 8, 14], def: { width: 3, opacity: 1, color: 'auto' } },
@@ -13,15 +14,40 @@ export const PEN_TOOLS = {
 // Apple system colours; the actual value comes from CSS (--pen-*) and differs in dark / light theme
 export const APPLE_COLORS = ['auto', 'blue', 'green', 'yellow', 'orange', 'red', 'pink', 'purple', 'indigo', 'cyan', 'mint', 'brown', 'gray'];
 export const BAR_COLORS = ['auto', 'blue', 'green', 'yellow', 'red'];
+// shapes, areas, arrows, projects: the system colours, in the order Apple apps show them
+export const OBJECT_COLORS = ['blue', 'green', 'yellow', 'orange', 'red', 'pink', 'purple', 'gray'];
+// stickies: soft tints of the system colours, like the notes in Freeform (the same in both themes)
+export const STICKY_PALETTE = { '#ffe27a': 'Жёлтый', '#ffc98a': 'Оранжевый', '#ffb3c4': 'Розовый', '#dcc1f7': 'Фиолетовый', '#a9d4ff': 'Синий', '#b3ebc1': 'Зелёный', '#e5e5ea': 'Серый' };
+export const STICKY_COLORS = Object.keys(STICKY_PALETTE);
 const COLOR_NAMES = { auto: 'Под тему', blue: 'Синий', green: 'Зелёный', yellow: 'Жёлтый', orange: 'Оранжевый', red: 'Красный', pink: 'Розовый', purple: 'Фиолетовый', indigo: 'Индиго', cyan: 'Голубой', mint: 'Мятный', brown: 'Коричневый', gray: 'Серый' };
+// colours of the old palettes: objects created before keep working and show up in the new range
+const LEGACY = {
+  '#ffe58a': '#ffe27a', '#ffcd9e': '#ffc98a', '#ffb8d1': '#ffb3c4', '#d6c2ff': '#dcc1f7', '#a8d8ff': '#a9d4ff', '#b5f0c0': '#b3ebc1', '#e2e5ea': '#e5e5ea',
+  '#7c8cff': 'blue', '#4fd1a5': 'green', '#f6a04d': 'orange', '#e86a92': 'pink', '#5bc0eb': 'cyan', '#e3c565': 'yellow', '#9aa3b2': 'gray', '#b88cff': 'purple',
+  '#5566d6': 'blue', '#3aa6b9': 'cyan', '#3fae7c': 'green', '#d08a3a': 'orange', '#cf5a86': 'pink', '#8a5cd6': 'purple', '#6b7385': 'gray',
+};
 
 export const isRaw = (c) => /^(#|rgb|hsl)/i.test(String(c || ''));
-export const cssColor = (c) => (isRaw(c) ? c : `var(--pen-${c && APPLE_COLORS.includes(c) ? c : 'auto'})`);
-export const colorName = (c) => (isRaw(c) ? String(c).toUpperCase() : COLOR_NAMES[c] || c);
+export const normColor = (c) => (c && LEGACY[String(c).toLowerCase()]) || c;
+// CSS value of a stored colour: a theme token (var(--pen-*)) or a checked raw colour
+export const cssColor = (c, fallback = 'auto') => {
+  c = normColor(c);
+  if (isRaw(c)) return safeColor(c) || `var(--pen-${fallback})`;
+  return `var(--pen-${c && APPLE_COLORS.includes(c) ? c : fallback})`;
+};
+export const colorName = (c) => { c = normColor(c); return isRaw(c) ? STICKY_PALETTE[String(c).toLowerCase()] || String(c).toUpperCase() : COLOR_NAMES[c] || c; };
 // real colour value of a token in the current theme
 export function resolveColor(c) {
-  if (isRaw(c)) return c;
+  c = normColor(c);
+  if (isRaw(c)) return safeColor(c) || '#ffffff';
   return getComputedStyle(document.documentElement).getPropertyValue(`--pen-${APPLE_COLORS.includes(c) ? c : 'auto'}`).trim() || '#ffffff';
+}
+// dark background → light text (stickies with a custom colour)
+export function isDark(c) {
+  const rgb = hexToRgb(toHex(c));
+  if (!rgb) return false;
+  const [r, g, b] = rgb.map((v) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b < 0.28;
 }
 
 export function penSettings(tool) { return { ...PEN_TOOLS[tool].def, ...(state.settings.pens?.[tool] || {}) }; }
@@ -48,7 +74,7 @@ function rgbToHsl([r, g, b]) {
   const hh = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
   return [(hh * 60 + 360) % 360, s, l];
 }
-const toHex = (c) => { const v = resolveColor(c); if (v.startsWith('#')) return v.length === 4 ? '#' + v.slice(1).split('').map((x) => x + x).join('') : v.slice(0, 7); const m = v.match(/\d+/g); return m ? '#' + m.slice(0, 3).map((n) => (+n).toString(16).padStart(2, '0')).join('') : '#ffffff'; };
+export const toHex = (c) => { const v = resolveColor(c); if (v.startsWith('#')) return v.length === 4 ? '#' + v.slice(1).split('').map((x) => x + x).join('') : v.slice(0, 7); const m = v.match(/\d+/g); return m ? '#' + m.slice(0, 3).map((n) => (+n).toString(16).padStart(2, '0')).join('') : '#ffffff'; };
 
 // ---------- vector tool illustrations ----------
 const SHADE = '<defs><linearGradient id="pbShade" x1="0" x2="1"><stop offset="0" stop-color="#fff" stop-opacity=".28"/><stop offset=".45" stop-color="#fff" stop-opacity=".05"/><stop offset="1" stop-color="#000" stop-opacity=".28"/></linearGradient></defs>';
@@ -69,12 +95,14 @@ function toolSvg(kind) {
 }
 
 // ---------- popovers ----------
-function popover(anchor, cls, build, { above = true } = {}) {
+function popover(anchor, cls, build, { above = true, onClose } = {}) {
+  document.querySelector('.pb-pop')?._close?.();
   document.querySelector('.pb-pop')?.remove();
   const pop = h('div', { class: `pb-pop ${cls}` });
-  const close = () => { pop.remove(); document.removeEventListener('pointerdown', off, true); document.removeEventListener('keydown', key, true); };
+  const close = () => { if (!pop.isConnected) return; pop.remove(); document.removeEventListener('pointerdown', off, true); window.removeEventListener('keydown', key, true); onClose?.(); };
   const off = (e) => { if (!pop.contains(e.target) && !anchor.contains(e.target)) close(); };
-  const key = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+  const key = (e) => { if (e.key === 'Escape') { e.stopImmediatePropagation(); e.preventDefault(); close(); } };
+  pop._close = close;
   build(pop, close);
   document.body.append(pop);
   const r = anchor.getBoundingClientRect();
@@ -82,7 +110,7 @@ function popover(anchor, cls, build, { above = true } = {}) {
   const y = above ? r.top - pop.offsetHeight - 10 : r.bottom + 10;
   pop.style.left = `${x}px`; pop.style.top = `${Math.max(8, Math.min(y, innerHeight - pop.offsetHeight - 8))}px`;
   for (const ev of ['pointerdown', 'wheel', 'keydown']) pop.addEventListener(ev, (e) => e.stopPropagation());
-  setTimeout(() => { document.addEventListener('pointerdown', off, true); document.addEventListener('keydown', key, true); }, 0);
+  setTimeout(() => { document.addEventListener('pointerdown', off, true); window.addEventListener('keydown', key, true); }, 0);
   return { pop, close };
 }
 
@@ -91,21 +119,29 @@ export function swatch(c, on, onClick, title = colorName(c)) {
   b.firstChild.style.background = cssColor(c);
   return b;
 }
-export function spectrumButton(current, onPick, onOpen) {
-  const custom = isRaw(current) || (current && !BAR_COLORS.includes(current));
+export function spectrumButton(current, onPick, onOpen, { base = BAR_COLORS, grid, onClose } = {}) {
+  const cur = normColor(current);
+  const custom = !!cur && !base.includes(cur);
   const b = h('button', { class: `pb-swatch pb-spectrum${custom ? ' on' : ''}`, title: 'Другой цвет: спектр, пипетка, HEX' }, h('span', { class: 'pb-dot' }));
-  if (custom) b.firstChild.style.setProperty('--cur', cssColor(current));
-  b.addEventListener('click', (e) => { e.stopPropagation(); onOpen?.(); openColorPicker(b, current, onPick); });
+  if (custom) b.firstChild.style.setProperty('--cur', cssColor(cur));
+  b.addEventListener('click', (e) => { e.stopPropagation(); onOpen?.(); openColorPicker(b, cur, onPick, { grid, onClose }); });
   return b;
+}
+// a row of colours plus the Spectrum button, as in Apple apps. onLive gets the colours picked
+// in the Spectrum window (one undo step per picking session is up to the caller)
+export function colorRow({ colors, current, onPick, onLive = onPick, onOpen, grid }) {
+  const cur = normColor(current);
+  return [...colors.map((c) => swatch(c, cur === c, onPick)), spectrumButton(cur, onLive, onOpen, { base: colors, grid })];
 }
 
 // Apple-like colour picker: system colours, Spectrum (hue → right, white → black down), greys,
 // eyedropper, hex, saved colours
-export function openColorPicker(anchor, value, onPick) {
+export function openColorPicker(anchor, value, onPick, { grid: gridColors = APPLE_COLORS, onClose, above = true } = {}) {
+  value = normColor(value);
   return popover(anchor, 'pb-picker', (pop, close) => {
     let hex = toHex(value);
     const grid = h('div', { class: 'pk-grid' });
-    const paintGrid = () => grid.replaceChildren(...APPLE_COLORS.map((c) => swatch(c, value === c, (v) => { value = v; hex = toHex(v); onPick(v); sync(); })));
+    const paintGrid = () => grid.replaceChildren(...gridColors.map((c) => swatch(c, value === c, (v) => { value = v; hex = toHex(v); onPick(v); sync(); })));
     const area = h('div', { class: 'pk-spectrum' });
     const ring = h('div', { class: 'pk-ring' });
     area.append(ring);
@@ -152,7 +188,7 @@ export function openColorPicker(anchor, value, onPick) {
       h('div', { class: 'pk-row' }, preview, hexIn),
       h('div', { class: 'pk-sub' }, 'Мои цвета'), favs);
     sync();
-  });
+  }, { above, onClose });
 }
 
 // ---------- the bar ----------

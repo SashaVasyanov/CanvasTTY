@@ -4,6 +4,7 @@ import { state, native } from './state.js';
 import { vaultIndex } from './vaultIndex.js';
 import { RichEditor } from './editor.js';
 import { LayersPanel } from './layers.js';
+import { cssColor } from './pentools.js';
 
 // =====================================================================
 // Sidebar
@@ -76,7 +77,7 @@ export class Sidebar {
     const sec = this.canvasSec;
     sec.innerHTML = '';
     sec.append(h('div', { class: 'sb-head' },
-      h('span', { class: 'proj-dot', style: { background: p.color } }),
+      h('span', { class: 'proj-dot', style: { background: cssColor(p.color, 'blue') } }),
       h('span', { class: 'sb-title' }, p.name),
       h('span', { class: 'flex' }),
       h('button', { class: 'icon-btn sm', title: 'Новый canvas', html: icon('plus', 14), onclick: async () => { const n = await prompt('Название canvas', `Canvas ${p.canvases.length + 1}`); if (n) state.createCanvas(p.id, n); } }),

@@ -1,6 +1,6 @@
 // Node type definitions for the canvas.
 import { h, icon, badge, esc, bus, toast, prompt, debounce, throttle, uid, readFileAsDataURL, keyName } from './util.js';
-import { cssColor, BAR_COLORS } from './pentools.js';
+import { cssColor, normColor, isDark, BAR_COLORS, OBJECT_COLORS, STICKY_COLORS } from './pentools.js';
 import { sanitizeHtml, htmlText } from './sanitize.js';
 import { WIDGETS, mountWidget } from './widgets.js';
 import { state, native, PROVIDER_META } from './state.js';
@@ -19,8 +19,7 @@ const chatRoutes = new Map();
 native.chat.onEvent((ev) => chatRoutes.get(ev.reqId)?.(ev));
 native.agentChat.onEvent((ev) => chatRoutes.get(ev.reqId)?.(ev));
 
-export const STICKY_COLORS = ['#ffe58a', '#ffcd9e', '#ffb8d1', '#d6c2ff', '#a8d8ff', '#b5f0c0', '#e2e5ea'];
-const SHAPE_COLORS = ['#7c8cff', '#4fd1a5', '#f6a04d', '#e86a92', '#5bc0eb', '#e3c565', '#9aa3b2'];
+export { STICKY_COLORS };
 // pencil: 'auto' follows the theme (light lines on dark, dark lines on light)
 export const PEN_COLORS = BAR_COLORS;
 const r1 = (v) => Math.round(v * 10) / 10;
@@ -36,7 +35,6 @@ export function strokePath(pts) {
   const l = pts[pts.length - 1];
   return `${d}L${r1(l[0])} ${r1(l[1])}`;
 }
-const FRAME_COLORS = ['#5566d6', '#3aa6b9', '#3fae7c', '#d08a3a', '#cf5a86', '#8a5cd6', '#6b7385'];
 
 const TERM_THEME = {
   background: '#12141a', foreground: '#d7dae0', cursor: '#9aa8ff', cursorAccent: '#12141a',
@@ -1061,7 +1059,7 @@ export const NODE_TYPES = {
   },
 
   sticky: {
-    chrome: 'bare', defaultSize: { w: 220, h: 220 }, minSize: { w: 80, h: 60 }, colors: STICKY_COLORS,
+    chrome: 'bare', defaultSize: { w: 220, h: 220 }, minSize: { w: 80, h: 60 }, colors: STICKY_COLORS, colorGrid: STICKY_COLORS,
     defaultData: () => ({ text: '', color: STICKY_COLORS[0] }),
     title: (n) => (n.data.text || 'Стикер').split('\n')[0].slice(0, 30),
     mount: ({ node, view, body }) => {
@@ -1069,7 +1067,7 @@ export const NODE_TYPES = {
       const txt = h('div', { class: 'txt', 'data-placeholder': 'Напишите что-нибудь…' });
       box.append(txt); body.append(box);
       let cur = node;
-      const paint = () => { box.style.background = cur.data.color || STICKY_COLORS[0]; txt.innerText = cur.data.text || ''; txt.classList.toggle('empty', !cur.data.text); requestAnimationFrame(() => fitText(txt, box)); };
+      const paint = () => { const c = cur.data.color || STICKY_COLORS[0]; box.style.background = cssColor(c, 'yellow'); box.classList.toggle('dark', isDark(normColor(c))); txt.innerText = cur.data.text || ''; txt.classList.toggle('empty', !cur.data.text); requestAnimationFrame(() => fitText(txt, box)); };
       const edit = editableText(txt, { onCommit: (v) => view.updateNode(cur.id, { data: { text: v } }, { checkpoint: true, silent: true }) });
       txt.addEventListener('input', () => { txt.classList.toggle('empty', !txt.innerText.trim()); fitText(txt, box); });
       paint();
@@ -1098,7 +1096,7 @@ export const NODE_TYPES = {
   },
 
   drawing: {
-    chrome: 'bare', defaultSize: { w: 100, h: 100 }, minSize: { w: 6, h: 6 },
+    chrome: 'bare', defaultSize: { w: 100, h: 100 }, minSize: { w: 6, h: 6 }, colors: BAR_COLORS,
     defaultData: () => ({ pts: [], color: 'auto', width: 3, opacity: 1, tool: 'pen' }),
     title: (n) => ({ marker: 'Маркер', pencil: 'Карандаш' })[n.data.tool] || 'Рисунок',
     mount: ({ node, body }) => {
@@ -1127,8 +1125,8 @@ export const NODE_TYPES = {
   },
 
   shape: {
-    chrome: 'bare', defaultSize: { w: 200, h: 140 }, minSize: { w: 30, h: 30 }, colors: SHAPE_COLORS,
-    defaultData: () => ({ kind: 'rect', color: SHAPE_COLORS[0], text: '' }),
+    chrome: 'bare', defaultSize: { w: 200, h: 140 }, minSize: { w: 30, h: 30 }, colors: OBJECT_COLORS,
+    defaultData: () => ({ kind: 'rect', color: 'blue', text: '' }),
     title: (n) => n.data.text || ({ rect: 'Прямоугольник', ellipse: 'Эллипс', diamond: 'Ромб' })[n.data.kind] || 'Фигура',
     mount: ({ node, view, body }) => {
       const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -1137,9 +1135,9 @@ export const NODE_TYPES = {
       body.append(svg, txt);
       let cur = node;
       const paint = () => {
-        const c = cur.data.color || SHAPE_COLORS[0];
+        svg.style.setProperty('--sc', cssColor(cur.data.color || 'blue', 'blue'));
         const shape = cur.data.kind === 'ellipse' ? '<ellipse cx="50" cy="50" rx="49" ry="49"/>' : cur.data.kind === 'diamond' ? '<path d="M50 1 L99 50 L50 99 L1 50 Z"/>' : '<rect x="1" y="1" width="98" height="98" rx="6" ry="6"/>';
-        svg.innerHTML = `<g fill="${c}" fill-opacity="0.22" stroke="${c}" stroke-width="2" vector-effect="non-scaling-stroke" style="vector-effect:non-scaling-stroke">${shape.replace('/>', ' vector-effect="non-scaling-stroke"/>')}</g>`;
+        svg.innerHTML = `<g fill-opacity="0.22" stroke-width="2" style="fill:var(--sc);stroke:var(--sc);vector-effect:non-scaling-stroke">${shape.replace('/>', ' vector-effect="non-scaling-stroke"/>')}</g>`;
         txt.innerText = cur.data.text || '';
       };
       const edit = editableText(txt, { onCommit: (v) => view.updateNode(cur.id, { data: { text: v } }, { checkpoint: true, silent: true }) });
@@ -1149,8 +1147,8 @@ export const NODE_TYPES = {
   },
 
   frame: {
-    chrome: 'bare', defaultSize: { w: 800, h: 520 }, minSize: { w: 120, h: 80 }, colors: FRAME_COLORS,
-    defaultData: () => ({ title: 'Область', color: FRAME_COLORS[0] }),
+    chrome: 'bare', defaultSize: { w: 800, h: 520 }, minSize: { w: 120, h: 80 }, colors: OBJECT_COLORS,
+    defaultData: () => ({ title: 'Область', color: 'blue' }),
     title: (n) => n.data.title || 'Область',
     mount: ({ node, view, body }) => {
       const title = h('div', { class: 'frame-title txt' });
@@ -1158,7 +1156,7 @@ export const NODE_TYPES = {
       const count = h('div', { class: 'frame-count' });
       body.append(title, count, area);
       let cur = node;
-      const paint = () => { title.textContent = cur.data.title || 'Область'; area.style.setProperty('--fc', cur.data.color || FRAME_COLORS[0]); title.style.setProperty('--fc', cur.data.color || FRAME_COLORS[0]); count.style.setProperty('--fc', cur.data.color || FRAME_COLORS[0]); };
+      const paint = () => { title.textContent = cur.data.title || 'Область'; const fc = cssColor(cur.data.color || 'blue', 'blue'); for (const el of [area, title, count]) el.style.setProperty('--fc', fc); };
       const edit = editableText(title, { onCommit: (v) => view.updateNode(cur.id, { data: { title: v.trim() || 'Область' } }, { checkpoint: true, silent: true }) });
       paint();
       let ck = '';

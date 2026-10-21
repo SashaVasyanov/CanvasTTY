@@ -5,7 +5,8 @@
 import { h, icon, uid, prompt, toast, confirmBox } from './util.js';
 import { state } from './state.js';
 
-const COLORS = ['#1fa463', '#e5534b', '#4f7cff', '#c2770e', '#8a5cf6', '#d4458b', '#0f9fb5', '#5f6b7a'];
+// avatar colours: Apple system colours (light variants, white initials read on all of them)
+const COLORS = ['#34c759', '#ff3b30', '#007aff', '#ff9500', '#af52de', '#ff2d55', '#30b0c7', '#5856d6', '#a2845e', '#8e8e93'];
 const colorOf = (name) => { let x = 0; for (const ch of String(name || '?')) x = (x * 31 + ch.codePointAt(0)) >>> 0; return COLORS[x % COLORS.length]; };
 const initial = (name) => (String(name || '?').trim()[0] || '?').toUpperCase();
 

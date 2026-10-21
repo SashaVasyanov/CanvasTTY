@@ -4,8 +4,9 @@ import { h, icon, toast } from './util.js';
 import { native } from './state.js';
 
 const fmtSize = (n) => (n < 1024 ? `${n} Б` : n < 1024 * 1024 ? `${Math.round(n / 1024)} КБ` : `${(n / 1024 / 1024).toFixed(1)} МБ`);
-const EXT_COLORS = { pdf: '#e5534b', doc: '#2f6fe0', docx: '#2f6fe0', xls: '#1f9d55', xlsx: '#1f9d55', csv: '#1f9d55', ppt: '#e07a2f', pptx: '#e07a2f', zip: '#8a6fd8', rar: '#8a6fd8', json: '#c2a23a', md: '#5b6b80', txt: '#5b6b80' };
-const extColor = (ext) => EXT_COLORS[ext] || (/^(js|ts|tsx|jsx|py|go|rs|java|c|cpp|cs|rb|php|sh|ps1|sql|html|css)$/.test(ext) ? '#4f7cff' : '#6b7280');
+// Apple system colours (light variants) for file badges
+const EXT_COLORS = { pdf: '#ff3b30', doc: '#007aff', docx: '#007aff', xls: '#34c759', xlsx: '#34c759', csv: '#34c759', ppt: '#ff9500', pptx: '#ff9500', zip: '#af52de', rar: '#af52de', json: '#a2845e', md: '#8e8e93', txt: '#8e8e93' };
+const extColor = (ext) => EXT_COLORS[ext] || (/^(js|ts|tsx|jsx|py|go|rs|java|c|cpp|cs|rb|php|sh|ps1|sql|html|css)$/.test(ext) ? '#5856d6' : '#8e8e93');
 const ipcMsg = (e) => String(e?.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
 
 // small JPEG preview kept inside the message (so it shows even where the file itself isn't)

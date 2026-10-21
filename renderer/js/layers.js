@@ -4,6 +4,7 @@
 import { h, icon, debounce } from './util.js';
 import { state } from './state.js';
 import { NODE_TYPES } from './nodes.js';
+import { cssColor } from './pentools.js';
 
 const TYPE_ICON = { drawing: 'pencil', terminal: 'terminal', chat: 'chat', agentchat: 'sparkle', note: 'note', web: 'globe', sticky: 'sticky', text: 'text', frame: 'area', image: 'image', hub: 'gauge' };
 const TYPE_NAME = { drawing: 'Рисунок', terminal: 'Терминал', chat: 'API-чат', agentchat: 'Чат агента', note: 'Заметка', web: 'Веб-страница', sticky: 'Стикер', text: 'Текст', shape: 'Фигура', frame: 'Область', image: 'Изображение', hub: 'Пульт' };
@@ -106,7 +107,7 @@ export class LayersPanel {
       h('span', { class: 'sb-label' }, this.title(n)),
       nkids ? h('span', { class: 'ly-count' }, String(nkids)) : null,
       lock);
-    if (n.type === 'frame' && n.data.color) row.style.setProperty('--ly-c', n.data.color);
+    if (n.type === 'frame') row.style.setProperty('--ly-c', cssColor(n.data.color || 'blue', 'blue'));
     row.addEventListener('click', (e) => this.click(n.id, e));
     row.addEventListener('dblclick', (e) => { if (e.target.closest('button')) return; this.canvas.focusNode(n.id); });
     row.addEventListener('mouseenter', () => this.hover(n.id));
