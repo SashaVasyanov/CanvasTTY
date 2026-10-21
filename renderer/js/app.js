@@ -31,6 +31,7 @@ class App {
     loadCodexPets().then(() => this.updatePet());
     if (state.settings.fps) setFpsMeter(true);
     this.bindSync();
+    native.app?.onFlush?.(async () => { try { await state.flushAll(); } finally { native.app.flushed(); } });
     state.on('canvas', () => { this.canvas.load(); this.renderTabs(); });
     state.on('projects', () => this.renderTabs());
     this.canvas.load();

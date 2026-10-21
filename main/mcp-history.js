@@ -7,7 +7,7 @@ const path = require('path');
 const readline = require('readline');
 const { HistoryStore, listSessions, readSession, sessionFiles } = require('./history');
 
-const store = new HistoryStore(path.join(process.env.CANVASTTY_USERDATA || '.', 'chats'));
+const store = new HistoryStore(path.join(process.env.CANVASTTY_USERDATA || '.', 'chats'), { readOnly: true });
 const SOURCES = ['canvastty', 'claude', 'codex'];
 const MAX_OUT = 60000;
 

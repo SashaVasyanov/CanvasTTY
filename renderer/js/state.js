@@ -92,7 +92,8 @@ class State extends Emitter {
   agent(id) { return this.settings.agents.find((a) => a.id === id) || DEFAULT_AGENTS.find((a) => a.id === id) || DEFAULT_AGENTS[4]; }
 
   async openCanvas(projectId, canvasId) {
-    if (this.doc) { this.saveDoc.flush(); }
+    if (this.doc && !this._skipFlush) { this.saveDoc.flush(); }
+    this._skipFlush = false;
     const p = this.ws.projects.find((x) => x.id === projectId) || this.ws.projects[0];
     const c = p.canvases.find((x) => x.id === canvasId) || p.canvases[0];
     this.ws.activeProjectId = p.id;
@@ -105,6 +106,14 @@ class State extends Emitter {
   }
 
   touch() { this.saveDoc(); }
+  // write everything that is still waiting in a debounce (called before the window closes)
+  async flushAll() {
+    this.saveWs.cancel?.(); this.saveDoc.cancel?.();
+    const jobs = [native.ws.save(this.ws)];
+    if (this.doc && !this._skipFlush) jobs.push(native.canvas.save(this.doc.id, this.doc));
+    jobs.push(import('./editor.js').then((m) => m.flushEditors()).catch(() => {}));
+    await Promise.allSettled(jobs);
+  }
   // deleted ids travel with the workspace so other computers delete them too
   tombstone(...ids) { this.ws.tombstones = [...new Set([...(this.ws.tombstones || []), ...ids])].slice(-1000); }
 
@@ -122,13 +131,31 @@ class State extends Emitter {
       ws.settings = { ...ws.settings, vaultPath: this.ws.settings.vaultPath };
       this.ws = this.normalizeWs(ws);
       const p = this.ws.projects.find((x) => x.id === this.ws.activeProjectId);
-      if (!p || !p.canvases.some((c) => c.id === this.ws.activeCanvasId)) await this.openCanvas(this.ws.projects[0].id, this.ws.projects[0].canvases[0].id);
+      if (!p || !p.canvases.some((c) => c.id === this.ws.activeCanvasId)) { this.dropDoc(); await this.openCanvas(this.ws.projects[0].id, this.ws.projects[0].canvases[0].id); }
       this.emit('projects'); this.emit('settings', 'all');
       return true;
     }
     if (ev.kind === 'canvas' && this.doc && ev.id === this.doc.id && !ev.deleted && ev.remote) {
       // merged into the open canvas in place: windows, terminals and running agents are untouched
-      if (isBusy('drag')) { clearTimeout(this._remoteT); this._remoteT = setTimeout(() => this.applyRemote(ev, isBusy), 800); return false; }
+      if (isBusy('drag') || this._remoteQueue?.length) {
+        (this._remoteQueue = this._remoteQueue || []).push(ev);
+        if (!this._remoteT) {
+          const drain = () => {
+            if (isBusy('drag')) { this._remoteT = setTimeout(drain, 500); return; }
+            this._remoteT = null;
+            const q = this._remoteQueue; this._remoteQueue = [];
+            for (const e of q) if (this.doc && e.id === this.doc.id) this.mergeRemote(e);
+          };
+          this._remoteT = setTimeout(drain, 500);
+        }
+        return false;
+      }
+      return this.mergeRemote(ev);
+    }
+    return false;
+  }
+  mergeRemote(ev) {
+    {
       const merged = mergeDocs(ev.base, this.doc, ev.remote);
       this.doc.nodes = merged.nodes; this.doc.edges = merged.edges;
       if (merged.groups) this.doc.groups = merged.groups;
@@ -156,10 +183,12 @@ class State extends Emitter {
     for (const c of p.canvases) await native.canvas.remove(c.id);
     this.tombstone(id, ...p.canvases.map((c) => c.id));
     this.ws.projects = this.ws.projects.filter((x) => x.id !== id);
-    if (this.ws.activeProjectId === id) await this.openCanvas(this.ws.projects[0].id, this.ws.projects[0].canvases[0].id);
+    if (this.ws.activeProjectId === id) { this.dropDoc(); await this.openCanvas(this.ws.projects[0].id, this.ws.projects[0].canvases[0].id); }
     this.saveWs(); this.emit('projects');
     return true;
   }
+  // the open canvas was deleted: forget it without saving it back (that would resurrect it)
+  dropDoc() { this.saveDoc.cancel?.(); this._skipFlush = true; }
   async createCanvas(projectId, name) {
     const p = this.ws.projects.find((x) => x.id === projectId);
     const c = { id: uid('c'), name: name || `Canvas ${p.canvases.length + 1}` };
@@ -181,7 +210,7 @@ class State extends Emitter {
     const c = { id: uid('c'), name: `${src.name} (копия)` };
     const copy = JSON.parse(JSON.stringify(data || emptyCanvas(c.id)));
     copy.id = c.id;
-    for (const n of copy.nodes) if (n.data) delete n.data.sessionId;
+    for (const n of copy.nodes) if (n.data) { delete n.data.sessionId; delete n.data.convId; }
     await native.canvas.save(c.id, copy);
     p.canvases.push(c);
     this.saveWs(); this.emit('projects');
@@ -193,7 +222,7 @@ class State extends Emitter {
     p.canvases = p.canvases.filter((x) => x.id !== canvasId);
     this.tombstone(canvasId);
     await native.canvas.remove(canvasId);
-    if (this.ws.activeCanvasId === canvasId) await this.openCanvas(p.id, p.canvases[0].id);
+    if (this.ws.activeCanvasId === canvasId) { this.dropDoc(); await this.openCanvas(p.id, p.canvases[0].id); }
     this.saveWs(); this.emit('projects');
     return true;
   }

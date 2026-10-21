@@ -437,7 +437,7 @@ svg.guides line { stroke: #ff5ca8; stroke-width: 1; }
 .web-bar { display: flex; gap: 4px; align-items: center; padding: 4px 6px; border-bottom: 1px solid var(--line); }
 .web-bar .input { flex: 1; }
 .web-frame { flex: 1; border: 0; background: #fff; width: 100%; }
-.canvas-root.moving .web-frame, .canvas-root.panning .web-frame { pointer-events: none; }
+.canvas-root.moving .web-frame, .canvas-root.panning .web-frame, .canvas-root.dragging .web-frame, .canvas-root.dragging .xterm { pointer-events: none; }
 
 /* ---------- hub (reference screenshot) ---------- */
 .hub { position: absolute; inset: 0; display: grid; grid-template-columns: 1.55fr 1fr; grid-template-rows: 1.1fr 1fr 0.62fr; gap: 8px; cursor: grab; user-select: none; }

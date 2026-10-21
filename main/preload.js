@@ -26,6 +26,7 @@ contextBridge.exposeInMainWorld('native', {
   perf: { info: inv('perf:info'), save: inv('perf:save') },
   history: { list: inv('history:list'), get: inv('history:get'), save: inv('history:save'), remove: inv('history:remove') },
   sessions: { list: inv('sessions:list'), read: inv('sessions:read') },
+  app: { onFlush: on('app:flush'), flushed: () => ipcRenderer.send('app:flushed') },
   attach: { saveBytes: inv('attach:saveBytes'), importPath: inv('attach:importPath'), open: inv('attach:open'), reveal: inv('attach:reveal'), pathForFile: (f) => { try { return webUtils.getPathForFile(f) || ''; } catch { return ''; } } },
   codexPets: { installed: inv('codexPets:installed'), catalog: inv('codexPets:catalog'), install: inv('codexPets:install'), remove: inv('codexPets:remove') },
   sync: { info: inv('sync:info'), configure: inv('sync:configure'), now: inv('sync:now'), ready: inv('sync:ready'), adoptVault: inv('sync:adoptVault'), onChanged: on('sync:changed'), onStatus: on('sync:status') },

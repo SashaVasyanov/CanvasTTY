@@ -156,6 +156,8 @@ class TerminalInstance {
     await new Promise((r) => requestAnimationFrame(r));
     try { this.fit.fit(); } catch {}
     const res = await native.pty.spawn({ cmd: a.cmd, args, cwd, cols: this.term.cols || 100, rows: this.term.rows || 30 });
+    // the window was closed while the terminal was starting: don't leave the process behind
+    if (this.disposed || this.destroyed) { native.pty.kill(res.id); return; }
     this.sessionId = res.id;
     this.notFound = res.notFound;
     ptyRoutes.set(res.id, this);
@@ -251,13 +253,43 @@ class TerminalInstance {
   onVisible() { setTimeout(() => this.doFit(), 30); }
   onResize() { this.doFit(); }
   edit() { this.term.focus(); }
-  destroy() { this.ro.disconnect(); this.offTheme?.(); if (this.sessionId) ptyRoutes.delete(this.sessionId); this.term.dispose(); }
-  dispose() { if (this.sessionId) native.pty.kill(this.sessionId); }
+  destroy() { this.destroyed = true; this.ro.disconnect(); this.offTheme?.(); if (this.sessionId) ptyRoutes.delete(this.sessionId); this.term.dispose(); }
+  dispose() { this.disposed = true; if (this.sessionId) native.pty.kill(this.sessionId); }
 }
 
 // =====================================================================
 // API chat
 // =====================================================================
+// A running chat can outlive its canvas being on screen (the user switched canvas):
+// its results are then written straight into that canvas' file.
+const activeRuns = new Map(); // node id → instance that owns the run
+async function patchNodeData(inst, patch) {
+  inst.node = { ...inst.node, data: { ...inst.node.data, ...patch } };
+  const view = inst.view;
+  if (view.doc?.id === inst.docId && view.node(inst.node.id)) {
+    view.setData(inst.node.id, patch);
+    const live = view.views.get(inst.node.id)?.inst;
+    if (live && live !== inst) live.renderAll?.(); // the window was re-created meanwhile
+    return;
+  }
+  try {
+    const doc = await native.canvas.load(inst.docId);
+    const n = doc?.nodes?.find((x) => x.id === inst.node.id);
+    if (!n) return;
+    n.data = { ...n.data, ...patch };
+    await native.canvas.save(inst.docId, doc);
+  } catch (e) { console.error('patchNodeData', e); }
+}
+// an answer left "running" by a previous run that no longer exists (app closed mid-answer)
+function settleStale(inst) {
+  const msgs = inst.node.data.messages || [];
+  const last = msgs[msgs.length - 1];
+  if (!last?.running || activeRuns.has(inst.node.id)) return;
+  const fixed = [...msgs.slice(0, -1), { ...last, running: false, ...(last.parts ? { parts: [...last.parts, { type: 'notice', text: 'Прервано' }] } : { content: last.content || '_(прервано)_' }) }];
+  inst.view.setData(inst.node.id, { messages: fixed });
+  inst.node = inst.view.node(inst.node.id) || inst.node;
+}
+
 // Long conversations render only the newest messages; older ones load on demand
 // (a chat with hundreds of answers would otherwise create tens of thousands of DOM nodes).
 const MSG_PAGE = 40;
@@ -282,6 +314,7 @@ function renderWindowed(inst) {
 class ChatInstance {
   constructor({ node, view, body }) {
     this.node = node; this.view = view;
+    settleStale(this);
     this.streaming = null;
     this.root = h('div', { class: 'chat' });
     this.bar = h('div', { class: 'chat-bar' });
@@ -418,6 +451,7 @@ class ChatInstance {
     const textEl = el.querySelector('.msg-text');
     textEl.innerHTML = '<span class="typing"><i></i><i></i><i></i></span>';
     const reqId = uid('req');
+    this.docId = this.view.doc.id; activeRuns.set(this.node.id, this);
     this.streaming = reqId;
     this.sendBtn.innerHTML = icon('stop', 15); this.sendBtn.classList.add('stop');
     this.view.syncHead(this.view.node(this.node.id));
@@ -434,11 +468,12 @@ class ChatInstance {
     await native.chat.send({ reqId, provider: this.node.data.provider || 'openai', model: this.node.data.model, system, messages: msgs.map(({ role, content, attachments: a }) => ({ role, content, ...(a?.length ? { attachments: a } : {}) })), settings: state.settings });
   }
 
-  finish(reqId, all) {
+  async finish(reqId, all) {
     chatRoutes.delete(reqId);
     this.streaming = null;
     this.sendBtn.innerHTML = icon('send', 16); this.sendBtn.classList.remove('stop');
-    this.view.setData(this.node.id, { messages: [...all] });
+    activeRuns.delete(this.node.id);
+    await patchNodeData(this, { messages: [...all] });
     saveConversation(this);
     this.renderAll();
     const tot = all.reduce((t, m) => t + (m.usage ? m.usage.input + m.usage.output : 0), 0);
@@ -508,6 +543,7 @@ const agentDefaults = () => (agentDefaultsP = agentDefaultsP || (native.agentCha
 class AgentChatInstance {
   constructor({ node, view, body }) {
     this.node = node; this.view = view;
+    settleStale(this);
     this.running = null;
     this.root = h('div', { class: 'chat agent-chat' });
     this.modeSel = h('select', { class: 'select sm no-drag', title: 'Что агенту разрешено делать' });
@@ -704,6 +740,7 @@ class AgentChatInstance {
     this.renderAll();
     const body = this.list.lastElementChild.querySelector('.msg-body');
     const reqId = uid('ag');
+    this.docId = this.view.doc.id; activeRuns.set(this.node.id, this);
     this.running = reqId;
     this.sendBtn.innerHTML = icon('stop', 15); this.sendBtn.classList.add('stop');
     this.syncHead();
@@ -712,7 +749,7 @@ class AgentChatInstance {
     const lastText = () => { const l = asst.parts[asst.parts.length - 1]; if (newText || !l || l.type !== 'text') { const p = { type: 'text', text: '' }; asst.parts.push(p); newText = false; return p; } return l; };
     chatRoutes.set(reqId, (ev) => {
       switch (ev.type) {
-        case 'session': this.view.setData(this.node.id, { sessionId: ev.sessionId }); break;
+        case 'session': patchNodeData(this, { sessionId: ev.sessionId }); break;
         case 'info': if (ev.model) { this.view.setData(this.node.id, { actualModel: ev.model }); this.renderInfo(); } break;
         case 'delta': lastText().text += ev.text; break;
         case 'break': newText = true; break;
@@ -729,15 +766,15 @@ class AgentChatInstance {
     await native.agentChat.run({ reqId, kind: this.kind, cmd: this.agent.cmd || this.kind, prompt, sessionId: this.node.data.sessionId, mode: this.modeSel.value, model: this.node.data.model || '', effort: this.node.data.effort || '', cwd: this.cwd, attachments });
   }
 
-  finish(reqId, all, asst, ev) {
+  async finish(reqId, all, asst, ev) {
     chatRoutes.delete(reqId);
     this.running = null;
     asst.running = false;
     for (const p of asst.parts) if (p.type === 'tool' && p.status === 'run') p.status = ev.aborted ? 'err' : 'ok';
     if (ev.aborted) asst.parts.push({ type: 'notice', text: 'Остановлено' });
     asst.content = asst.parts.filter((p) => p.type === 'text').map((p) => p.text).join('\n\n').trim();
-    if (ev.sessionId) this.view.setData(this.node.id, { sessionId: ev.sessionId });
-    this.view.setData(this.node.id, { messages: [...all] });
+    activeRuns.delete(this.node.id);
+    await patchNodeData(this, { messages: [...all], ...(ev.sessionId ? { sessionId: ev.sessionId } : {}) });
     this.sendBtn.innerHTML = icon('send', 16); this.sendBtn.classList.remove('stop');
     const bits = [];
     if (ev.usage) bits.push(`${(ev.usage.input + ev.usage.output).toLocaleString('ru-RU')} ток.`);

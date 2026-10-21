@@ -8,17 +8,41 @@ const readline = require('readline');
 
 // ---------------- CanvasTTY's own history ----------------
 class HistoryStore {
-  constructor(dir) {
+  constructor(dir, { readOnly = false } = {}) {
     this.dir = dir;
+    this.readOnly = readOnly;
     this.indexFile = path.join(dir, 'index.json');
     fs.mkdirSync(dir, { recursive: true });
     try { this.index = JSON.parse(fs.readFileSync(this.indexFile, 'utf8')); } catch { this.index = {}; }
     this.saveIndexSoon = null;
+    this.repair();
+    if (!readOnly) process.on('exit', () => { if (this.dirty) this.writeIndexNow(true); });
+  }
+  // conversations whose file exists but which are missing from the index (crash, quit mid-write)
+  repair() {
+    let names = [];
+    try { names = fs.readdirSync(this.dir).filter((n) => n.endsWith('.json') && n !== 'index.json'); } catch { return; }
+    let fixed = 0;
+    for (const n of names) {
+      const id = n.slice(0, -5);
+      if (this.index[id]) continue;
+      try { const rec = JSON.parse(fs.readFileSync(path.join(this.dir, n), 'utf8')); if (rec?.id && Array.isArray(rec.messages)) { this.indexRecord(rec, false); fixed++; } } catch {}
+    }
+    if (fixed && !this.readOnly) this.writeIndexNow(true);
   }
   file(id) { return path.join(this.dir, `${String(id).replace(/[^\w-]/g, '')}.json`); }
+  writeIndexNow(sync = false) {
+    if (this.readOnly) return;
+    this.dirty = false;
+    const tmp = `${this.indexFile}.${process.pid}.tmp`;
+    const data = JSON.stringify(this.index);
+    if (sync) { try { fs.writeFileSync(tmp, data); fs.renameSync(tmp, this.indexFile); } catch {} return; }
+    return fsp.writeFile(tmp, data).then(() => fsp.rename(tmp, this.indexFile)).catch(() => {});
+  }
   writeIndex() {
+    this.dirty = true;
     clearTimeout(this.saveIndexSoon);
-    this.saveIndexSoon = setTimeout(() => fsp.writeFile(this.indexFile, JSON.stringify(this.index)).catch(() => {}), 300);
+    this.saveIndexSoon = setTimeout(() => this.writeIndexNow(), 300);
   }
   list({ kind, agent } = {}) {
     return Object.values(this.index)
@@ -40,14 +64,14 @@ class HistoryStore {
     this.onChange?.('save', full);
     return true;
   }
-  indexRecord(full) {
+  indexRecord(full, write = true) {
     const firstUser = full.messages.find((m) => m.role === 'user');
     this.index[full.id] = {
       id: full.id, kind: full.kind, agent: full.agent, model: full.model || '', cwd: full.cwd || '', sessionId: full.sessionId || null,
       title: (full.title || firstUser?.content || 'Без названия').replace(/\s+/g, ' ').slice(0, 90),
       count: full.messages.length, created: full.created, updated: full.updated,
     };
-    this.writeIndex();
+    if (write) this.writeIndex();
   }
   // a conversation that arrived from another computer
   async importRecord(full) {

@@ -25,6 +25,8 @@ export class CanvasView extends Emitter {
   }
 
   get doc() { return state.doc; }
+  get dragging() { return this._dragging; }
+  set dragging(v) { this._dragging = v; this.root?.classList.toggle('dragging', !!v); }
   get vp() { return this.doc.viewport; }
 
   // ---------------- DOM ----------------
@@ -288,7 +290,7 @@ export class CanvasView extends Emitter {
 
   renderAll() {
     const ids = new Set(this.doc.nodes.map((n) => n.id));
-    for (const [id, v] of this.views) if (!ids.has(id)) { this.destroyView(v); this.views.delete(id); }
+    for (const [id, v] of this.views) if (!ids.has(id)) { try { v.inst?.dispose?.(); } catch {} this.destroyView(v); this.views.delete(id); }
     for (const n of this.doc.nodes) {
       const v = this.views.get(n.id);
       if (!v) this.createView(n);
@@ -297,6 +299,7 @@ export class CanvasView extends Emitter {
     this.renderEdges();
     this.updateOverlay();
     this.drawMinimap();
+    this.cullSoon?.();
   }
 
   createView(n) {
@@ -381,10 +384,20 @@ export class CanvasView extends Emitter {
     this.redoStack = [];
   }
   restore(snap) {
+    this.cancelDrag();
     const s = JSON.parse(snap);
+    // undo is about the layout: conversations and sessions keep their current state
+    const VOLATILE = ['messages', 'sessionId', 'convId', 'ctxHash', 'actualModel'];
+    const cur = new Map(this.doc.nodes.map((n) => [n.id, n]));
+    for (const n of s.nodes) {
+      const c = cur.get(n.id);
+      if (!c || !['chat', 'agentchat', 'terminal'].includes(n.type)) continue;
+      for (const k of VOLATILE) { if (k in (c.data || {})) n.data[k] = c.data[k]; else delete n.data[k]; }
+    }
     this.doc.nodes = s.nodes; this.doc.edges = s.edges;
     for (const id of [...this.selection]) if (!this.node(id)) this.selection.delete(id);
     this.renderAll();
+    this.recomputeGroups();
     state.touch();
     this.emit('selection');
     this.emit('changed');
@@ -392,7 +405,7 @@ export class CanvasView extends Emitter {
   undo() { if (!this.undoStack.length) return; this.redoStack.push(this.snapshot()); this.restore(this.undoStack.pop()); }
   redo() { if (!this.redoStack.length) return; this.undoStack.push(this.snapshot()); this.restore(this.redoStack.pop()); }
 
-  changed() { if (!this.dragging) this.recomputeGroups(); state.lastEdit = Date.now(); state.touch(); this.drawMinimap(); this.emit('changed'); }
+  changed() { if (!this.dragging) { this.recomputeGroups(); this.cullSoon(); } state.lastEdit = Date.now(); state.touch(); this.drawMinimap(); this.emit('changed'); }
 
   maxZ() { return this.doc.nodes.reduce((m, n) => Math.max(m, n.z || 0), 0); }
 
@@ -722,7 +735,7 @@ export class CanvasView extends Emitter {
       const n = deepClone(src);
       map[src.id] = n.id = uid(n.type.slice(0, 2));
       n.x = Math.round(n.x + dx); n.y = Math.round(n.y + dy); n.z = z + 1 + newIds.length; n.locked = false;
-      if (n.data) { delete n.data.sessionId; if (n.type === 'chat') n.data.messages = [...(n.data.messages || [])]; }
+      if (n.data) { delete n.data.sessionId; delete n.data.convId; if (n.type === 'chat') n.data.messages = [...(n.data.messages || [])]; }
       this.doc.nodes.push(n); this.createView(n); newIds.push(n.id);
     }
     for (const id of newIds) { const n = this.node(id); if (n.parent) { if (map[n.parent]) n.parent = map[n.parent]; else delete n.parent; } }
@@ -1148,6 +1161,7 @@ export class CanvasView extends Emitter {
     let moved = false;
     this.dragging = {
       kind: 'create',
+      cancel: () => { this.ghost.style.display = 'none'; },
       move: (ev) => {
         const p = this.toWorld(ev.clientX, ev.clientY);
         if (!moved && Math.hypot(p.x - s.x, p.y - s.y) * this.vp.z < 5) return;

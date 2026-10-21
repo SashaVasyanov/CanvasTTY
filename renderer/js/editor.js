@@ -8,6 +8,10 @@ document.execCommand('defaultParagraphSeparator', false, 'p');
 
 const BLOCK_SEL = 'p,h1,h2,h3,h4,h5,h6,li,pre,blockquote,div';
 
+// every open editor, so pending note edits can be written before the app quits
+const LIVE_EDITORS = new Set();
+export async function flushEditors() { await Promise.all([...LIVE_EDITORS].map((e) => { e.save.cancel?.(); return e.saveNow().catch(() => {}); })); }
+
 export class RichEditor extends Emitter {
   constructor({ compact = false, extraButtons = [], placeholder = 'Начните писать…' } = {}) {
     super();
@@ -20,6 +24,7 @@ export class RichEditor extends Emitter {
     this.content = h('div', { class: 'rich-content md', contenteditable: 'true', spellcheck: 'false', 'data-placeholder': placeholder });
     this.el.append(this.toolbar, this.content);
     this.save = debounce(() => this.saveNow(), 450);
+    LIVE_EDITORS.add(this);
     this.bind();
   }
 
@@ -513,5 +518,5 @@ export class RichEditor extends Emitter {
   }
 
   focus() { this.content.focus(); }
-  destroy() { this.save.flush(); this.closeAc(); this.el.remove(); }
+  destroy() { this.save.flush(); LIVE_EDITORS.delete(this); this.closeAc(); this.el.remove(); }
 }

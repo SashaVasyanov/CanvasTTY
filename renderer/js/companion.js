@@ -267,6 +267,8 @@ export class Companion {
     window.removeEventListener('pointermove', this.onMove);
     window.removeEventListener('resize', this.onResize);
     clearTimeout(this._lookT);
+    if (this._lookRaf) cancelAnimationFrame(this._lookRaf);
+    this._lookRaf = 0;
     this.sprite.destroy();
     this.el.remove();
   }

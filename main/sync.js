@@ -35,10 +35,12 @@ function mergeDocs(base, local, remote) {
 
 const hashOf = (v) => crypto.createHash('sha1').update(JSON.stringify(v)).digest('hex');
 const clone = (v) => JSON.parse(JSON.stringify(v));
+// workspace content without API keys (computers may differ in whether they sync keys)
+const hashCore = (ws) => { const c = clone(ws || {}); if (c.settings) delete c.settings.providers; delete c.activeProjectId; delete c.activeCanvasId; return hashOf(c); };
 const readJson = async (f) => JSON.parse(await fsp.readFile(f, 'utf8'));
 async function writeAtomic(file, data) {
   await fsp.mkdir(path.dirname(file), { recursive: true });
-  const tmp = `${file}.${process.pid}.tmp`;
+  const tmp = `${file}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`;
   await fsp.writeFile(tmp, JSON.stringify(data));
   await fsp.rename(tmp, file);
 }
@@ -183,7 +185,8 @@ class SyncManager {
       this.st.items[this.key(kind, id)] = { ts: env.ts, hash: env.hash };
       this.pristine = null;
       // projects that only exist here go back to the folder
-      if (hashOf(this.strip('workspace', ws)) !== env.hash) setTimeout(() => this.localChanged('workspace', 'workspace', ws), 50);
+      // push back only if this computer adds real content (not just its own API keys)
+      if (hashCore(this.strip('workspace', ws)) !== hashCore(env.data)) setTimeout(() => this.localChanged('workspace', 'workspace', ws), 50);
     } else if (kind === 'canvas') {
       const file = path.join(this.canvasDir, `${id}.json`);
       if (env.deleted) { await fsp.unlink(file).catch(() => {}); }

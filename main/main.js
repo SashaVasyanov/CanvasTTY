@@ -133,6 +133,16 @@ function createWindow() {
   ]) : null);
   win.loadURL('app://canvastty/index.html');
   win.once('ready-to-show', () => win.show());
+  // let the page write pending edits (debounced saves) before the window goes away
+  let allowClose = false;
+  win.on('close', (e) => {
+    if (allowClose || win.webContents.isCrashed?.()) return;
+    e.preventDefault();
+    const done = () => { if (allowClose) return; allowClose = true; clearTimeout(t); ipcMain.removeListener('app:flushed', done); if (!win.isDestroyed()) win.close(); };
+    const t = setTimeout(done, 2500);
+    ipcMain.once('app:flushed', done);
+    send('app:flush');
+  });
   win.on('maximize', () => send('win:state', { maximized: true }));
   win.on('unmaximize', () => send('win:state', { maximized: false }));
   win.webContents.setWindowOpenHandler(({ url }) => { shell.openExternal(url); return { action: 'deny' }; });
@@ -275,5 +285,5 @@ app.whenReady().then(() => {
   createWindow();
 });
 
-app.on('window-all-closed', () => { ptys.killAll(); app.quit(); });
+app.on('window-all-closed', () => { ptys.killAll(); for (const id of [...agentChat.runs.keys()]) agentChat.abort(id); app.quit(); });
 app.on('before-quit', () => ptys.killAll());

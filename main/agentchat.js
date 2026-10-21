@@ -157,6 +157,7 @@ class AgentChatManager {
         emit('done', { sessionId: sid, cost: j.total_cost_usd, usage: j.usage ? { input: (j.usage.input_tokens || 0) + (j.usage.cache_read_input_tokens || 0), output: j.usage.output_tokens || 0 } : null, durationMs: j.duration_ms });
       }
     };
+    proc.stdout.setEncoding('utf8'); proc.stderr.setEncoding('utf8'); // never split a multi-byte character
     proc.stdout.on('data', (d) => {
       buf += d.toString('utf8');
       let i;
@@ -166,7 +167,7 @@ class AgentChatManager {
         try { handle(JSON.parse(line)); } catch { /* non-json noise */ }
       }
     });
-    proc.stderr.on('data', (d) => { stderr += d.toString('utf8'); });
+    proc.stderr.on('data', (d) => { stderr += d; });
     proc.on('error', (e) => { emit('error', { message: e.message }); emit('done', {}); this.runs.delete(reqId); });
     proc.on('close', (code) => {
       this.runs.delete(reqId);
@@ -175,6 +176,12 @@ class AgentChatManager {
       if (!gotOutput && opts.effort && !opts.noEffort && /--effort|effort/i.test(stderr) && /unknown|invalid|error/i.test(stderr)) {
         emit('notice', { text: 'Эта версия Claude Code не поддерживает выбор уровня размышления — используется уровень по умолчанию. Обновите: npm i -g @anthropic-ai/claude-code' });
         this.runClaude({ ...opts, noEffort: true }, resolved, emit, partial); return;
+      }
+      // a session from another computer (synced chat) or one that was deleted: start a new one
+      if (!gotOutput && sessionId && /no conversation found|session.*not found|could not find session|invalid session/i.test(stderr)) {
+        emit('notice', { text: 'Прошлая сессия Claude Code на этом компьютере не найдена — начинаю новую.' });
+        emit('session', { sessionId: null });
+        this.runClaude({ ...opts, sessionId: null }, resolved, emit, partial); return;
       }
       if (!gotOutput && mcpFile && /mcp-config|allowedTools|append-system-prompt|mcp/i.test(stderr) && /unknown|invalid|error/i.test(stderr)) { this.runClaude({ ...opts, noMcp: true }, resolved, emit, partial); return; }
       if (!gotOutput && partial && /include-partial-messages|unknown option/i.test(stderr)) { this.runClaude(opts, resolved, emit, false); return; }
@@ -246,6 +253,7 @@ class AgentChatManager {
       else if (m.type === 'error') { failed = true; emit('error', { message: m.message }); }
       else if (m.type === 'token_count' && m.info && m.info.last_token_usage) usage = { input: m.info.last_token_usage.input_tokens || 0, output: m.info.last_token_usage.output_tokens || 0 };
     };
+    proc.stdout.setEncoding('utf8'); proc.stderr.setEncoding('utf8'); // never split a multi-byte character
     proc.stdout.on('data', (d) => {
       buf += d.toString('utf8');
       let i;
@@ -255,7 +263,7 @@ class AgentChatManager {
         try { handle(JSON.parse(line)); } catch {}
       }
     });
-    proc.stderr.on('data', (d) => { stderr += d.toString('utf8'); });
+    proc.stderr.on('data', (d) => { stderr += d; });
     proc.on('error', (e) => { emit('error', { message: e.message }); emit('done', {}); this.runs.delete(reqId); });
     proc.on('close', (code) => {
       this.runs.delete(reqId);
