@@ -36,6 +36,20 @@ export class Emitter {
 
 export const bus = new Emitter();
 
+// Hotkeys independent of the keyboard layout: with the Russian (or any non-Latin) layout e.key is
+// «я», «ч», «х»… — take the physical key from e.code instead, so Ctrl+Z, V, S, [ ] work the same.
+const CODE_CHARS = { BracketLeft: '[', BracketRight: ']', Backslash: '\\', Backquote: '`', Comma: ',', Period: '.', Slash: '/', Semicolon: ';', Quote: "'", Minus: '-', Equal: '=', IntlBackslash: '\\' };
+export function keyName(e) {
+  const k = e.key || '';
+  if (k.length !== 1) return k.toLowerCase();
+  if (/^[\x20-\x7e]$/.test(k)) return k.toLowerCase();
+  const c = e.code || '';
+  if (c.startsWith('Key')) return c.slice(3).toLowerCase();
+  if (c.startsWith('Digit')) return c.slice(5);
+  if (c.startsWith('Numpad') && /\d$/.test(c)) return c.slice(-1);
+  return CODE_CHARS[c] || k.toLowerCase();
+}
+
 export const isEditable =(el) => !!el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || !!el.closest?.('.xterm'));
 
 export function relTime(ts) {

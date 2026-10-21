@@ -1,5 +1,5 @@
 // Node type definitions for the canvas.
-import { h, icon, badge, esc, bus, toast, prompt, debounce, throttle, uid, readFileAsDataURL } from './util.js';
+import { h, icon, badge, esc, bus, toast, prompt, debounce, throttle, uid, readFileAsDataURL, keyName } from './util.js';
 import { state, native, PROVIDER_META } from './state.js';
 import { renderChatMarkdown } from './md.js';
 import { RichEditor } from './editor.js';
@@ -95,12 +95,12 @@ class TerminalInstance {
     this.term.attachCustomKeyEventHandler((e) => {
       if (e.type !== 'keydown') return true;
       const mod = e.ctrlKey || e.metaKey;
-      if (mod && e.key.toLowerCase() === 'c' && (this.term.hasSelection() || e.shiftKey)) { native.clipboard.write(this.term.getSelection()); return false; }
-      if (mod && e.shiftKey && e.key.toLowerCase() === 'v') return false; // browser paste event will handle
-      if (mod && e.key.toLowerCase() === 'v') return false;
+      if (mod && keyName(e) === 'c' && (this.term.hasSelection() || e.shiftKey)) { native.clipboard.write(this.term.getSelection()); return false; }
+      if (mod && e.shiftKey && keyName(e) === 'v') return false; // browser paste event will handle
+      if (mod && keyName(e) === 'v') return false;
       // let app-wide shortcuts through (Ctrl+Shift+P/O/N, Ctrl+\\, Ctrl+`)
-      if (mod && e.shiftKey && ['p', 'o', 'n'].includes(e.key.toLowerCase())) return false;
-      if (mod && (e.key === '\\' || e.key === '`')) return false;
+      if (mod && e.shiftKey && ['p', 'o', 'n'].includes(keyName(e))) return false;
+      if (mod && (keyName(e) === '\\' || keyName(e) === '`')) return false;
       return true;
     });
     this.term.onData((d) => { if (this.sessionId && this.state !== 'exited') native.pty.write(this.sessionId, d); });

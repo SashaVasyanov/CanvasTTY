@@ -1,4 +1,4 @@
-import { h, icon, badge, bus, menu, prompt, confirmBox, toast, modal, isEditable, esc, debounce } from './util.js';
+import { h, icon, badge, bus, menu, prompt, confirmBox, toast, modal, isEditable, esc, debounce, keyName } from './util.js';
 import { renderChatMarkdown } from './md.js';
 import { state, native, PROVIDER_META, DEFAULT_AGENTS } from './state.js';
 import { CanvasView } from './canvas.js';
@@ -591,13 +591,13 @@ class App {
     window.addEventListener('keydown', (e) => {
       if (document.querySelector('.modal-back')) return;
       const mod = e.ctrlKey || e.metaKey;
-      const k = e.key.toLowerCase();
+      const k = keyName(e);
       if (mod && k === 'p') { e.preventDefault(); this.palette(); return; }
       if (mod && e.shiftKey && k === 'f') { e.preventDefault(); toggleFpsMeter(); return; }
       if (mod && k === 'o') { e.preventDefault(); this.quickOpen(false); return; }
       if (mod && k === 'n') { e.preventDefault(); this.sidebar.newNote(); return; }
-      if (mod && e.key === '\\') { e.preventDefault(); this.toggleSidebar(); return; }
-      if (mod && e.key === '`') { e.preventDefault(); this.launchAgent({ agentId: 'shell' }); return; }
+      if (mod && k === '\\') { e.preventDefault(); this.toggleSidebar(); return; }
+      if (mod && k === '`') { e.preventDefault(); this.launchAgent({ agentId: 'shell' }); return; }
       if (mod && k === ',') { e.preventDefault(); this.openSettings(); return; }
       if (e.key === 'F1') { e.preventDefault(); this.openHelp(); return; }
       if (mod && k === 's') { e.preventDefault(); state.saveDoc.flush(); toast('Сохранено'); return; }

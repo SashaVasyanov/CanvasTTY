@@ -1,5 +1,5 @@
 // Rich markdown editor with an Apple Notes–style toolbar. Files stay plain Markdown (Obsidian compatible).
-import { h, icon, debounce, menu, prompt, toast, esc, readFileAsDataURL, Emitter } from './util.js';
+import { h, icon, debounce, menu, prompt, toast, esc, readFileAsDataURL, Emitter, keyName } from './util.js';
 import { mdToHtml, htmlToMd, splitFrontmatter } from './md.js';
 import { native } from './state.js';
 import { vaultIndex } from './vaultIndex.js';
@@ -260,10 +260,10 @@ export class RichEditor extends Emitter {
   onKey(e) {
     if (this.ac && this.acKey(e)) return;
     const mod = e.ctrlKey || e.metaKey;
-    if (mod && e.key.toLowerCase() === 'k') { e.preventDefault(); this.insertLink(); return; }
-    if (mod && e.shiftKey && e.key.toLowerCase() === 'l') { e.preventDefault(); this.toggleChecklist(); return; }
-    if (mod && e.shiftKey && e.key.toLowerCase() === 'h') { e.preventDefault(); this.toggleMark(); return; }
-    if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); this.save.flush(); return; }
+    if (mod && keyName(e) === 'k') { e.preventDefault(); this.insertLink(); return; }
+    if (mod && e.shiftKey && keyName(e) === 'l') { e.preventDefault(); this.toggleChecklist(); return; }
+    if (mod && e.shiftKey && keyName(e) === 'h') { e.preventDefault(); this.toggleMark(); return; }
+    if (mod && keyName(e) === 's') { e.preventDefault(); this.save.flush(); return; }
     if (e.key === 'Tab') {
       const li = this.selectionNode()?.closest?.('li');
       if (li) { e.preventDefault(); document.execCommand(e.shiftKey ? 'outdent' : 'indent'); this.changed(); return; }

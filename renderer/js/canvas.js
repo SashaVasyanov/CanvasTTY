@@ -1,5 +1,5 @@
 // Infinite canvas engine: viewport, nodes, edges, selection, snapping, history.
-import { h, icon, uid, clamp, Emitter, isEditable, menu, deepClone, throttle, toast } from './util.js';
+import { h, icon, uid, clamp, Emitter, isEditable, menu, deepClone, throttle, toast, keyName } from './util.js';
 import { state, native } from './state.js';
 import { NODE_TYPES } from './nodes.js';
 
@@ -702,13 +702,40 @@ export class CanvasView extends Emitter {
     this.updateOverlay(); this.changed();
     toast(lock ? 'Закреплено' : 'Откреплено');
   }
+  // Ctrl+G. If the selection already has an area, the other objects join it (the area grows to
+  // hold them) instead of a new area appearing around everything; otherwise a new area is made.
   groupIntoFrame() {
     const nodes = this.selectedNodes();
     if (!nodes.length) return;
-    const b = this.bounds(nodes);
-    const pad = 40;
-    const f = this.addNode('frame', { x: b.x - pad, y: b.y - pad - 40, w: b.w + pad * 2, h: b.h + pad * 2 + 40, data: { title: 'Область' } }, { center: false });
-    this.select([f.id]);
+    const pad = 40, head = 40;
+    const selIds = new Set(nodes.map((n) => n.id));
+    const isInside = (n, f) => { for (let p = n.parent, d = 0; p && d < 60; d++) { if (p === f.id) return true; p = this.node(p)?.parent; } return false; };
+    // areas of the selection that are not inside another selected area
+    const frames = nodes.filter((n) => n.type === 'frame' && !nodes.some((o) => o.type === 'frame' && o !== n && isInside(n, o)));
+    if (!frames.length) {
+      const b = this.bounds(nodes);
+      const f = this.addNode('frame', { x: b.x - pad, y: b.y - pad - head, w: b.w + pad * 2, h: b.h + pad * 2 + head, data: { title: 'Область' } }, { center: false });
+      this.select([f.id]);
+      return;
+    }
+    const target = frames.reduce((a, b) => (b.w * b.h > a.w * a.h ? b : a));
+    const joining = nodes.filter((n) => n !== target && !isInside(n, target));
+    if (!joining.length) { this.select([target.id]); toast(`Всё выделенное уже в области «${target.data.title || 'Область'}»`); return; }
+    this.checkpoint();
+    // grow the area so everything that joins lies inside it (contents of joining areas come along)
+    const b = this.bounds([...joining, ...joining.filter((n) => n.type === 'frame').flatMap((f) => this.descendants(f))]);
+    const x1 = Math.min(target.x, b.x - pad), y1 = Math.min(target.y, b.y - pad - head);
+    const x2 = Math.max(target.x + target.w, b.x + b.w + pad), y2 = Math.max(target.y + target.h, b.y + b.h + pad);
+    target.x = Math.round(x1); target.y = Math.round(y1); target.w = Math.round(x2 - x1); target.h = Math.round(y2 - y1);
+    this.syncView(target);
+    for (const n of joining) n.parent = target.id;
+    this.recomputeGroups(new Set(joining.map((n) => n.id)));
+    // joined areas must be drawn above the area that now holds them
+    for (const n of joining) if (n.type === 'frame' && (n.z || 0) <= (target.z || 0)) { n.z = (target.z || 0) + 1; this.syncView(n); }
+    this.renderEdges();
+    this.select([target.id]);
+    this.changed();
+    toast(`Добавлено в область «${target.data.title || 'Область'}»: ${joining.length}`);
   }
 
   // ---------------- clipboard ----------------
@@ -1396,7 +1423,7 @@ export class CanvasView extends Emitter {
   handleKey(e) {
     if (isEditable(document.activeElement)) return false;
     const mod = e.ctrlKey || e.metaKey;
-    const k = e.key.toLowerCase();
+    const k = keyName(e);
     if (mod && k === 'z') { e.preventDefault(); e.shiftKey ? this.redo() : this.undo(); return true; }
     if (mod && k === 'y') { e.preventDefault(); this.redo(); return true; }
     if (mod && k === 'a') { e.preventDefault(); this.select(this.doc.nodes.map((n) => n.id)); return true; }
