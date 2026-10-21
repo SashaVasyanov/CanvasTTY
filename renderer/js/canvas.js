@@ -905,6 +905,12 @@ export class CanvasView extends Emitter {
   }
 
   // ---------------- clipboard ----------------
+  textSelectionWins() {
+    const sel = getSelection();
+    if (!sel || sel.isCollapsed || !sel.toString().trim()) return false;
+    const host = (sel.anchorNode?.nodeType === 1 ? sel.anchorNode : sel.anchorNode?.parentElement)?.closest?.('.node');
+    return !host || !this.root.contains(host) || !this.selection.size || this.selection.has(host.dataset.id);
+  }
   copy(cut = false) {
     const nodes = this.withContents(this.selectedNodes());
     if (!nodes.length) return false;
@@ -1723,7 +1729,14 @@ export class CanvasView extends Emitter {
     const edgeEl = e.target.closest('.edge');
     if (edgeEl && !this.hitNode(e.target)) { this.edgeMenu(edgeEl.dataset.id, e.clientX, e.clientY); return; }
     const n = this.hitNode(e.target);
-    if (n) { if (!this.selection.has(n.id)) this.select([n.id]); this.nodeMenu(n, e.clientX, e.clientY); return; }
+    if (n) {
+      // text selected inside this object (an answer in a chat): offer to copy it first
+      const sel = getSelection(), text = sel && !sel.isCollapsed ? sel.toString() : '';
+      const inside = text.trim() && this.views.get(n.id)?.el.contains(sel.anchorNode);
+      if (!this.selection.has(n.id)) this.select([n.id]);
+      this.nodeMenu(n, e.clientX, e.clientY, inside ? text : '');
+      return;
+    }
     this.emit('bgMenu', { x: e.clientX, y: e.clientY, world: this.toWorld(e.clientX, e.clientY) });
   }
 
@@ -1753,11 +1766,12 @@ export class CanvasView extends Emitter {
     ], x, y);
   }
 
-  nodeMenu(n, x, y) {
+  nodeMenu(n, x, y, selectedText = '') {
     const def = NODE_TYPES[n.type];
     const custom = def.menu ? def.menu(n, this, this.views.get(n.id)?.inst) : [];
     const multi = this.selection.size > 1;
     menu([
+      ...(selectedText ? [{ label: 'Копировать выделенный текст', icon: 'copy', kbd: 'Ctrl+C', onClick: () => { navigator.clipboard.writeText(selectedText).then(() => toast('Текст скопирован'), () => toast('Не удалось скопировать', 'error')); } }, '-'] : []),
       ...custom, custom.length ? '-' : null,
       { label: 'Приблизить', icon: 'maximize', onClick: () => multi ? this.fit([...this.selection]) : this.focusNode(n.id) },
       { label: 'Дублировать', icon: 'copy', kbd: 'Ctrl+D', onClick: () => this.duplicate() },
@@ -1780,6 +1794,9 @@ export class CanvasView extends Emitter {
     if (mod && k === 'z') { e.preventDefault(); e.shiftKey ? this.redo() : this.undo(); return true; }
     if (mod && k === 'y') { e.preventDefault(); this.redo(); return true; }
     if (mod && k === 'a') { e.preventDefault(); this.select(this.doc.nodes.map((n) => n.id)); return true; }
+    // selected text (an agent's answer, a note, a terminal-free panel) is copied as text; objects
+    // are copied only when there is no such selection, or it is left over in an object not selected
+    if (mod && (k === 'c' || k === 'x') && this.textSelectionWins()) return false;
     if (mod && k === 'c') { if (this.copy()) { e.preventDefault(); return true; } return false; }
     if (mod && k === 'x') { if (this.copy(true)) { e.preventDefault(); return true; } return false; }
     if (mod && k === 'd') { e.preventDefault(); this.duplicate(); return true; }
