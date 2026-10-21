@@ -1,6 +1,6 @@
 // Infinite canvas engine: viewport, nodes, edges, selection, snapping, history.
 import { h, icon, uid, clamp, Emitter, isEditable, menu, deepClone, throttle, toast } from './util.js';
-import { state } from './state.js';
+import { state, native } from './state.js';
 import { NODE_TYPES } from './nodes.js';
 
 const MIN_Z = 0.08, MAX_Z = 3;
@@ -747,7 +747,26 @@ export class CanvasView extends Emitter {
     this.recomputeGroups(new Set(newIds.filter((id) => !this.node(id).parent)));
     for (const e of edges || []) if (map[e.from] && map[e.to]) this.doc.edges.push({ ...deepClone(e), id: uid('e'), from: map[e.from], to: map[e.to] });
     this.renderEdges();
+    this.forkNotes(newIds);
     return { map, newIds };
+  }
+  // a copied note gets its own .md file (same text), so the copy is a real duplicate and not a
+  // second window onto the same file that edits along with the original
+  async forkNotes(ids) {
+    const notes = ids.map((id) => this.node(id)).filter((n) => n?.type === 'note' && n.data.path);
+    if (!notes.length) return;
+    try { await (await import('./editor.js')).flushEditors(); } catch {}
+    for (const n of notes) {
+      const src = n.data.path;
+      const dir = src.includes('/') ? src.slice(0, src.lastIndexOf('/')) : '';
+      try {
+        const text = await native.vault.read(src);
+        const p = await native.vault.create(dir, src.split('/').pop().replace(/\.md$/i, ''), text);
+        if (this.node(n.id)) this.updateNode(n.id, { data: { path: p } });
+        else native.vault.remove?.(p); // the copy was undone meanwhile
+      } catch {}
+    }
+    try { (await import('./vaultIndex.js')).vaultIndex.refresh(); } catch {}
   }
   duplicate() {
     const nodes = this.withContents(this.selectedNodes());

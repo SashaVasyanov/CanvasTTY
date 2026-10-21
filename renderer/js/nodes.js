@@ -847,7 +847,15 @@ class NoteInstance {
     const n = this.view.addNode('note', { x: me.x + me.w + 80, y: me.y + siblings * 60, data: { path: note.path } }, { center: false });
     this.view.addEdge(me.id, n.id);
   }
-  update(n) { const changed = n.data.path !== this.node.data.path; this.node = n; if (changed) this.load(); }
+  // compare with the path actually loaded: this.node is the same object that was just patched
+  update(n) {
+    this.node = n;
+    const ed = this.editor;
+    if (n.data.path === ed.path) return;
+    // edits not yet written go to the new file (rename / duplicate), never back to the old one
+    if (ed.path && ed.getMarkdown() !== ed.lastSaved) { ed.save.cancel?.(); ed.path = n.data.path; ed.saveNow(); return; }
+    this.load();
+  }
   edit() { this.editor.focus(); }
   destroy() { this.offIdx(); this.editor.destroy(); }
 }
