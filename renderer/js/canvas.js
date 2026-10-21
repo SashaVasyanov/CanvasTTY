@@ -727,11 +727,16 @@ export class CanvasView extends Emitter {
     this.checkpoint();
     const b = this.bounds(payload.nodes);
     const target = at || (() => { const c = this.centerWorld(); return { x: c.x - b.w / 2, y: c.y - b.h / 2 }; })();
-    const dx = target.x - b.x, dy = target.y - b.y;
+    const { newIds } = this.insertCopies(payload.nodes, payload.edges, target.x - b.x, target.y - b.y);
+    this.select(newIds);
+    this.changed();
+  }
+  // copies of nodes (+ the edges between them) shifted by dx/dy; returns old id -> new id
+  insertCopies(srcNodes, edges = [], dx = 0, dy = 0) {
     const map = {};
     const z = this.maxZ();
     const newIds = [];
-    for (const src of payload.nodes) {
+    for (const src of srcNodes) {
       const n = deepClone(src);
       map[src.id] = n.id = uid(n.type.slice(0, 2));
       n.x = Math.round(n.x + dx); n.y = Math.round(n.y + dy); n.z = z + 1 + newIds.length; n.locked = false;
@@ -740,10 +745,9 @@ export class CanvasView extends Emitter {
     }
     for (const id of newIds) { const n = this.node(id); if (n.parent) { if (map[n.parent]) n.parent = map[n.parent]; else delete n.parent; } }
     this.recomputeGroups(new Set(newIds.filter((id) => !this.node(id).parent)));
-    for (const e of payload.edges || []) if (map[e.from] && map[e.to]) this.doc.edges.push({ ...e, id: uid('e'), from: map[e.from], to: map[e.to] });
+    for (const e of edges || []) if (map[e.from] && map[e.to]) this.doc.edges.push({ ...deepClone(e), id: uid('e'), from: map[e.from], to: map[e.to] });
     this.renderEdges();
-    this.select(newIds);
-    this.changed();
+    return { map, newIds };
   }
   duplicate() {
     const nodes = this.withContents(this.selectedNodes());
@@ -925,27 +929,45 @@ export class CanvasView extends Emitter {
 
   startMove(e) {
     const start = this.toWorld(e.clientX, e.clientY);
-    const nodes = this.selectedNodes().filter((n) => !n.locked);
+    let nodes, all, ids, orig, b0, others, movingFrames, views;
     // areas carry everything that belongs to them (nested areas included)
-    const ids = new Set(nodes.map((n) => n.id));
-    const extra = [];
-    for (const f of nodes.filter((n) => n.type === 'frame')) {
-      for (const n of this.descendants(f)) if (!ids.has(n.id) && !n.locked) { ids.add(n.id); extra.push(n); }
-    }
-    const all = [...nodes, ...extra];
-    const orig = new Map(all.map((n) => [n.id, { x: n.x, y: n.y }]));
-    const b0 = this.bounds(nodes);
-    const others = this.snapTargets(ids);
-    const movingFrames = new Set(all.filter((n) => n.type === 'frame').map((n) => n.id));
-    let moved = false, checkpointed = false, lastDx = 0, lastDy = 0, dropFrame = null;
+    const setup = (sel) => {
+      nodes = sel;
+      ids = new Set(nodes.map((n) => n.id));
+      const extra = [];
+      for (const f of nodes.filter((n) => n.type === 'frame')) {
+        for (const n of this.descendants(f)) if (!ids.has(n.id) && !n.locked) { ids.add(n.id); extra.push(n); }
+      }
+      all = [...nodes, ...extra];
+      orig = new Map(all.map((n) => [n.id, { x: n.x, y: n.y }]));
+      b0 = this.bounds(nodes);
+      others = this.snapTargets(ids);
+      movingFrames = new Set(all.filter((n) => n.type === 'frame').map((n) => n.id));
+      // during the drag nodes are moved by a composited transform; left/top are written once at the end
+      views = all.map((n) => this.views.get(n.id)).filter(Boolean);
+    };
+    setup(this.selectedNodes().filter((n) => !n.locked));
+    let moved = false, checkpointed = false, duplicated = false, fresh = false, lastDx = 0, lastDy = 0, dropFrame = null;
     const setDrop = (f) => {
       if (dropFrame === f) return;
       if (dropFrame) this.views.get(dropFrame.id)?.el.classList.remove('drop-target');
       dropFrame = f;
       if (f) this.views.get(f.id)?.el.classList.add('drop-target');
     };
-    // during the drag nodes are moved by a composited transform; left/top are written once at the end
-    const views = all.map((n) => this.views.get(n.id)).filter(Boolean);
+    // Alt + drag (like Figma): the originals stay where they were, copies follow the cursor
+    const duplicateNow = () => {
+      duplicated = true;
+      for (const v of views) { v.el.classList.remove('dragged'); v.el.style.transform = ''; }
+      for (const n of all) { const o = orig.get(n.id); n.x = o.x; n.y = o.y; }
+      const edges = this.doc.edges.filter((ed) => ids.has(ed.from) && ids.has(ed.to));
+      const { map } = this.insertCopies(all, edges, 0, 0);
+      this.updateEdgesFor(ids);
+      const copies = nodes.map((n) => this.node(map[n.id])).filter(Boolean);
+      setup(copies);
+      this.select(copies.map((n) => n.id));
+      for (const v of views) v.el.classList.add('dragged');
+      fresh = true;
+    };
     this.dragging = {
       kind: 'move',
       move: (ev) => {
@@ -958,12 +980,14 @@ export class CanvasView extends Emitter {
           for (const v of views) v.el.classList.add('dragged');
         }
         moved = true;
+        if (!duplicated && (ev.altKey || e.altKey) && nodes.length) duplicateNow();
         if (ev.shiftKey) { if (Math.abs(dx) > Math.abs(dy)) dy = 0; else dx = 0; }
-        const snapped = ev.altKey ? { dx, dy, gx: [], gy: [] } : this.snapMove(b0, dx, dy, others);
+        const free = ev.ctrlKey || ev.metaKey;
+        const snapped = free ? { dx, dy, gx: [], gy: [] } : this.snapMove(b0, dx, dy, others);
         dx = Math.round(snapped.dx); dy = Math.round(snapped.dy);
         this.drawGuides(snapped.gx, snapped.gy);
-        if (dx === lastDx && dy === lastDy) return;
-        lastDx = dx; lastDy = dy;
+        if (dx === lastDx && dy === lastDy && !fresh) return;
+        fresh = false; lastDx = dx; lastDy = dy;
         const tf = `translate3d(${dx}px, ${dy}px, 0)`;
         for (const v of views) v.el.style.transform = tf;
         for (const n of all) { const o = orig.get(n.id); n.x = o.x + dx; n.y = o.y + dy; }
