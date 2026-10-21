@@ -161,6 +161,15 @@ export class CanvasView extends Emitter {
     this._movT = setTimeout(() => {
       this._moving = false;
       this.root.classList.remove('vp-moving');
+      // a fractional offset makes the GPU sample the world between pixels: blurry text.
+      // Snap the resting view to the device pixel grid (invisible, < half a pixel).
+      const dpr = window.devicePixelRatio || 1;
+      const sx = Math.round(this.vp.x * dpr) / dpr, sy = Math.round(this.vp.y * dpr) / dpr;
+      if (sx !== this.vp.x || sy !== this.vp.y) {
+        this.vp.x = sx; this.vp.y = sy;
+        this.world.style.transform = `translate3d(${sx}px, ${sy}px, 0) scale(${this.vp.z})`;
+        this.saveViewport();
+      }
       this.root.style.setProperty('--z', this.vp.z);
       const lod = this.vp.z < (state.settings.lodZoom || 0.5);
       if (lod !== this.lod) this.setLod(lod);
@@ -168,14 +177,11 @@ export class CanvasView extends Emitter {
       this.updateGridTile();
       this.positionBg();
       this.updateOverlay();
-      // a zoom gesture leaves the world rastered at the old scale: drop the layer for one
-      // frame to get crisp text, then promote it again so the next pan starts instantly
-      if (this._zoomedSinceRest) {
-        this._zoomedSinceRest = false;
-        this.root.classList.remove('world-layer');
-        clearTimeout(this._wlT);
-        this._wlT = setTimeout(() => { if (!this._moving) this.root.classList.add('world-layer'); }, 350);
-      }
+      // at rest the world has no will-change: Chromium then re-rasters it at the exact current
+      // scale (crisp text at any zoom). It stays a composited layer thanks to translate3d, so the
+      // next pan/zoom starts without re-rasterising; will-change is added again by markMoving().
+      this._zoomedSinceRest = false;
+      this.root.classList.remove('world-layer');
     }, 160);
   }
 
