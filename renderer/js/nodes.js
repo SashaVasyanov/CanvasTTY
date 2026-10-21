@@ -834,7 +834,7 @@ class NoteInstance {
   constructor({ node, view, body }) {
     this.node = node; this.view = view; this.body = body;
     this.editor = new RichEditor({
-      compact: true,
+      compact: true, bubble: true,
       extraButtons: [{ icon: 'sidebarRight', title: 'Открыть в боковом редакторе', onClick: () => bus.emit('openNotePath', this.node.data.path) }],
     });
     this.missing = h('div', { class: 'note-missing', style: { display: 'none' } });

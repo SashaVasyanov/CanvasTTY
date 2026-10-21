@@ -376,7 +376,14 @@ svg.guides line { stroke: #ff5ca8; stroke-width: 1; }
 .aa { font-weight: 700; font-size: 14px; letter-spacing: -0.02em; font-family: Georgia, "Times New Roman", serif; }
 .tb-sep { width: 1px; height: 18px; background: var(--line-2); margin: 0 4px; flex: none; }
 .tb-flex { flex: 1; }
-.rich-editor.compact .tb-inline { display: none; }
+.tb-hidden { display: none !important; }
+/* format bar over selected text in a note on the canvas */
+.fmt-bubble { position: fixed; z-index: 9500; display: flex; align-items: center; gap: 1px; padding: 4px; background: var(--pb-bg); -webkit-backdrop-filter: blur(20px) saturate(1.6); backdrop-filter: blur(20px) saturate(1.6); border: 1px solid var(--line-2); border-radius: 12px; box-shadow: var(--shadow); user-select: none; animation: fade 0.12s; }
+.fb-btn { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; color: var(--text-2); }
+.fb-btn:hover { background: rgba(var(--fg-rgb), 0.09); color: var(--text-strong); }
+.fb-btn.on { background: rgba(var(--fg-rgb), 0.14); color: var(--text-strong); }
+.fb-btn .aa { font-size: 14px; }
+.fb-sep { width: 1px; height: 18px; background: var(--line-2); margin: 0 3px; }
 /* note font & size */
 .ns-fontbtn { width: auto !important; max-width: 128px; display: inline-flex !important; align-items: center; gap: 3px; padding: 0 6px !important; font-size: 12.5px; color: var(--text-2); }
 .ns-fontbtn.on { color: var(--text-strong); }
@@ -961,8 +968,8 @@ svg.pencil-live { position: absolute; left: 0; top: 0; width: 1px; height: 1px; 
 .pb-swatch { width: 26px; height: 26px; padding: 0; border-radius: 50%; display: grid; place-items: center; position: relative; }
 .pb-dot { width: 22px; height: 22px; border-radius: 50%; display: block; box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.25); transition: transform 0.12s; }
 .pb-swatch:hover .pb-dot { transform: scale(1.08); }
-.pb-swatch.on::after { content: ''; position: absolute; inset: -1px; border-radius: 50%; box-shadow: 0 0 0 2px var(--pen-auto); }
-.pb-swatch.on .pb-dot { transform: scale(0.78); }
+.pb-swatch.on:not(.pb-spectrum) .pb-dot { padding: 3px; border: 2px solid var(--sw, var(--pen-auto)); background-clip: content-box !important; box-shadow: none; }
+.pb-swatch.on.auto .pb-dot { box-shadow: none; }
 .pb-swatch.auto .pb-dot { box-shadow: inset 0 0 0 1px rgba(var(--fg-rgb), 0.25); }
 .pb-spectrum .pb-dot { background: conic-gradient(from 90deg, #ff3b30, #ff9500, #ffcc00, #34c759, #5ac8fa, #007aff, #af52de, #ff2d55, #ff3b30) !important; }
 .pb-spectrum.on .pb-dot { background: radial-gradient(circle, var(--cur) 0 46%, transparent 48%), conic-gradient(from 90deg, #ff3b30, #ff9500, #ffcc00, #34c759, #5ac8fa, #007aff, #af52de, #ff2d55, #ff3b30) !important; transform: none; }
@@ -1102,6 +1109,7 @@ button.wg-day.marked:hover { background: color-mix(in srgb, var(--dc) 34%, trans
 .wg-daycolors { display: flex; align-items: center; gap: 4px; margin: 10px 0 2px; }
 .wg-daycolors .pb-swatch { width: 26px; height: 26px; }
 .wg-daycolors .pb-dot { width: 20px; height: 20px; }
+.wg-nocolor { --sw: var(--text-2); }
 .wg-nocolor .pb-dot { background: linear-gradient(135deg, transparent calc(50% - 1px), var(--red) calc(50% - 1px), var(--red) calc(50% + 1px), transparent calc(50% + 1px)) !important; box-shadow: inset 0 0 0 1.5px rgba(var(--fg-rgb), 0.3); }
 .wg-dayfoot { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
 /* countdown */

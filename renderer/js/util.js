@@ -204,6 +204,7 @@ export function menu(items, x, y, opts = {}) {
 }
 function buildMenu(items) {
   const m = h('div', { class: 'menu' });
+  m.addEventListener('mousedown', (e) => e.preventDefault()); // a menu never takes the focus (text selection in an editor stays)
   for (const it of items) {
     if (!it) continue;
     if (it === '-') { m.append(h('div', { class: 'menu-sep' })); continue; }

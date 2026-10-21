@@ -1,9 +1,9 @@
 // Rich markdown editor with an Apple Notes–style toolbar. Files stay plain Markdown (Obsidian compatible).
-import { h, icon, debounce, menu, prompt, toast, esc, readFileAsDataURL, Emitter, keyName } from './util.js';
+import { h, icon, debounce, menu, closeMenu, prompt, toast, esc, readFileAsDataURL, Emitter, keyName } from './util.js';
 import { mdToHtml, htmlToMd, splitFrontmatter } from './md.js';
 import { native } from './state.js';
 import { vaultIndex } from './vaultIndex.js';
-import { noteStyles, fontPicker, sizeControl, stackOf } from './notestyle.js';
+import { noteStyles, fontPicker, sizeControl, stackOf, NOTE_SIZES } from './notestyle.js';
 
 document.execCommand('defaultParagraphSeparator', false, 'p');
 
@@ -14,7 +14,7 @@ const LIVE_EDITORS = new Set();
 export async function flushEditors() { await Promise.all([...LIVE_EDITORS].map((e) => { e.save.cancel?.(); return e.saveNow().catch(() => {}); })); }
 
 export class RichEditor extends Emitter {
-  constructor({ compact = false, extraButtons = [], placeholder = 'Начните писать…' } = {}) {
+  constructor({ compact = false, extraButtons = [], placeholder = 'Начните писать…', bubble = false } = {}) {
     super();
     this.compact = compact;
     this.path = null;
@@ -28,16 +28,24 @@ export class RichEditor extends Emitter {
     this.offStyles = noteStyles.on('change', (p) => { if (!p || p === this.path) this.applyStyle(); });
     LIVE_EDITORS.add(this);
     this.bind();
+    // buttons that do not fit go into the "⋯" menu (narrow side panel, small notes on the canvas)
+    this.fitSoon = () => { cancelAnimationFrame(this._fitRaf); this._fitRaf = requestAnimationFrame(() => this.fitToolbar()); };
+    this.ro = new ResizeObserver(this.fitSoon);
+    this.ro.observe(this.toolbar);
+    if (bubble) this.initBubble();
   }
 
   // ---------------- toolbar ----------------
   buildToolbar(extra) {
     const tb = h('div', { class: 'note-toolbar' });
-    const btn = (name, title, fn, cls = '') => {
+    // prio: what hides first when the toolbar is too narrow (lower = earlier); extras never hide
+    this.tbItems = [];
+    const reg = (el, prio, label, ic, run, children) => { this.tbItems.push({ el, prio, label, icon: ic, run, children }); return el; };
+    const btn = (name, title, fn, cls = '', prio = Infinity, label = title.replace(/\s*\(.*\)$/, '')) => {
       const b = h('button', { class: `tb-btn ${cls}`, title, html: icon(name, 17) });
       b.addEventListener('mousedown', (e) => e.preventDefault()); // keep selection
       b.addEventListener('click', (e) => { this.content.focus(); fn(e, b); });
-      return b;
+      return reg(b, prio, label, name, () => { this.content.focus(); fn(null, this.moreBtn); });
     };
     const aa = h('button', { class: 'tb-btn tb-aa', title: 'Стиль текста' }, h('span', { class: 'aa' }, 'Aa'));
     aa.addEventListener('mousedown', (e) => e.preventDefault());
@@ -45,33 +53,127 @@ export class RichEditor extends Emitter {
     // font and size of this note
     this.fontBtn = h('button', { class: 'tb-btn ns-fontbtn', title: 'Шрифт заметки' }, h('span', { class: 'ns-fontname' }, 'Шрифт'), h('span', { class: 'ns-caret', html: icon('chevronDown', 11) }));
     this.fontBtn.addEventListener('mousedown', (e) => e.preventDefault());
-    this.fontBtn.addEventListener('click', () => { if (this.path) fontPicker(this.fontBtn, noteStyles.get(this.path).font || '', (f) => noteStyles.set(this.path, { font: f })); });
+    const pickFont = (anchor) => { if (this.path) fontPicker(anchor, noteStyles.get(this.path).font || '', (f) => noteStyles.set(this.path, { font: f })); };
+    this.fontBtn.addEventListener('click', () => pickFont(this.fontBtn));
+    reg(this.fontBtn, 9, 'Шрифт заметки…', 'text', () => pickFont(this.moreBtn));
     this.sizeCtl = sizeControl({
       get: () => (this.path ? noteStyles.get(this.path).size : 0),
       placeholder: () => (this.content?.isConnected ? Math.round(parseFloat(getComputedStyle(this.content).fontSize) || 14) : ''),
       onSet: (n) => { if (this.path) noteStyles.set(this.path, { size: n }); },
     });
+    const sizeItems = () => [{ label: 'По умолчанию', checked: !(this.path && noteStyles.get(this.path).size), onClick: () => this.path && noteStyles.set(this.path, { size: 0 }) }, '-',
+      ...NOTE_SIZES.map((n) => ({ label: String(n), checked: !!this.path && noteStyles.get(this.path).size === n, onClick: () => this.path && noteStyles.set(this.path, { size: n }) }))];
+    reg(this.sizeCtl.el, 8, 'Размер шрифта', null, null, sizeItems);
+    this.moreBtn = h('button', { class: 'tb-btn tb-more tb-hidden', title: 'Ещё', html: icon('more', 17) });
+    this.moreBtn.addEventListener('mousedown', (e) => e.preventDefault());
+    this.moreBtn.addEventListener('click', () => {
+      const r = this.moreBtn.getBoundingClientRect();
+      const hidden = this.tbItems.filter((it) => it.el.classList.contains('tb-hidden'));
+      menu(hidden.map((it) => (it.children ? { label: it.label, icon: it.icon, children: it.children() } : { label: it.label, icon: it.icon, onClick: it.run })), r.left, r.bottom + 6, { minWidth: 210 });
+    });
     tb.append(
       aa,
       this.fontBtn, this.sizeCtl.el,
       h('span', { class: 'tb-sep' }),
-      btn('checklist', 'Чек-лист (Ctrl+Shift+L)', () => this.toggleChecklist()),
-      btn('table', 'Таблица', (e, b) => this.tableMenu(b)),
-      btn('paperclip', 'Вложение (изображение)', () => this.attach()),
+      btn('checklist', 'Чек-лист (Ctrl+Shift+L)', () => this.toggleChecklist(), '', 5),
+      btn('table', 'Таблица', (e, b) => this.tableMenu(b), '', 4),
+      btn('paperclip', 'Вложение (изображение)', () => this.attach(), '', 4),
       h('span', { class: 'tb-sep' }),
-      btn('bold', 'Жирный (Ctrl+B)', () => this.cmd('bold'), 'tb-inline'),
-      btn('italic', 'Курсив (Ctrl+I)', () => this.cmd('italic'), 'tb-inline'),
-      btn('underline', 'Подчёркнутый (Ctrl+U)', () => this.cmd('underline'), 'tb-inline'),
-      btn('strike', 'Зачёркнутый', () => this.cmd('strikeThrough'), 'tb-inline'),
-      btn('highlight', 'Выделение маркером', () => this.toggleMark(), 'tb-inline'),
-      btn('link', 'Ссылка или [[заметка]] (Ctrl+K)', () => this.insertLink()),
+      btn('bold', 'Жирный (Ctrl+B)', () => this.cmd('bold'), 'tb-inline', 7),
+      btn('italic', 'Курсив (Ctrl+I)', () => this.cmd('italic'), 'tb-inline', 6),
+      btn('underline', 'Подчёркнутый (Ctrl+U)', () => this.cmd('underline'), 'tb-inline', 4),
+      btn('strike', 'Зачёркнутый', () => this.cmd('strikeThrough'), 'tb-inline', 3),
+      btn('highlight', 'Выделение маркером', () => this.toggleMark(), 'tb-inline', 3),
+      btn('link', 'Ссылка или [[заметка]] (Ctrl+K)', () => this.insertLink(), '', 2),
       h('span', { class: 'tb-sep tb-inline' }),
-      btn('undo', 'Отменить', () => this.cmd('undo'), 'tb-inline'),
-      btn('redo', 'Повторить', () => this.cmd('redo'), 'tb-inline'),
+      btn('undo', 'Отменить', () => this.cmd('undo'), 'tb-inline', 1),
+      btn('redo', 'Повторить', () => this.cmd('redo'), 'tb-inline', 1),
+      this.moreBtn,
       h('span', { class: 'tb-flex' }),
       ...extra.map((x) => { const b = btn(x.icon, x.title, x.onClick, x.cls || ''); if (x.label) b.append(h('span', { class: 'tb-label' }, x.label)); return b; }),
     );
     return tb;
+  }
+
+  fitToolbar() {
+    const tb = this.toolbar;
+    if (!tb.isConnected || !tb.offsetWidth) return; // hidden (a note on the canvas that is not selected)
+    const fits = () => tb.scrollWidth <= tb.clientWidth + 1;
+    for (const it of this.tbItems) it.el.classList.remove('tb-hidden');
+    this.moreBtn.classList.add('tb-hidden');
+    this.cleanSeps();
+    if (fits()) return;
+    this.moreBtn.classList.remove('tb-hidden');
+    for (const it of [...this.tbItems].filter((x) => Number.isFinite(x.prio)).sort((a, b) => a.prio - b.prio)) {
+      it.el.classList.add('tb-hidden');
+      this.cleanSeps();
+      if (fits()) break;
+    }
+  }
+  // no separator at the start, twice in a row or right before the flexible gap
+  cleanSeps() {
+    let prev = null;
+    for (const k of this.toolbar.children) {
+      if (k.classList.contains('tb-sep')) {
+        k.classList.remove('tb-hidden');
+        if (!prev || prev.classList.contains('tb-sep')) k.classList.add('tb-hidden'); else prev = k;
+      } else if (!k.classList.contains('tb-hidden')) {
+        if (k.classList.contains('tb-flex') && prev?.classList.contains('tb-sep')) prev.classList.add('tb-hidden');
+        prev = k;
+      }
+    }
+  }
+
+  // ---------------- floating format bar over selected text (notes on the canvas) ----------------
+  initBubble() {
+    const bar = h('div', { class: 'fmt-bubble' });
+    const b = (ic, title, fn, cmd) => {
+      const el = h('button', { class: 'fb-btn', title, html: ic === 'Aa' ? '<span class="aa">Aa</span>' : icon(ic, 16) });
+      el.addEventListener('mousedown', (e) => e.preventDefault());
+      el.addEventListener('click', (e) => { e.stopPropagation(); fn(el); this.paintBubble(); });
+      if (cmd) el.dataset.cmd = cmd;
+      return el;
+    };
+    bar.append(
+      b('Aa', 'Стиль текста: заголовки, списки', (el) => this.formatPopover(el)),
+      h('span', { class: 'fb-sep' }),
+      b('bold', 'Жирный (Ctrl+B)', () => this.cmd('bold'), 'bold'),
+      b('italic', 'Курсив (Ctrl+I)', () => this.cmd('italic'), 'italic'),
+      b('underline', 'Подчёркнутый (Ctrl+U)', () => this.cmd('underline'), 'underline'),
+      b('strike', 'Зачёркнутый', () => this.cmd('strikeThrough'), 'strikeThrough'),
+      b('highlight', 'Маркер', () => this.toggleMark()),
+      b('code', 'Код', () => this.inlineCode()),
+      h('span', { class: 'fb-sep' }),
+      b('link', 'Ссылка или [[заметка]] (Ctrl+K)', () => this.insertLink()),
+      b('checklist', 'Чек-лист', () => this.toggleChecklist()),
+    );
+    for (const ev of ['pointerdown', 'wheel']) bar.addEventListener(ev, (e) => e.stopPropagation());
+    this.bubble = bar;
+    const hide = () => bar.remove();
+    this.hideBubble = hide;
+    let raf = 0;
+    this.onSel = () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(() => this.placeBubble()); };
+    document.addEventListener('selectionchange', this.onSel);
+    this.content.addEventListener('scroll', hide, { passive: true });
+    this.content.addEventListener('blur', () => setTimeout(() => { if (document.activeElement !== this.content) hide(); }, 0));
+    this.onWheel = () => hide(); // the canvas zooms or pans under the bar
+    window.addEventListener('wheel', this.onWheel, { capture: true, passive: true });
+  }
+  placeBubble() {
+    const sel = getSelection();
+    const bar = this.bubble;
+    if (!sel.rangeCount || sel.isCollapsed || !this.content.contains(sel.anchorNode) || document.activeElement !== this.content || this.ac) { bar.remove(); return; }
+    const r = sel.getRangeAt(0).getBoundingClientRect();
+    if (!r.width && !r.height) { bar.remove(); return; }
+    if (!bar.isConnected) document.body.append(bar);
+    this.paintBubble();
+    const bw = bar.offsetWidth, bh = bar.offsetHeight;
+    const x = Math.max(8, Math.min(r.left + r.width / 2 - bw / 2, innerWidth - bw - 8));
+    const y = r.top - bh - 10 > 8 ? r.top - bh - 10 : r.bottom + 10;
+    bar.style.left = `${x}px`; bar.style.top = `${Math.min(y, innerHeight - bh - 8)}px`;
+  }
+  paintBubble() {
+    for (const el of this.bubble?.querySelectorAll('[data-cmd]') || []) { let on = false; try { on = document.queryCommandState(el.dataset.cmd); } catch {} el.classList.toggle('on', on); }
   }
 
   formatPopover(anchor) {
@@ -543,5 +645,9 @@ export class RichEditor extends Emitter {
   }
 
   focus() { this.content.focus(); }
-  destroy() { this.save.flush(); this.offStyles?.(); LIVE_EDITORS.delete(this); this.closeAc(); this.el.remove(); }
+  destroy() {
+    this.save.flush(); this.offStyles?.(); LIVE_EDITORS.delete(this); this.closeAc(); this.ro?.disconnect();
+    if (this.bubble) { this.bubble.remove(); document.removeEventListener('selectionchange', this.onSel); window.removeEventListener('wheel', this.onWheel, { capture: true }); }
+    this.el.remove();
+  }
 }

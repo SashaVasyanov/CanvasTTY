@@ -131,6 +131,7 @@ export function popover(anchor, cls, build, { above = true, onClose } = {}) {
 export function swatch(c, on, onClick, title = colorName(c)) {
   const b = h('button', { class: `pb-swatch${on ? ' on' : ''}${c === 'auto' ? ' auto' : ''}`, title, onclick: (e) => { e.stopPropagation(); onClick(c); } }, h('span', { class: 'pb-dot' }));
   b.firstChild.style.background = cssColor(c);
+  b.style.setProperty('--sw', cssColor(c));
   return b;
 }
 export function spectrumButton(current, onPick, onOpen, { base = BAR_COLORS, grid, onClose } = {}) {
