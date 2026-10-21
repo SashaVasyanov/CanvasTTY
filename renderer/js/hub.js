@@ -1,4 +1,5 @@
 // The "agents hub" widget from the reference screenshot: limits, statuses, clock, pet, launch dock.
+import { safeUrl } from './sanitize.js';
 import { h, icon, badge, bus, relTime, Emitter, esc, modal, toast, menu, confirmBox } from './util.js';
 import { state, native } from './state.js';
 import { SpritePet, codexPets, codexPetFor, isCodexKind, loadCodexPets, PET_ROWS } from './companion.js';
@@ -209,11 +210,11 @@ export function currentPet() {
 function petImg(src, mood, own) {
   // single-image pets get their mood from animation + overlay
   const fx = own ? '' : '<span class="pet-fx"></span>';
-  return `<div class="pet-svg pet-wrap ${mood}${own ? ' own' : ''}"><img src="${src}" alt="" draggable="false">${fx}</div>`;
+  return `<div class="pet-svg pet-wrap ${mood}${own ? ' own' : ''}"><img src="${esc(safeUrl(src, { image: true }))}" alt="" draggable="false">${fx}</div>`;
 }
 export function petMarkup(key, mood = 'idle') {
   const cp = codexPetFor(key);
-  if (cp) return `<div class="pet-svg pet-wrap ${mood} cpet-static" style="background-image:url('${cp.url}');background-size:800% ${cp.rows * 100}%"></div>`;
+  if (cp) return `<div class="pet-svg pet-wrap ${mood} cpet-static" style="background-image:url('${esc(safeUrl(cp.url, { image: true }))}');background-size:800% ${Number(cp.rows) * 100 || 900}%"></div>`;
   if (isCodexKind(key)) key = 'blondie';
   const p = PETS[key] || PETS.blondie;
   if (p === PETS.custom) {
@@ -293,7 +294,7 @@ export function openPetPicker() {
     const slot = (key, label) => {
       const has = !!s[key];
       const el = h('div', { class: 'pet-slot' },
-        h('div', { class: 'pet-slot-img', html: has ? `<img src="${s[key]}" alt="">` : icon('plus', 22) }),
+        h('div', { class: 'pet-slot-img', html: has ? `<img src="${esc(safeUrl(s[key], { image: true }))}" alt="">` : icon('plus', 22) }),
         h('div', { class: 'pet-slot-label' }, label),
         h('div', { class: 'row' },
           h('button', { class: 'btn sm', onclick: async () => {

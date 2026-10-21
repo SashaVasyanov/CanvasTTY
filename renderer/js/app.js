@@ -398,6 +398,7 @@ class App {
     if (name == null) return;
     const p = await native.vault.create('', name || 'Без названия', '');
     await vaultIndex.refresh();
+    this.canvas.forks.add(p);
     const n = this.place('note', { world, from, data: { path: p } });
     setTimeout(() => this.canvas.views.get(n.id)?.inst?.edit?.(), 150);
   }
@@ -824,11 +825,13 @@ class App {
 
   settings_agents(s) {
     const wrap = h('div', {});
+    // commands typed here on this computer are allowed to run without asking (synced changes are asked about)
+    const trustAgent = (a) => native.trust?.add([[a.cmd, a.args].filter(Boolean).join(' '), [a.cmd, a.resumeArgs].filter(Boolean).join(' '), a.cmd ? `agentchat:${a.cmd}` : ''].filter(Boolean));
     const render = () => {
       wrap.innerHTML = '';
       wrap.append(h('p', { class: 'muted' }, 'Агенты запускаются в терминале внутри окна на canvas, в рабочей папке проекта. На Windows команда выполняется через PowerShell, поэтому подходят npm-команды вроде codex, claude, gemini.'));
       for (const a of s.agents) {
-        const f = (key, ph, w) => { const i = h('input', { class: 'input sm', value: a[key] || '', placeholder: ph, style: { width: w } }); i.onchange = () => { a[key] = i.value; state.saveWs(); state.emit('settings', 'agents'); if (key === 'mono' || key === 'color') render(); }; return i; };
+        const f = (key, ph, w) => { const i = h('input', { class: 'input sm', value: a[key] || '', placeholder: ph, style: { width: w } }); i.onchange = () => { a[key] = i.value; if (['cmd', 'args', 'resumeArgs'].includes(key)) trustAgent(a); state.saveWs(); state.emit('settings', 'agents'); if (key === 'mono' || key === 'color') render(); }; return i; };
         const color = h('input', { type: 'color', value: a.color || '#5b7cfa', class: 'color-in' });
         color.onchange = () => { a.color = color.value; state.saveWs(); state.emit('settings', 'agents'); render(); };
         const check = h('span', { class: 'muted small agent-check' }, '');

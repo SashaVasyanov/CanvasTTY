@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, protocol, net, shell, dialog, Menu, clipboard, nativeImage, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, protocol, net, shell, dialog, Menu, clipboard, nativeImage, screen, session } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const fsp = fs.promises;
@@ -43,14 +43,27 @@ protocol.registerSchemesAsPrivileged([
 ]);
 
 const RENDERER = path.join(__dirname, '..', 'renderer');
+// Only web and mail links go to the OS. Other schemes (file:, smb:, search-ms:, ms-msdt:, custom
+// app handlers) can start programs on Windows and must never come from a note, a page or the model.
+function safeExternal(url) {
+  let u;
+  try { u = new URL(String(url || '')); } catch { return false; }
+  if (!['http:', 'https:', 'mailto:'].includes(u.protocol)) return false;
+  shell.openExternal(u.toString());
+  return true;
+}
 let win = null;
 let userData, wsFile, canvasDir, usageFile, sync = null;
 let usageLog = {};
 
 const send = (channel, payload) => { if (win && !win.isDestroyed()) win.webContents.send(channel, payload); };
 const ptys = new PtyManager({ userData: app.getPath('userData'), send });
+const { Trust } = require('./trust');
+const trust = new Trust({ userData: app.getPath('userData'), getWin: () => win });
+ptys.trust = trust;
 const vault = new Vault({ send });
 const agentChat = new AgentChatManager({ send, ptys, userData: app.getPath('userData'), attachments });
+agentChat.trust = trust;
 const chat = new ChatManager({
   attachments, nativeImage,
   send,
@@ -76,9 +89,9 @@ function readJsonSync(file, fallback) {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return fallback; }
 }
 
+const { encodeWs, decodeWs } = require('./secrets');
 function loadWorkspace() {
-  const ws = readJsonSync(wsFile, null);
-  return ws;
+  return decodeWs(readJsonSync(wsFile, null));
 }
 
 function ensureVault(ws) {
@@ -145,12 +158,31 @@ function createWindow() {
   });
   win.on('maximize', () => send('win:state', { maximized: true }));
   win.on('unmaximize', () => send('win:state', { maximized: false }));
-  win.webContents.setWindowOpenHandler(({ url }) => { shell.openExternal(url); return { action: 'deny' }; });
-  win.webContents.on('will-navigate', (e, url) => { if (!url.startsWith('app://')) { e.preventDefault(); shell.openExternal(url); } });
+  win.webContents.setWindowOpenHandler(({ url }) => { safeExternal(url); return { action: 'deny' }; });
+  win.webContents.on('will-navigate', (e, url) => { if (!url.startsWith('app://')) { e.preventDefault(); safeExternal(url); } });
+  // web pages on the canvas (<webview>): no node, no preload, own sandbox, http(s) only
+  win.webContents.on('will-attach-webview', (e, prefs, params) => {
+    delete prefs.preload;
+    Object.assign(prefs, { nodeIntegration: false, nodeIntegrationInSubFrames: false, contextIsolation: true, sandbox: true, webSecurity: true, allowRunningInsecureContent: false });
+    if (!/^https?:\/\//i.test(params.src || '')) e.preventDefault();
+  });
   if (process.argv.includes('--devtools')) win.webContents.openDevTools({ mode: 'detach' });
 }
 
+// Permissions: the app itself may use what it needs; web pages on the canvas get nothing that
+// touches the camera, microphone, location, screen, files or devices.
+const PAGE_OK = new Set(['fullscreen', 'clipboard-sanitized-write']);
+const isAppUrl = (u) => String(u || '').startsWith('app://');
+// guests (<webview> pages): popups go to the browser (web links only), no navigation to other schemes
+app.on('web-contents-created', (e, contents) => {
+  if (contents.getType() !== 'webview') return;
+  contents.setWindowOpenHandler(({ url }) => { safeExternal(url); return { action: 'deny' }; });
+  contents.on('will-navigate', (ev, url) => { if (!/^https?:\/\//i.test(url)) ev.preventDefault(); });
+});
+
 app.whenReady().then(() => {
+  session.defaultSession.setPermissionRequestHandler((wc, permission, cb, details) => cb(isAppUrl(details?.requestingUrl || wc?.getURL?.()) || PAGE_OK.has(permission)));
+  session.defaultSession.setPermissionCheckHandler((wc, permission, origin) => isAppUrl(origin) || isAppUrl(wc?.getURL?.()) || PAGE_OK.has(permission));
   userData = app.getPath('userData');
   wsFile = path.join(userData, 'workspace.json');
   canvasDir = path.join(userData, 'canvases');
@@ -176,7 +208,7 @@ app.whenReady().then(() => {
       return net.fetch(pathToFileURL(file).toString());
     }
     const file = path.join(RENDERER, path.normalize(p));
-    if (!file.startsWith(RENDERER)) return new Response('forbidden', { status: 403 });
+    if (!file.startsWith(RENDERER + path.sep)) return new Response('forbidden', { status: 403 });
     return net.fetch(pathToFileURL(file).toString());
   });
 
@@ -194,7 +226,7 @@ app.whenReady().then(() => {
   ipcMain.handle('perf:save', (e, report) => {
     const txt = JSON.stringify(report, null, 2);
     const out = [];
-    for (const f of [path.join(app.getAppPath(), 'perf-report.json'), path.join(userData, 'perf-report.json')]) {
+    for (const f of [path.join(userData, 'perf-report.json')]) {
       try { fs.writeFileSync(f, txt); out.push(f); } catch {}
     }
     return out[0] || '';
@@ -203,13 +235,15 @@ app.whenReady().then(() => {
 
   // ---------- storage ----------
   ipcMain.handle('ws:load', () => loadWorkspace());
-  ipcMain.handle('ws:save', async (e, ws) => { await writeJson(wsFile, ws); sync?.localChanged('workspace', 'workspace', ws); });
+  ipcMain.handle('ws:save', async (e, ws) => { await writeJson(wsFile, encodeWs(ws)); sync?.localChanged('workspace', 'workspace', ws); });
   ipcMain.handle('canvas:load', (e, id) => readJsonSync(path.join(canvasDir, `${id}.json`), null));
   ipcMain.handle('canvas:save', async (e, id, data) => { await writeJson(path.join(canvasDir, `${id}.json`), data); sync?.localChanged('canvas', id, data); });
   ipcMain.handle('canvas:delete', async (e, id) => { try { await fsp.unlink(path.join(canvasDir, `${id}.json`)); } catch {} sync?.localDeleted('canvas', id); });
 
   // ---------- pty ----------
   ipcMain.handle('pty:spawn', (e, opts) => ptys.spawn(opts));
+  // commands typed in Settings on this computer (not from sync) are trusted
+  ipcMain.handle('trust:add', (e, keys) => { trust.add(keys); return true; });
   ipcMain.on('pty:write', (e, id, data) => ptys.write(id, data));
   ipcMain.on('pty:resize', (e, id, cols, rows) => ptys.resize(id, cols, rows));
   ipcMain.handle('pty:kill', (e, id) => ptys.kill(id));
@@ -230,7 +264,7 @@ app.whenReady().then(() => {
   // ---------- chat history ----------
   const history = new HistoryStore(path.join(userData, 'chats'));
   // ---------- sync between computers ----------
-  sync = new SyncManager({ userData, wsFile, canvasDir, history, send });
+  sync = new SyncManager({ userData, wsFile, canvasDir, history, send, encodeWs, decodeWs });
   history.onChange = (op, v) => (op === 'save' ? sync.localChanged('chat', v.id, v) : sync.localDeleted('chat', v));
   ipcMain.handle('sync:info', () => sync.info());
   ipcMain.handle('sync:configure', (e, patch) => sync.configure(patch || {}));
@@ -281,8 +315,9 @@ app.whenReady().then(() => {
     const r = await dialog.showOpenDialog(win, { title: title || 'Выберите папку', properties: ['openDirectory', 'createDirectory'] });
     return r.canceled ? null : r.filePaths[0];
   });
-  ipcMain.handle('shell:open', (e, url) => shell.openExternal(url));
-  ipcMain.handle('shell:openPath', (e, p) => shell.openPath(p));
+  ipcMain.handle('shell:open', (e, url) => safeExternal(url));
+  // folders only (opening a file could run it)
+  ipcMain.handle('shell:openPath', (e, p) => { try { if (fs.statSync(String(p)).isDirectory()) return shell.openPath(String(p)); } catch {} return 'Можно открыть только папку'; });
   ipcMain.handle('clipboard:write', (e, text) => clipboard.writeText(text));
 
   createWindow();

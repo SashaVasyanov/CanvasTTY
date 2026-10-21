@@ -1,5 +1,6 @@
 // Markdown <-> HTML for the notes editor (Obsidian flavoured) and safe rendering for chats.
 import { esc } from './util.js';
+import { sanitizeHtml } from './sanitize.js';
 
 const M = window.marked;
 
@@ -85,7 +86,8 @@ export function mdToHtml(md) {
   tpl.content.querySelectorAll('li > p:only-child').forEach((p) => { while (p.firstChild) p.parentNode.insertBefore(p.firstChild, p); p.remove(); });
   tpl.content.querySelectorAll('a:not(.wikilink)').forEach((a) => a.setAttribute('target', '_blank'));
   tpl.content.querySelectorAll('input').forEach((i) => i.remove());
-  return tpl.innerHTML;
+  // raw HTML in a note (shared vault, Obsidian) must not be able to run code
+  return sanitizeHtml(tpl.innerHTML);
 }
 
 // ---------------- notes: html -> md ----------------

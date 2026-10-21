@@ -101,6 +101,16 @@ class PtyManager {
     const id = `pty_${Date.now().toString(36)}_${(this.seq++).toString(36)}`;
     const session = { id, cmd, buffer: '', exited: false, exitCode: null, lastOutput: 0, proc: null, notFound: false };
     this.sessions.set(id, session);
+    cmd = String(cmd || '').trim();
+    args = (Array.isArray(args) ? args : []).map((a) => String(a));
+    env = undefined; // the environment is never taken from the renderer
+    if (this.trust && !(await this.trust.ensure(require('./trust').Trust.line(cmd, args), { cwd: safeCwd(cwd) }))) {
+      session.exited = true; session.exitCode = -1;
+      const msg = '\r\n\x1b[33mЗапуск отменён: команда не разрешена.\x1b[0m\r\n';
+      session.buffer += msg;
+      setTimeout(() => { this.send('pty:data', { id, data: msg }); this.send('pty:exit', { id, code: -1 }); }, 50);
+      return { id, error: 'cancelled' };
+    }
 
     if (cmd && !this.which(cmd)) {
       session.notFound = true;

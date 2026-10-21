@@ -32,8 +32,10 @@ function imageHeight(buf) {
 }
 
 // minimal ZIP reader (stored + deflate), enough for .codex-pet.zip packages
+const MAX_ENTRY = 24 * 1024 * 1024, MAX_TOTAL = 48 * 1024 * 1024, MAX_FILES = 64; // pets are a json + one image
 function unzip(buf) {
   const files = {};
+  let total = 0;
   // central directory is authoritative (local headers may defer sizes to a data descriptor)
   let eocd = buf.length - 22;
   while (eocd >= 0 && buf.readUInt32LE(eocd) !== 0x06054b50) eocd--;
@@ -49,7 +51,12 @@ function unzip(buf) {
     const name = buf.slice(p + 46, p + 46 + nlen).toString('utf8');
     const lnlen = buf.readUInt16LE(off + 26), lxlen = buf.readUInt16LE(off + 28);
     const data = buf.slice(off + 30 + lnlen + lxlen, off + 30 + lnlen + lxlen + csize);
-    if (!name.endsWith('/')) files[name.split('/').pop()] = method === 8 ? zlib.inflateRawSync(data) : data;
+    if (i >= MAX_FILES) throw new Error('слишком много файлов в архиве');
+    if (!name.endsWith('/')) {
+      const out = method === 8 ? zlib.inflateRawSync(data, { maxOutputLength: MAX_ENTRY }) : data;
+      if (out.length > MAX_ENTRY || (total += out.length) > MAX_TOTAL) throw new Error('архив слишком большой');
+      files[name.split('/').pop()] = out;
+    }
     p += 46 + nlen + xlen + clen;
   }
   return files;
@@ -105,7 +112,9 @@ module.exports = {
     if (url.origin !== new URL(API).origin) throw new Error('чужой адрес загрузки');
     const r = await net.fetch(url.toString(), { headers: { 'user-agent': 'CanvasTTY' } });
     if (!r.ok) throw new Error(`загрузка не удалась: ${r.status}`);
-    const files = unzip(Buffer.from(await r.arrayBuffer()));
+    const zipBuf = Buffer.from(await r.arrayBuffer());
+    if (zipBuf.length > MAX_TOTAL) throw new Error('архив слишком большой');
+    const files = unzip(zipBuf);
     if (!files['pet.json']) throw new Error('в архиве нет pet.json');
     const meta = JSON.parse(files['pet.json'].toString('utf8'));
     const sheetName = path.basename(meta.spritesheetPath || 'spritesheet.webp');

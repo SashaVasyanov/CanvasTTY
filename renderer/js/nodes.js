@@ -1,6 +1,7 @@
 // Node type definitions for the canvas.
 import { h, icon, badge, esc, bus, toast, prompt, debounce, throttle, uid, readFileAsDataURL, keyName } from './util.js';
 import { cssColor, BAR_COLORS } from './pentools.js';
+import { sanitizeHtml, htmlText } from './sanitize.js';
 import { state, native, PROVIDER_META } from './state.js';
 import { renderChatMarkdown } from './md.js';
 import { RichEditor } from './editor.js';
@@ -75,7 +76,7 @@ async function buildContextText(view, id) {
     try {
       if (n.type === 'note' && n.data.path) parts.push(`### Заметка «${n.data.path.replace(/\.md$/, '')}»\n${await native.vault.read(n.data.path)}`);
       else if (n.type === 'sticky' || n.type === 'shape') { if (n.data.text) parts.push(`### Стикер\n${n.data.text}`); }
-      else if (n.type === 'text') { const d = h('div', { html: n.data.html || '' }); if (d.textContent.trim()) parts.push(`### Текст\n${d.textContent}`); }
+      else if (n.type === 'text') { const t = htmlText(n.data.html); if (t.trim()) parts.push(`### Текст\n${t}`); }
       else if (n.type === 'chat' || n.type === 'agentchat') { const last = [...(n.data.messages || [])].reverse().find((m) => m.role === 'assistant' && m.content); if (last) parts.push(`### Ответ из чата «${NODE_TYPES[n.type].title(n)}»\n${last.content}`); }
       else if (n.type === 'terminal') { const inst = view.views.get(n.id)?.inst; const t = inst?.tailText?.(); if (t) parts.push(`### Вывод терминала «${NODE_TYPES.terminal.title(n)}» (последние строки)\n\`\`\`\n${t}\n\`\`\``); }
       else if (n.type === 'web' && n.data.url) parts.push(`### Ссылка\n${n.data.url}`);
@@ -1128,6 +1129,7 @@ export const NODE_TYPES = {
         const a = state.agent(n.data.agentId);
         const sid = n.data.sessionId;
         const extra = sid ? (n.data.kind === 'codex' ? `resume ${sid}` : `--resume ${sid}`) : '';
+        native.trust?.add([[a.cmd, a.args, extra].filter(Boolean).join(' ')]); // started by the user here
         const t = view.addNode('terminal', { x: n.x + n.w + 60, y: n.y, data: { agentId: a.id, extraArgs: extra, cwd: n.data.cwd } }, { center: false });
         view.addEdge(n.id, t.id);
       } },
@@ -1208,14 +1210,14 @@ export const NODE_TYPES = {
   text: {
     chrome: 'bare', defaultSize: { w: 320, h: 60 }, minSize: { w: 40, h: 24 },
     defaultData: () => ({ html: '', size: 20 }),
-    title: (n) => h('div', { html: n.data.html || '' }).textContent.slice(0, 30) || 'Текст',
+    title: (n) => htmlText(n.data.html).slice(0, 30) || 'Текст',
     mount: ({ node, view, body }) => {
       const txt = h('div', { class: 'free-text txt', 'data-placeholder': 'Текст' });
       body.append(txt);
       let cur = node;
-      const paint = () => { txt.innerHTML = cur.data.html || ''; txt.style.fontSize = `${cur.data.size || 20}px`; txt.classList.toggle('empty', !txt.textContent.trim()); };
+      const paint = () => { txt.innerHTML = sanitizeHtml(cur.data.html || ''); txt.style.fontSize = `${cur.data.size || 20}px`; txt.classList.toggle('empty', !txt.textContent.trim()); };
       const grow = () => { const n = view.node(cur.id); if (n && txt.scrollHeight > n.h) { n.h = txt.scrollHeight + 4; view.syncView(n); view.updateOverlay(); } };
-      const edit = editableText(txt, { html: true, onCommit: (v) => { view.updateNode(cur.id, { data: { html: v } }, { checkpoint: true, silent: true }); txt.classList.toggle('empty', !txt.textContent.trim()); } });
+      const edit = editableText(txt, { html: true, onCommit: (v) => { view.updateNode(cur.id, { data: { html: sanitizeHtml(v) } }, { checkpoint: true, silent: true }); txt.classList.toggle('empty', !txt.textContent.trim()); } });
       txt.addEventListener('input', () => { txt.classList.remove('empty'); grow(); });
       paint();
       // a new font size: fit the box height to the text (both ways)

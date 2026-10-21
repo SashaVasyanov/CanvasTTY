@@ -46,8 +46,9 @@ async function writeAtomic(file, data) {
 }
 
 class SyncManager {
-  constructor({ userData, wsFile, canvasDir, history, send }) {
+  constructor({ userData, wsFile, canvasDir, history, send, encodeWs = (x) => x, decodeWs = (x) => x }) {
     this.userData = userData; this.wsFile = wsFile; this.canvasDir = canvasDir; this.history = history; this.send = send;
+    this.encodeWs = encodeWs; this.decodeWs = decodeWs;
     this.cfgFile = path.join(userData, 'sync.json');
     this.baseDir = path.join(userData, 'sync-base'); // last version both sides agreed on, per canvas
     this.stateFile = path.join(userData, 'sync-state.json');
@@ -171,7 +172,7 @@ class SyncManager {
     let extra = {};
     if (kind === 'workspace') {
       let local = null;
-      try { local = await readJson(this.wsFile); } catch {}
+      try { local = this.decodeWs(await readJson(this.wsFile)); } catch {}
       const ws = this.mergeWorkspace(clone(env.data), local);
       ws.settings = ws.settings || {};
       const ls = local?.settings || {};
@@ -181,7 +182,7 @@ class SyncManager {
       const has = (pid, cid) => ws.projects?.some((p) => p.id === pid && (!cid || p.canvases.some((c) => c.id === cid)));
       ws.activeProjectId = local && has(local.activeProjectId, local.activeCanvasId) ? local.activeProjectId : ws.projects?.[0]?.id;
       ws.activeCanvasId = local && has(local.activeProjectId, local.activeCanvasId) ? local.activeCanvasId : ws.projects?.[0]?.canvases?.[0]?.id;
-      await writeAtomic(this.wsFile, ws);
+      await writeAtomic(this.wsFile, this.encodeWs(ws));
       this.st.items[this.key(kind, id)] = { ts: env.ts, hash: env.hash };
       this.pristine = null;
       // projects that only exist here go back to the folder
@@ -266,7 +267,7 @@ class SyncManager {
         await this.localChanged(kind, id, data);
       }
     };
-    try { await push('workspace', 'workspace', this.wsFile, await readJson(this.wsFile)); } catch {}
+    try { await push('workspace', 'workspace', this.wsFile, this.decodeWs(await readJson(this.wsFile))); } catch {}
     let names = [];
     try { names = await fsp.readdir(this.canvasDir); } catch {}
     for (const n of names) if (n.endsWith('.json')) { const f = path.join(this.canvasDir, n); try { await push('canvas', n.slice(0, -5), f, await readJson(f)); } catch {} }

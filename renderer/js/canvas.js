@@ -4,6 +4,7 @@ import { state, native } from './state.js';
 import { NODE_TYPES, strokePath } from './nodes.js';
 import { PEN_TOOLS, penSettings, currentTool, cssColor, swatch, spectrumButton, BAR_COLORS } from './pentools.js';
 import { Comments } from './comments.js';
+import { safeColor } from './sanitize.js';
 
 const MIN_Z = 0.08, MAX_Z = 3;
 const SNAP_PX = 6;
@@ -38,6 +39,10 @@ export class CanvasView extends Emitter {
     this.redoStack = [];
     this.spaceDown = false;
     this.clipboard = null;
+    // note files created by canvas actions (duplicate, paste, "new note"): undo moves them to the
+    // trash together with their window, redo brings them back
+    this.forks = new Set();
+    this.forkTrash = new Map();
     this.buildDom();
     this.comments = new Comments(this);
     this.bindEvents();
@@ -314,6 +319,7 @@ export class CanvasView extends Emitter {
     this.selection.clear();
     this.selectedEdge = null;
     this.undoStack = []; this.redoStack = [];
+    this.forks.clear(); this.forkTrash.clear();
     this.lod = null;
     this.comments?.close(true);
     this.renderAll();
@@ -443,6 +449,23 @@ export class CanvasView extends Emitter {
     state.touch();
     this.emit('selection');
     this.emit('changed');
+    this.syncForkFiles();
+  }
+  async syncForkFiles() {
+    if (!this.forks.size) return;
+    await new Promise((r) => setTimeout(r, 0)); // let closed note editors write their last edits first
+    const refs = new Set(this.doc.nodes.filter((n) => n.type === 'note').map((n) => n.data.path));
+    let changed = false;
+    for (const p of this.forks) {
+      if (refs.has(p) || this.forkTrash.has(p)) continue;
+      try { const text = await native.vault.read(p); this.forkTrash.set(p, text); await native.vault.remove(p); changed = true; } catch {}
+    }
+    for (const [p, text] of [...this.forkTrash]) {
+      if (!refs.has(p)) continue;
+      try { await native.vault.write(p, text); this.forkTrash.delete(p); changed = true; } catch {}
+      for (const n of this.doc.nodes) if (n.type === 'note' && n.data.path === p) this.views.get(n.id)?.inst?.load?.();
+    }
+    if (changed) { try { (await import('./vaultIndex.js')).vaultIndex.refresh(); } catch {} }
   }
   undo() { if (!this.undoStack.length) return; this.redoStack.push(this.snapshot()); this.restore(this.undoStack.pop()); }
   redo() { if (!this.redoStack.length) return; this.undoStack.push(this.snapshot()); this.restore(this.redoStack.pop()); }
@@ -591,7 +614,7 @@ export class CanvasView extends Emitter {
       const grp = document.createElementNS('http://www.w3.org/2000/svg', 'g');
       grp.setAttribute('class', `edge${sel ? ' selected' : ''}`);
       grp.dataset.id = e.id;
-      grp.innerHTML = `<path class="edge-hit" d="${d}"/><path class="edge-line" d="${d}" style="${e.color ? `stroke:${e.color}` : ''}" ${e.arrow !== false ? 'marker-end="url(#arrow)"' : ''}/>`;
+      grp.innerHTML = `<path class="edge-hit" d="${d}"/><path class="edge-line" d="${d}" style="${safeColor(e.color) ? `stroke:${safeColor(e.color)}` : ''}" ${e.arrow !== false ? 'marker-end="url(#arrow)"' : ''}/>`;
       if (e.label) {
         const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
         t.setAttribute('x', mid.x); t.setAttribute('y', mid.y - 6); t.setAttribute('class', 'edge-label'); t.textContent = e.label;
@@ -914,6 +937,7 @@ export class CanvasView extends Emitter {
         const stem = src.split('/').pop().replace(/\.md$/i, '');
         const p = native.vault.createNumbered ? await native.vault.createNumbered(dir, stem, text) : await native.vault.create(dir, stem, text);
         try { const { noteStyles } = await import('./notestyle.js'); const st = noteStyles.get(src); if (Object.keys(st).length) await noteStyles.set(p, st); } catch {}
+        this.forks.add(p);
         if (this.node(n.id)) this.updateNode(n.id, { data: { path: p } });
         else native.vault.remove?.(p); // the copy was undone meanwhile
       } catch {}

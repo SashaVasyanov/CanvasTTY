@@ -95,10 +95,19 @@ class AgentChatManager {
     return env;
   }
 
-  run(opts) {
-    const { reqId, kind, cmd } = opts;
+  async run(opts) {
+    const { reqId } = opts;
     const emit = (type, payload = {}) => this.send('agentchat:event', { reqId, type, ...payload });
-    const resolved = this.ptys.which(cmd || kind);
+    const kind = opts.kind === 'codex' ? 'codex' : 'claude';
+    const cmd = String(opts.cmd || kind).trim();
+    // values that end up on the command line come from canvas data (possibly synced): no flags, no shell characters
+    const ok = (v) => v == null || v === '' || (typeof v === 'string' && /^[\w.:/@\[\]+-]{1,160}$/.test(v) && !v.startsWith('-'));
+    for (const k of ['model', 'effort', 'mode', 'sessionId']) if (!ok(opts[k])) { emit('error', { message: `Недопустимое значение «${k}».` }); emit('done', {}); return; }
+    if (this.trust && !(await this.trust.ensure(`agentchat:${cmd}`, { what: 'Окно чата хочет запустить программу', cwd: safeCwd(opts.cwd) }))) {
+      emit('error', { message: 'Запуск отменён: программа агента не разрешена.' }); emit('done', {}); return;
+    }
+    opts = { ...opts, kind, cmd };
+    const resolved = this.ptys.which(cmd);
     if (!resolved) {
       emit('error', { message: `Команда «${cmd || kind}» не найдена. Установите ${kind === 'claude' ? 'Claude Code: npm i -g @anthropic-ai/claude-code' : 'Codex: npm i -g @openai/codex'} и войдите в аккаунт (запустите её один раз в терминале).` });
       emit('done', {});
