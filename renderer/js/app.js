@@ -509,6 +509,7 @@ class App {
     });
     cv.on('drop', (e) => this.onDrop(e));
     cv.on('widgets', () => this.widgetPicker());
+    cv.on('dropToChat', ({ chatId, nodes }) => this.attachImagesToChat(chatId, nodes));
     document.addEventListener('paste', (e) => this.onPaste(e));
   }
 
@@ -570,6 +571,26 @@ class App {
         this.canvas.addNode('note', { x: world.x, y: world.y, data: { path: p } });
       } else this.canvas.addNode('sticky', { x: world.x, y: world.y, data: { text } });
     }
+  }
+  // pictures from the canvas → attachments of a chat window (dragged onto it)
+  async attachImagesToChat(chatId, nodes) {
+    const inst = this.canvas.views.get(chatId)?.inst;
+    if (!inst?.attach) return;
+    const files = [];
+    for (const n of nodes) {
+      try {
+        const url = n.data.vault ? await native.vault.readAsset(n.data.vault) : n.data.src;
+        if (!url) continue;
+        const blob = await (await fetch(url)).blob();
+        const base = (n.data.name || (n.data.vault || '').split('/').pop() || 'Изображение').replace(/[\\/:*?"<>|]/g, '_');
+        const ext = (blob.type.split('/')[1] || 'png').replace('jpeg', 'jpg').replace('svg+xml', 'svg');
+        files.push(new File([blob], /\.[a-z0-9]{2,5}$/i.test(base) ? base : `${base}.${ext}`, { type: blob.type || 'image/png' }));
+      } catch (e) { toast(`Не удалось приложить картинку: ${e.message || e}`, 'error'); }
+    }
+    if (!files.length) return;
+    this.canvas.select([chatId]);
+    await inst.attach.addFiles(files);
+    inst.input.focus();
   }
   pasteChatTarget() {
     const inst = (id) => { const n = id && this.canvas.node(id); const i = n && (n.type === 'chat' || n.type === 'agentchat') ? this.canvas.views.get(id)?.inst : null; return i?.attach && i.input ? i : null; };

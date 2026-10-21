@@ -862,7 +862,10 @@ button.ly-twisty:hover { background: rgba(var(--fg-rgb), 0.08); color: var(--tex
 /* chat attachments */
 .chat-attach { flex: none; align-self: flex-end; width: 34px; height: 38px; display: grid; place-items: center; border-radius: 10px; color: var(--text-2); }
 .chat-attach:hover { background: rgba(var(--fg-rgb), 0.08); color: var(--text); }
-.chat.att-drop::after { content: 'Отпустите, чтобы приложить'; position: absolute; inset: 6px; z-index: 30; display: grid; place-items: center; border: 2px dashed var(--accent); border-radius: 12px; background: color-mix(in srgb, var(--accent) 12%, var(--surface)); color: var(--accent-2); font-weight: 600; pointer-events: none; }
+/* a picture dragged from the canvas over a chat window: shown above it, the chat waits for it */
+.canvas-root.chat-dropping .node.dragged { z-index: 2147483000 !important; opacity: 0.88; }
+.node.chat-drop { box-shadow: 0 0 0 2px var(--accent), var(--shadow); }
+.chat.att-drop::after { content: 'Отпустите, чтобы приложить'; position: absolute; inset: 6px; z-index: 30; display: grid; place-items: end center; padding-bottom: 28px; border: 2px dashed var(--accent); border-radius: 12px; background: color-mix(in srgb, var(--accent) 12%, var(--surface)); color: var(--accent-2); font-weight: 600; pointer-events: none; }
 .att-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 10px 0; }
 .att-chip { position: relative; display: flex; align-items: center; gap: 8px; border-radius: 10px; background: rgba(var(--fg-rgb), 0.06); border: 1px solid var(--line); }
 .att-chip.img { width: 64px; height: 64px; overflow: hidden; }

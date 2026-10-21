@@ -1274,7 +1274,21 @@ export class CanvasView extends Emitter {
       views = all.map((n) => this.views.get(n.id)).filter(Boolean);
     };
     setup(this.selectedNodes().filter((n) => !n.locked));
-    let moved = false, checkpointed = false, duplicated = false, fresh = false, lastDx = 0, lastDy = 0, dropFrame = null;
+    let moved = false, checkpointed = false, duplicated = false, fresh = false, lastDx = 0, lastDy = 0, dropFrame = null, redoSaved = null;
+    // pictures dragged onto a chat window are attached to its next message (and fly back)
+    let dropChat = null;
+    const isChat = (n) => n.type === 'chat' || n.type === 'agentchat';
+    const chatAt = (p) => {
+      let best = null;
+      for (const n of this.doc.nodes) if (isChat(n) && !ids.has(n.id) && p.x >= n.x && p.x <= n.x + n.w && p.y >= n.y && p.y <= n.y + n.h && (!best || (n.z || 0) >= (best.z || 0))) best = n;
+      return best;
+    };
+    const setChat = (c) => {
+      if (dropChat === c) return;
+      for (const [n, on] of [[dropChat, false], [c, true]]) { const el = n && this.views.get(n.id)?.el; if (el) { el.classList.toggle('chat-drop', on); el.querySelector('.chat')?.classList.toggle('att-drop', on); } }
+      dropChat = c;
+      this.root.classList.toggle('chat-dropping', !!c);
+    };
     const setDrop = (f) => {
       if (dropFrame === f) return;
       if (dropFrame) this.views.get(dropFrame.id)?.el.classList.remove('drop-target');
@@ -1302,6 +1316,7 @@ export class CanvasView extends Emitter {
         let dx = p.x - start.x, dy = p.y - start.y;
         if (!moved && Math.hypot(dx, dy) * this.vp.z < 3) return;
         if (!checkpointed) {
+          redoSaved = this.redoStack;
           this.checkpoint(); checkpointed = true;
           this.root.classList.add('moving');
           for (const v of views) v.el.classList.add('dragged');
@@ -1309,7 +1324,9 @@ export class CanvasView extends Emitter {
         moved = true;
         if (!duplicated && (ev.altKey || e.altKey) && nodes.length) duplicateNow();
         if (ev.shiftKey) { if (Math.abs(dx) > Math.abs(dy)) dy = 0; else dx = 0; }
-        const free = ev.ctrlKey || ev.metaKey;
+        // over a chat window the pictures follow the cursor freely (no snapping to the window)
+        setChat(!duplicated && nodes.length && nodes.every((n) => n.type === 'image') ? chatAt(p) : null);
+        const free = ev.ctrlKey || ev.metaKey || !!dropChat;
         const snapped = free ? { dx, dy, gx: [], gy: [] } : this.snapMove(b0, dx, dy, others);
         dx = Math.round(snapped.dx); dy = Math.round(snapped.dy);
         this.drawGuides(snapped.gx, snapped.gy);
@@ -1321,7 +1338,8 @@ export class CanvasView extends Emitter {
         this.updateEdgesFor(ids);
         this.updateOverlay();
         // highlight the area the objects will land in
-        if (!nodes.every((n) => n.type === 'frame')) {
+        if (dropChat) setDrop(null);
+        else if (!nodes.every((n) => n.type === 'frame')) {
           const c = { x: b0.x + dx + b0.w / 2, y: b0.y + dy + b0.h / 2 };
           setDrop(this.frameAt(c.x, c.y, movingFrames));
         }
@@ -1331,6 +1349,16 @@ export class CanvasView extends Emitter {
         this.root.classList.remove('moving');
         setDrop(null);
         for (const v of views) { v.el.classList.remove('dragged'); v.el.style.transform = ''; }
+        const chat = dropChat;
+        setChat(null);
+        if (moved && chat) {
+          // the pictures go into the chat and stay where they were on the canvas: nothing to undo
+          for (const n of all) { const o = orig.get(n.id); n.x = o.x; n.y = o.y; this.syncView(n); }
+          if (checkpointed) { this.undoStack.pop(); this.redoStack = redoSaved || []; }
+          this.updateEdgesFor(ids); this.renderEdges(); this.updateOverlay();
+          this.emit('dropToChat', { chatId: chat.id, nodes: nodes.filter((n) => n.type === 'image') });
+          return;
+        }
         for (const n of all) this.syncView(n);
         if (moved) {
           this.lastMoveEnd = performance.now();
