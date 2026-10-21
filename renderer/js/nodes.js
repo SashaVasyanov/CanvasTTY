@@ -1281,7 +1281,7 @@ export const NODE_TYPES = {
   image: {
     chrome: 'bare', defaultSize: { w: 360, h: 240 }, minSize: { w: 40, h: 40 }, keepRatio: true,
     defaultData: () => ({ src: '' }),
-    title: (n) => (n.data.vault || 'Изображение').split('/').pop(),
+    title: (n) => n.data.name || (n.data.vault || 'Изображение').split('/').pop(),
     mount: ({ node, body }) => {
       const img = h('img', { class: 'image-node', draggable: 'false' });
       body.append(img);

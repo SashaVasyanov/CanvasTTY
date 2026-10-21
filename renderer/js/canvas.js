@@ -2,9 +2,11 @@
 import { h, icon, uid, clamp, Emitter, isEditable, menu, deepClone, throttle, toast, keyName } from './util.js';
 import { state, native } from './state.js';
 import { NODE_TYPES } from './nodes.js';
+import { Comments } from './comments.js';
 
 const MIN_Z = 0.08, MAX_Z = 3;
 const SNAP_PX = 6;
+const NAMED_COPY = { frame: 'title', gallery: 'title', image: 'name', chat: 'title', agentchat: 'title' };
 const FONT_SIZES = [8, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 40, 48, 56, 64, 72, 96, 128];
 const TEXT_EDIT_TYPES = new Set(['text', 'sticky', 'shape']);
 const HANDLE_DIRS = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
@@ -22,6 +24,7 @@ export class CanvasView extends Emitter {
     this.spaceDown = false;
     this.clipboard = null;
     this.buildDom();
+    this.comments = new Comments(this);
     this.bindEvents();
     this.drawMinimap = throttle(() => this._drawMinimap(), 60);
   }
@@ -292,6 +295,7 @@ export class CanvasView extends Emitter {
     this.selectedEdge = null;
     this.undoStack = []; this.redoStack = [];
     this.lod = null;
+    this.comments?.close(true);
     this.renderAll();
     // older canvases have no membership yet: derive it from geometry once
     if (!this.doc.groups) { this.recomputeGroups('all'); this.doc.groups = 1; } else this.recomputeGroups();
@@ -314,6 +318,7 @@ export class CanvasView extends Emitter {
       else { this.syncView(n); v.inst?.update?.(n); }
     }
     this.renderEdges();
+    this.comments?.render();
     this.updateOverlay();
     this.drawMinimap();
     this.cullSoon?.();
@@ -579,6 +584,7 @@ export class CanvasView extends Emitter {
 
   // ---------------- overlay (selection box, handles, toolbar) ----------------
   updateOverlay(light = false) {
+    this.comments?.position();
     const nodes = this.selectedNodes();
     const show = nodes.length > 0 && !this.dragging?.noOverlay;
     this.selBox.style.display = show ? 'block' : 'none';
@@ -825,6 +831,7 @@ export class CanvasView extends Emitter {
       map[src.id] = n.id = uid(n.type.slice(0, 2));
       n.x = Math.round(n.x + dx); n.y = Math.round(n.y + dy); n.z = z + 1 + newIds.length; n.locked = false;
       if (n.data) { delete n.data.sessionId; delete n.data.convId; if (n.type === 'chat') n.data.messages = [...(n.data.messages || [])]; }
+      this.numberCopy(n);
       this.doc.nodes.push(n); this.createView(n); newIds.push(n.id);
     }
     for (const id of newIds) { const n = this.node(id); if (n.parent) { if (map[n.parent]) n.parent = map[n.parent]; else delete n.parent; } }
@@ -833,6 +840,26 @@ export class CanvasView extends Emitter {
     this.renderEdges();
     this.forkNotes(newIds);
     return { map, newIds };
+  }
+  // Figma-style names for copies: «Фото 1» -> «Фото 2», «Фото 3»… (the next free number among
+  // objects of the same kind on this canvas). Notes get the same treatment for their file name.
+  numberCopy(n) {
+    const field = NAMED_COPY[n.type];
+    if (!field) return;
+    const cur = field === 'name' ? (n.data.name || (n.data.vault || '').split('/').pop().replace(/\.[a-z0-9]+$/i, '')) : n.data[field];
+    if (!cur || !String(cur).trim()) return;
+    const base = String(cur).replace(/\s+\d+$/, '').trim();
+    if (!base) return;
+    const esc = base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(`^${esc}(?: (\\d+))?$`);
+    let max = 1;
+    for (const o of this.doc.nodes) {
+      if (o.type !== n.type) continue;
+      const v = field === 'name' ? (o.data.name || (o.data.vault || '').split('/').pop().replace(/\.[a-z0-9]+$/i, '')) : o.data[field];
+      const m = String(v || '').match(re);
+      if (m) max = Math.max(max, m[1] ? Number(m[1]) : 1);
+    }
+    n.data[field] = `${base} ${max + 1}`;
   }
   // a copied note gets its own .md file (same text), so the copy is a real duplicate and not a
   // second window onto the same file that edits along with the original
@@ -845,7 +872,8 @@ export class CanvasView extends Emitter {
       const dir = src.includes('/') ? src.slice(0, src.lastIndexOf('/')) : '';
       try {
         const text = await native.vault.read(src);
-        const p = await native.vault.create(dir, src.split('/').pop().replace(/\.md$/i, ''), text);
+        const stem = src.split('/').pop().replace(/\.md$/i, '');
+        const p = native.vault.createNumbered ? await native.vault.createNumbered(dir, stem, text) : await native.vault.create(dir, stem, text);
         try { const { noteStyles } = await import('./notestyle.js'); const st = noteStyles.get(src); if (Object.keys(st).length) await noteStyles.set(p, st); } catch {}
         if (this.node(n.id)) this.updateNode(n.id, { data: { path: p } });
         else native.vault.remove?.(p); // the copy was undone meanwhile
@@ -944,6 +972,7 @@ export class CanvasView extends Emitter {
       if (n) { e.preventDefault(); this.startConnect(e, n, null); }
       return;
     }
+    if (this.tool === 'comment') { e.preventDefault(); this.comments.startNew(e); return; }
     if (this.tool === 'text' && n?.type === 'text') { e.preventDefault(); this.setTool('select'); this.select([n.id]); this.editAt(n, e); return; }
     if (creating && (!n || n.type === 'frame')) { e.preventDefault(); this.startCreate(e); return; }
 
@@ -1509,7 +1538,7 @@ export class CanvasView extends Emitter {
       if (this.selectedEdge) { this.removeEdge(this.selectedEdge); return true; }
       if (this.selection.size) { this.removeNodes([...this.selection]); return true; }
     }
-    if (k === 'escape') { if (this.dragging) { this.cancelDrag(); return true; } if (this.grabId) { this.setGrab(null); return true; } this.clearSelection(); this.setTool('select'); return true; }
+    if (k === 'escape') { if (this.comments?.thread) { this.comments.close(); return true; } if (this.dragging) { this.cancelDrag(); return true; } if (this.grabId) { this.setGrab(null); return true; } this.clearSelection(); this.setTool('select'); return true; }
     if (k.startsWith('arrow') && this.selection.size) {
       e.preventDefault();
       const step = e.shiftKey ? 10 : 1;
@@ -1526,7 +1555,8 @@ export class CanvasView extends Emitter {
     if (k === 'enter' && this.selection.size === 1) { const n = this.selectedNodes()[0]; e.preventDefault(); this.views.get(n.id)?.inst?.edit?.(); return true; }
     if (k === 'm' && !e.altKey) { this.toggleMinimap(); return true; }
     if (k === 'g' && !e.altKey) { this.emit('addGallery'); return true; }
-    const tools = { v: 'select', h: 'hand', s: 'sticky', t: 'text', r: 'rect', o: 'ellipse', f: 'frame', a: 'arrow', l: 'arrow' };
+    if (k === 'c' && e.shiftKey && !e.altKey) { this.comments.toggleVisible(); return true; }
+    const tools = { v: 'select', h: 'hand', s: 'sticky', t: 'text', r: 'rect', o: 'ellipse', f: 'frame', a: 'arrow', l: 'arrow', c: 'comment' };
     if (tools[k] && !e.altKey) { this.setTool(tools[k]); return true; }
     if (k === '-' || k === '_') { this.zoomBy(0.8); return true; }
     if (k === '=' || k === '+') { this.zoomBy(1.25); return true; }

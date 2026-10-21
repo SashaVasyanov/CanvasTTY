@@ -160,6 +160,7 @@ export const mockNative = {
     read: async (p) => { if (!(p in files)) throw new Error('not found'); return files[p]; },
     write: async (p, c) => { files[p] = c; saveFiles(); emit('vault:changed', { file: p }); return true; },
     async create(folder, name, content = '') { let base = (folder ? folder + '/' : '') + (name || 'Без названия'); let p = base + '.md', i = 1; while (p in files) p = `${base} ${i++}.md`; files[p] = content; saveFiles(); emit('vault:changed', { file: p }); return p; },
+    async createNumbered(folder, name, content = '') { const base = String(name).replace(/\s+\d+$/, ''); const pre = folder ? folder + '/' : ''; let max = 1; for (const k of Object.keys(files)) { const m = k.match(new RegExp('^' + (pre + base).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?: (\\d+))?\\.md$')); if (m) max = Math.max(max, m[1] ? +m[1] : 1); } let i = max + 1; while ((pre + base + ' ' + i + '.md') in files) i++; const p = pre + base + ' ' + i + '.md'; files[p] = content; saveFiles(); emit('vault:changed', { file: p }); return p; },
     mkdir: async (p) => { files[p + '/.keep'] = ''; saveFiles(); return p; },
     async rename(a, b) { files[b] = files[a]; delete files[a]; saveFiles(); emit('vault:changed', {}); return b; },
     remove: async (p) => { delete files[p]; for (const k of Object.keys(files)) if (k.startsWith(p + '/')) delete files[k]; saveFiles(); emit('vault:changed', {}); return true; },

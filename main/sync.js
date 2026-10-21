@@ -30,7 +30,7 @@ function mergeDocs(base, local, remote) {
     const order = new Map([...(r || []), ...(l || [])].map((x, i) => [x.id, i]));
     return out.sort((a, b) => order.get(a.id) - order.get(b.id));
   };
-  return { ...local, ...remote, nodes: mergeList(base?.nodes, local?.nodes, remote?.nodes), edges: mergeList(base?.edges, local?.edges, remote?.edges) };
+  return { ...local, ...remote, nodes: mergeList(base?.nodes, local?.nodes, remote?.nodes), edges: mergeList(base?.edges, local?.edges, remote?.edges), comments: mergeList(base?.comments, local?.comments, remote?.comments) };
 }
 
 const hashOf = (v) => crypto.createHash('sha1').update(JSON.stringify(v)).digest('hex');

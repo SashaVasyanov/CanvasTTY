@@ -265,6 +265,7 @@ app.whenReady().then(() => {
   ipcMain.handle('vault:read', (e, rel) => vault.read(rel));
   ipcMain.handle('vault:write', (e, rel, content) => vault.write(rel, content));
   ipcMain.handle('vault:create', (e, folder, name, content) => vault.create(folder, name, content));
+  ipcMain.handle('vault:createNumbered', (e, folder, name, content) => vault.createNumbered(folder, name, content));
   ipcMain.handle('vault:mkdir', (e, rel) => vault.mkdir(rel));
   ipcMain.handle('vault:rename', (e, a, b) => vault.rename(a, b));
   ipcMain.handle('vault:styles', () => vault.styles());

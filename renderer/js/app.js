@@ -191,6 +191,7 @@ class App {
       tool('sticky', 'sticky', 'Стикер (S)'), tool('text', 'text', 'Текст (T)'),
       h('span', { class: 'tool-group' }, this.shapeBtn, caret),
       tool('arrow', 'arrow', 'Стрелка-связь (A)'), tool('frame', 'area', 'Область с названием (F)'),
+      this.commentBtn = tool('comment', 'comment', 'Комментарий (C). ПКМ — показать / скрыть комментарии'),
       h('span', { class: 'tsep' }),
       action('note', 'Заметка', (e) => this.noteMenu(e)),
       action('image', 'Изображение', () => this.pickImage()),
@@ -199,6 +200,16 @@ class App {
       h('button', { class: 'tool agent-btn', title: 'Позвать нейросеть', onclick: (e) => this.launchMenu(e) }, h('span', { html: icon('sparkle', 17) }), h('span', {}, 'Агент')),
     );
     this.canvasHost.append(tb);
+    this.commentBtn.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      const cm = this.canvas.comments;
+      menu([
+        { label: cm.visible ? 'Скрыть комментарии' : 'Показать комментарии', icon: 'comment', kbd: 'Shift+C', onClick: () => cm.toggleVisible() },
+        { label: 'Показывать решённые', checked: !!state.settings.showResolvedComments, onClick: () => cm.toggleResolved() },
+        '-',
+        { label: `Подпись: ${state.settings.userName || 'не задана'}…`, icon: 'pen', onClick: async () => { const n = await prompt('Имя в комментариях', state.settings.userName || ''); if (n != null && n.trim()) state.setSetting('userName', n.trim()); } },
+      ], e.clientX, e.clientY - 120);
+    });
     const sync = (t) => {
       for (const [id, b] of Object.entries(tools)) b.classList.toggle('active', id === t);
       const shapeActive = ['rect', 'ellipse', 'diamond'].includes(t);

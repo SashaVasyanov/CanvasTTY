@@ -33,7 +33,7 @@ contextBridge.exposeInMainWorld('native', {
   limits: { get: inv('limits:get'), usage: inv('usage:get') },
   vault: {
     root: inv('vault:root'), setRoot: inv('vault:setRoot'), index: inv('vault:index'), read: inv('vault:read'), write: inv('vault:write'),
-    create: inv('vault:create'), mkdir: inv('vault:mkdir'), rename: inv('vault:rename'), remove: inv('vault:remove'), search: inv('vault:search'),
+    create: inv('vault:create'), createNumbered: inv('vault:createNumbered'), mkdir: inv('vault:mkdir'), rename: inv('vault:rename'), remove: inv('vault:remove'), search: inv('vault:search'),
     styles: inv('vault:styles'), setStyle: inv('vault:setStyle'), saveAsset: inv('vault:saveAsset'), readAsset: inv('vault:readAsset'), reveal: inv('vault:reveal'), onChanged: on('vault:changed'),
   },
   dialog: { folder: inv('dialog:folder') },

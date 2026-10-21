@@ -116,6 +116,21 @@ class Vault {
     return rel;
   }
 
+  // copy of a note named like Figma does: «Идея 1» -> «Идея 2», «Идея 3»… (next free number)
+  async createNumbered(folder, stem, content = '') {
+    const base = String(stem || 'Без названия').replace(/\s+\d+$/, '').trim() || 'Без названия';
+    let names = [];
+    try { names = await fsp.readdir(this.abs(folder || '')); } catch {}
+    const esc = base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(`^${esc}(?: (\\d+))?\\.md$`, 'i');
+    let max = 1;
+    for (const n of names) { const m = n.match(re); if (m) max = Math.max(max, m[1] ? Number(m[1]) : 1); }
+    let i = max + 1, rel;
+    do { rel = path.posix.join(folder || '', `${base.replace(/[\\/:*?"<>|]/g, '-')} ${i++}.md`); } while (fs.existsSync(this.abs(rel)));
+    await this.write(rel, content);
+    return rel;
+  }
+
   async create(folder, name, content = '') {
     const rel = await this.uniquePath(folder, name || 'Без названия');
     await this.write(rel, content);
