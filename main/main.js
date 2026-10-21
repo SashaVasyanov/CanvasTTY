@@ -293,6 +293,12 @@ app.whenReady().then(() => {
   ipcMain.handle('agentchat:run', (e, opts) => { agentChat.run(opts); return true; });
   ipcMain.handle('agentchat:abort', (e, reqId) => agentChat.abort(reqId));
   ipcMain.handle('agentchat:defaults', () => agentDefaults());
+  // where Codex keeps the pictures it generated in a session (~/.codex/generated_images/<session>)
+  ipcMain.handle('agentchat:imagesDir', (e, sid) => {
+    const root = path.join(process.env.CODEX_HOME || path.join(app.getPath('home'), '.codex'), 'generated_images');
+    const dir = sid ? path.join(root, path.basename(String(sid))) : root;
+    return fs.existsSync(dir) ? dir : fs.existsSync(root) ? root : '';
+  });
   // ---------- chat history ----------
   const history = new HistoryStore(path.join(userData, 'chats'));
   // ---------- sync between computers ----------

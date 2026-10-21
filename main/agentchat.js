@@ -222,6 +222,34 @@ class AgentChatManager {
     const run = { proc, aborted: false };
     this.runs.set(reqId, run);
     let buf = '', stderr = '', gotOutput = false, sid = (withResume && sessionId) || null, usage = null, failed = false;
+    // "Reconnecting... 2/5 (stream disconnected …)": Codex lost the connection to OpenAI and retries
+    // by itself; only when the retries run out the turn fails (turn.failed)
+    const errorOrRetry = (message) => {
+      const r = /^Reconnecting\b\D*(\d+)\s*\/\s*(\d+)/i.exec(String(message || ''));
+      if (r) { emit('notice', { reconnect: true, text: `Связь с сервером OpenAI прервалась, Codex переподключается (${r[1]} из ${r[2]})…`, detail: String(message) }); return; }
+      failed = true; emit('error', { message: message || 'Ошибка' });
+    };
+    // pictures Codex generates are saved to ~/.codex/generated_images/<session>/: new ones are
+    // copied into the chat attachments and shown in the answer
+    const genRoot = path.join(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), 'generated_images');
+    const since = Date.now() - 3000, seen = new Set(), sizes = new Map();
+    const scanImages = async (final = false) => {
+      if (!sid || !this.attachments) return;
+      const dir = path.join(genRoot, path.basename(String(sid)));
+      let names;
+      try { names = await fs.promises.readdir(dir); } catch { return; }
+      for (const name of names) {
+        if (seen.has(name) || !/\.(png|jpe?g|webp|gif)$/i.test(name)) continue;
+        const abs = path.join(dir, name);
+        let st;
+        try { st = await fs.promises.stat(abs); } catch { continue; }
+        if (!st.isFile() || st.mtimeMs < since) { seen.add(name); continue; } // older pictures of this session
+        if (!final && (!st.size || sizes.get(name) !== st.size)) { sizes.set(name, st.size); continue; } // still being written
+        seen.add(name);
+        try { emit('image', { att: await this.attachments.importPath(abs), path: abs }); } catch {}
+      }
+    };
+    const imgTimer = setInterval(() => { scanImages().catch(() => {}); }, 1500);
     const tool = (item) => {
       if (item.type === 'command_execution') return { name: 'Команда', input: item.command };
       if (item.type === 'file_change') return { name: 'Файлы', input: (item.changes || []).map((c) => `${c.kind || ''} ${c.path}`).join('\n') };
@@ -238,7 +266,7 @@ class AgentChatManager {
         const it = j.item;
         if (it.type === 'agent_message') { emit('delta', { text: it.text || '' }); emit('break'); }
         else if (it.type === 'reasoning') emit('reasoning', { text: (it.text || '') + '\n' });
-        else if (it.type === 'error') emit('error', { message: it.message || 'Ошибка' });
+        else if (it.type === 'error') errorOrRetry(it.message);
         else {
           const t = tool(it);
           if (t) {
@@ -250,7 +278,7 @@ class AgentChatManager {
       }
       if (j.type === 'turn.completed') { if (j.usage) usage = { input: j.usage.input_tokens || 0, output: j.usage.output_tokens || 0 }; return; }
       if (j.type === 'turn.failed') { failed = true; emit('error', { message: (j.error && j.error.message) || 'Ошибка хода' }); return; }
-      if (j.type === 'error') { failed = true; emit('error', { message: j.message || 'Ошибка' }); return; }
+      if (j.type === 'error') { errorOrRetry(j.message); return; }
       // legacy format {msg:{type,...}}
       const m = j.msg;
       if (!m) return;
@@ -259,7 +287,7 @@ class AgentChatManager {
       else if (m.type === 'agent_reasoning') emit('reasoning', { text: (m.text || '') + '\n' });
       else if (m.type === 'exec_command_begin') emit('tool', { id: m.call_id, name: 'Команда', input: [].concat(m.command || []).join(' ') });
       else if (m.type === 'exec_command_end') emit('toolResult', { id: m.call_id, output: String(m.aggregated_output || m.stdout || m.stderr || '').slice(0, 20000), isError: m.exit_code !== 0 });
-      else if (m.type === 'error') { failed = true; emit('error', { message: m.message }); }
+      else if (m.type === 'error') errorOrRetry(m.message);
       else if (m.type === 'token_count' && m.info && m.info.last_token_usage) usage = { input: m.info.last_token_usage.input_tokens || 0, output: m.info.last_token_usage.output_tokens || 0 };
     };
     proc.stdout.setEncoding('utf8'); proc.stderr.setEncoding('utf8'); // never split a multi-byte character
@@ -273,10 +301,12 @@ class AgentChatManager {
       }
     });
     proc.stderr.on('data', (d) => { stderr += d; });
-    proc.on('error', (e) => { emit('error', { message: e.message }); emit('done', {}); this.runs.delete(reqId); });
-    proc.on('close', (code) => {
+    proc.on('error', (e) => { clearInterval(imgTimer); emit('error', { message: e.message }); emit('done', {}); this.runs.delete(reqId); });
+    proc.on('close', async (code) => {
+      clearInterval(imgTimer);
       this.runs.delete(reqId);
       if (buf.trim().startsWith('{')) { try { handle(JSON.parse(buf.trim())); } catch {} }
+      await scanImages(true).catch(() => {});
       if (run.aborted) { emit('done', { sessionId: sid, aborted: true }); return; }
       if (!gotOutput && code !== 0 && !opts.noMcp && /mcp_servers|mcp server|invalid.*config|config.*invalid/i.test(stderr)) { this.runCodex({ ...opts, noMcp: true }, resolved, emit, withResume); return; }
       if (!gotOutput && withResume && sessionId && code !== 0) {

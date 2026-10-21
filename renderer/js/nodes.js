@@ -9,7 +9,7 @@ import { RichEditor } from './editor.js';
 import { vaultIndex } from './vaultIndex.js';
 import { mountHub } from './hub.js';
 import { ChatHistory, saveConversation } from './chathistory.js';
-import { AttachBar, renderAttachments } from './attach.js';
+import { AttachBar, renderAttachments, viewImages } from './attach.js';
 import { chatContext, imagesToAttachments, renderContextRow, renderContextNote, attachMentions } from './context.js';
 
 // ---------------- routers for main-process events ----------------
@@ -722,7 +722,7 @@ class AgentChatInstance {
   renderParts(m, el) {
     const parts = (m.parts || [{ type: 'text', text: m.content }]).filter((p) => !((p.type === 'text' || p.type === 'reasoning') && !p.text));
     const cache = el._parts || (el._parts = []);
-    const keyOf = (p) => `${p.type}|${(p.text || '').length}|${p.status || ''}|${(p.output || '').length}|${(p.input || '').length}`;
+    const keyOf = (p) => (p.type === 'notice' ? `notice|${p.text}` : p.type === 'image' ? `image|${p.att?.file}` : `${p.type}|${(p.text || '').length}|${p.status || ''}|${(p.output || '').length}|${(p.input || '').length}`);
     const make = (p) => {
       if (p.type === 'text') return h('div', { class: 'msg-text md', html: renderChatMarkdown(p.text) });
       if (p.type === 'reasoning') return h('details', { class: 'msg-reason' }, h('summary', {}, 'Размышления'), h('div', { class: 'reason-text' }, p.text));
@@ -734,7 +734,18 @@ class AgentChatInstance {
         return d;
       }
       if (p.type === 'error') return h('div', { class: 'msg-error' }, `⚠ ${p.text}`);
-      if (p.type === 'notice') return h('div', { class: 'muted small' }, p.text);
+      if (p.type === 'notice') return h('div', { class: `muted small${p.reconnect ? ' msg-retry' : ''}`, title: p.detail || '' }, p.text);
+      if (p.type === 'image' && p.att) {
+        // a picture the agent generated: open it, put it on the canvas, show the file
+        const a = p.att;
+        const img = h('img', { src: a.url || a.thumb || '', alt: a.name || '', loading: 'lazy' });
+        img.onerror = () => { img.replaceWith(h('div', { class: 'muted small' }, `Картинка «${a.name}» недоступна на этом компьютере`)); };
+        return h('figure', { class: 'msg-gen' },
+          h('button', { class: 'msg-gen-img no-drag', title: 'Открыть на весь экран', onclick: (e) => { e.stopPropagation(); viewImages([a], 0); } }, img),
+          h('figcaption', {},
+            h('button', { class: 'btn sm no-drag', onclick: (e) => { e.stopPropagation(); this.imageToCanvas(a); } }, 'На холст'),
+            h('button', { class: 'btn sm no-drag', onclick: (e) => { e.stopPropagation(); native.attach?.reveal?.(a.file); } }, 'Показать в папке')));
+      }
       return null;
     };
     el.querySelector(':scope > .typing')?.remove();
@@ -761,6 +772,17 @@ class AgentChatInstance {
       h('button', { 'data-act': 'copy', 'data-i': i, title: 'Копировать', html: icon('copy', 12) }),
       m.role === 'assistant' ? h('button', { 'data-act': 'note', 'data-i': i, title: 'В заметку', html: icon('note', 12) }) : null));
     return el;
+  }
+
+  // a generated picture → an image object next to this window (saved in the notes vault)
+  async imageToCanvas(a) {
+    try {
+      const blob = await (await fetch(a.url)).blob();
+      const me = this.view.node(this.node.id);
+      const n = await imageNodeFromFile(this.view, new File([blob], a.name || 'Картинка.png', { type: blob.type || a.mime || 'image/png' }), { x: me.x + me.w + 60, y: me.y });
+      this.view.select([n.id]);
+      toast('Картинка на холсте');
+    } catch (e) { toast(`Не удалось вынести картинку: ${e.message || e}`, 'error'); }
   }
 
   async msgAction(act, i) {
@@ -813,18 +835,26 @@ class AgentChatInstance {
     if (this.running !== reqId) return; // stopped while the context was being collected
     let newText = true;
     const paint = throttle(() => { const l = this.list; const stick = l.scrollHeight - l.scrollTop - l.clientHeight < 120; this.renderParts(asst, body); if (stick) l.scrollTop = l.scrollHeight; twinOf(this)?.showLive(asst); }, 70);
+    const dropRetry = () => { for (let i = asst.parts.length - 1; i >= 0; i--) if (asst.parts[i].reconnect) asst.parts.splice(i, 1); };
     const lastText = () => { const l = asst.parts[asst.parts.length - 1]; if (newText || !l || l.type !== 'text') { const p = { type: 'text', text: '' }; asst.parts.push(p); newText = false; return p; } return l; };
     chatRoutes.set(reqId, (ev) => {
       switch (ev.type) {
         case 'session': patchNodeData(this, { sessionId: ev.sessionId }); break;
         case 'info': if (ev.model) { this.view.setData(this.node.id, { actualModel: ev.model }); this.renderInfo(); } break;
-        case 'delta': lastText().text += ev.text; break;
+        case 'delta': dropRetry(); lastText().text += ev.text; break;
         case 'break': newText = true; break;
-        case 'reasoning': { const l = asst.parts[asst.parts.length - 1]; if (l && l.type === 'reasoning') l.text += ev.text; else asst.parts.push({ type: 'reasoning', text: ev.text }); break; }
-        case 'tool': if (!asst.parts.some((p) => p.type === 'tool' && p.id === ev.id)) asst.parts.push({ type: 'tool', id: ev.id, name: ev.name, input: ev.input, status: 'run' }); newText = true; break;
+        case 'image': dropRetry(); asst.parts.push({ type: 'image', att: ev.att }); newText = true; break;
+        case 'reasoning': { dropRetry(); const l = asst.parts[asst.parts.length - 1]; if (l && l.type === 'reasoning') l.text += ev.text; else asst.parts.push({ type: 'reasoning', text: ev.text }); break; }
+        case 'tool': dropRetry(); if (!asst.parts.some((p) => p.type === 'tool' && p.id === ev.id)) asst.parts.push({ type: 'tool', id: ev.id, name: ev.name, input: ev.input, status: 'run' }); newText = true; break;
         case 'toolResult': { const t = asst.parts.find((p) => p.type === 'tool' && p.id === ev.id); if (t) { t.output = ev.output; t.status = ev.isError ? 'err' : 'ok'; } break; }
-        case 'notice': asst.parts.push({ type: 'notice', text: ev.text }); if (ev.needsInput) asst.needsInput = true; break;
-        case 'error': asst.parts.push({ type: 'error', text: ev.message }); break;
+        case 'notice': {
+          // Codex reconnecting: one line that counts up instead of a pile of red errors
+          const last = asst.parts[asst.parts.length - 1];
+          if (ev.reconnect && last?.reconnect) { last.text = ev.text; last.detail = ev.detail; } else asst.parts.push({ type: 'notice', text: ev.text, ...(ev.reconnect ? { reconnect: true, detail: ev.detail } : {}) });
+          if (ev.needsInput) asst.needsInput = true;
+          break;
+        }
+        case 'error': dropRetry(); asst.parts.push({ type: 'error', text: ev.message }); break;
         case 'done': this.finish(reqId, all, asst, ev); return;
         default: break;
       }
@@ -1039,6 +1069,11 @@ export const NODE_TYPES = {
       { label: 'История чатов', icon: 'sidebar', onClick: () => inst?.hist.open() },
       { label: 'Новый чат', icon: 'plus', onClick: () => inst?.newSession() },
       { label: 'Сменить рабочую папку…', icon: 'folder', onClick: () => inst?.pickCwd() },
+      ...(n.data.kind === 'codex' ? [{ label: 'Папка с картинками Codex', icon: 'image', onClick: async () => {
+        const dir = await native.agentChat.imagesDir?.(n.data.sessionId);
+        if (!dir) { toast('Codex ещё не сохранял картинки на этом компьютере', 'warn'); return; }
+        const r = await native.shell.openPath(dir); if (r) toast(String(r), 'warn');
+      } }] : []),
       { label: 'Открыть эту сессию в терминале', icon: 'terminal', onClick: () => {
         const a = state.agent(n.data.agentId);
         const sid = n.data.sessionId;

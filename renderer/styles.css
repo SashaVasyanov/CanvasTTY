@@ -360,6 +360,12 @@ svg.guides line { stroke: #ff5ca8; stroke-width: 1; }
 .ctx-chip.at { background: color-mix(in srgb, var(--green) 16%, transparent); color: color-mix(in srgb, var(--green) 70%, var(--text-strong)); }
 .ctx-ic { display: inline-flex; opacity: 0.8; flex: none; }
 /* in a sent message: what came from the canvas */
+/* a picture the agent generated */
+.msg-gen { margin: 8px 0; display: flex; flex-direction: column; align-items: flex-start; align-self: flex-start; gap: 6px; max-width: 100%; }
+.msg-gen-img { display: block; width: fit-content; max-width: 100%; padding: 0; border-radius: 10px; overflow: hidden; border: 1px solid var(--line-2); background: rgba(var(--fg-rgb), 0.04); cursor: zoom-in; }
+.msg-gen-img img { display: block; max-width: min(100%, 420px); max-height: 360px; object-fit: contain; }
+.msg-gen figcaption { display: flex; gap: 6px; }
+.msg-retry { color: var(--amber) !important; }
 .msg-ctx { display: flex; align-items: center; gap: 5px; margin-top: 6px; font-size: 11px; color: var(--muted); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .msg.user .msg-ctx { justify-content: flex-end; }
 /* @ in a chat input */

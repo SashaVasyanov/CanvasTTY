@@ -102,7 +102,7 @@ export const mockNative = {
       }, 90);
       return true;
     },
-    abort: async () => {}, defaults: async () => ({ claude: { model: 'sonnet' }, codex: { model: 'gpt-5-codex', effort: 'medium', models: [] } }), onEvent: on('agentchat:event'),
+    imagesDir: async () => '', abort: async () => {}, defaults: async () => ({ claude: { model: 'sonnet' }, codex: { model: 'gpt-5-codex', effort: 'medium', models: [] } }), onEvent: on('agentchat:event'),
   },
   setBg: async () => {},
   attach: {
