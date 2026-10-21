@@ -25,6 +25,16 @@ async function makeThumb(blob, max = 320) {
   } catch { return {}; }
 }
 
+// files on the clipboard: copied files, or a screenshot (some apps put the picture only into
+// clipboardData.items); unnamed pictures get a readable name
+export function clipboardFiles(cd) {
+  let files = [...(cd?.files || [])];
+  if (!files.length) files = [...(cd?.items || [])].filter((i) => i.kind === 'file').map((i) => i.getAsFile()).filter(Boolean);
+  const stamp = new Date().toLocaleTimeString('ru-RU').replace(/:/g, '-');
+  return files.map((f, i) => (f.name && !/^image\.(png|jpe?g|gif|webp|bmp)$/i.test(f.name) ? f
+    : new File([f], `Скриншот ${stamp}${i ? `-${i}` : ''}.${((f.type || 'image/png').split('/')[1] || 'png').replace('jpeg', 'jpg')}`, { type: f.type || 'image/png' })));
+}
+
 export function fileIcon(att, size = 38) {
   const ext = (att.ext || att.name?.split('.').pop() || '').toLowerCase().slice(0, 4);
   const el = h('div', { class: 'att-ficon', style: { width: `${size}px`, height: `${Math.round(size * 1.2)}px` } }, h('span', {}, ext.toUpperCase() || 'FILE'));
@@ -49,10 +59,10 @@ export class AttachBar {
     root.addEventListener('drop', (e) => { if (!hasFiles(e)) return; e.preventDefault(); e.stopPropagation(); root.classList.remove('att-drop'); this.addFiles([...e.dataTransfer.files]); });
     // pasting an image / file
     input.addEventListener('paste', (e) => {
-      const files = [...(e.clipboardData?.files || [])];
+      const files = clipboardFiles(e.clipboardData);
       if (!files.length) return;
       e.preventDefault(); e.stopPropagation();
-      this.addFiles(files.map((f, i) => (f.name && f.name !== 'image.png' ? f : new File([f], `Скриншот ${new Date().toLocaleTimeString('ru-RU').replace(/:/g, '-')}${i ? `-${i}` : ''}.png`, { type: f.type || 'image/png' }))));
+      this.addFiles(files);
     });
   }
   get busy() { return this.items.some((x) => x.pending); }

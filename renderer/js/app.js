@@ -3,6 +3,7 @@ import { renderChatMarkdown } from './md.js';
 import { state, native, PROVIDER_META, DEFAULT_AGENTS } from './state.js';
 import { CanvasView } from './canvas.js';
 import { NODE_TYPES, imageNodeFromFile } from './nodes.js';
+import { clipboardFiles } from './attach.js';
 import { PenBar, cssColor, colorRow, openColorPicker, toHex, swatch, OBJECT_COLORS } from './pentools.js';
 import { WIDGETS, openWidgetPicker } from './widgets.js';
 import { vaultIndex } from './vaultIndex.js';
@@ -541,8 +542,19 @@ class App {
   }
 
   async onPaste(e) {
-    if (isEditable(document.activeElement) || document.querySelector('.modal-back')) return;
+    if (e.defaultPrevented || document.querySelector('.modal-back')) return;
     const cd = e.clipboardData;
+    // a chat window is selected (or has the focus, but not in its input): a picture or file goes
+    // to its attachments and text into its input — not onto the canvas next to it
+    const chat = this.pasteChatTarget();
+    const ae = document.activeElement;
+    if (chat && (!isEditable(ae) || chat.root.contains(ae))) {
+      const files = clipboardFiles(cd);
+      if (files.length) { e.preventDefault(); chat.attach.addFiles(files); chat.input.focus(); return; }
+      const t = cd.getData('text/plain');
+      if (t && !isEditable(ae) && !/^\{"(vibetabula|canvastty)"/.test(t)) { e.preventDefault(); chat.input.focus(); document.execCommand('insertText', false, t); return; }
+    }
+    if (isEditable(ae)) return;
     const text = cd.getData('text/plain');
     const world = this.canvas.lastPointer && this.pointerInCanvas() ? this.canvas.toWorld(this.canvas.lastPointer.x, this.canvas.lastPointer.y) : this.canvas.centerWorld();
     if (text && (text.startsWith('{"vibetabula"') || text.startsWith('{"canvastty"'))) { try { e.preventDefault(); this.canvas.pastePayload(JSON.parse(text), { x: world.x, y: world.y }); return; } catch {} }
@@ -558,6 +570,10 @@ class App {
         this.canvas.addNode('note', { x: world.x, y: world.y, data: { path: p } });
       } else this.canvas.addNode('sticky', { x: world.x, y: world.y, data: { text } });
     }
+  }
+  pasteChatTarget() {
+    const inst = (id) => { const n = id && this.canvas.node(id); const i = n && (n.type === 'chat' || n.type === 'agentchat') ? this.canvas.views.get(id)?.inst : null; return i?.attach && i.input ? i : null; };
+    return inst(document.activeElement?.closest?.('.node')?.dataset.id) || (this.canvas.selection.size === 1 ? inst([...this.canvas.selection][0]) : null);
   }
   pointerInCanvas() { const r = this.canvas.rect(); const p = this.canvas.lastPointer; return p && p.x >= r.left && p.x <= r.right && p.y >= r.top && p.y <= r.bottom; }
 
