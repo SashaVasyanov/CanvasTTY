@@ -271,13 +271,25 @@ class TerminalInstance {
 // A running chat can outlive its canvas being on screen (the user switched canvas):
 // its results are then written straight into that canvas' file.
 const activeRuns = new Map(); // node id → instance that owns the run
+// The window can be re-created while an answer streams (canvas switched and back, the canvas
+// reloaded after sync): the new window must show that the agent is working, follow the text and
+// be able to stop it, even though the old instance owns the run.
+function runOf(inst) {
+  const r = activeRuns.get(inst.node.id);
+  return r && r !== inst && (r.running || r.streaming) && r.docId === inst.view.doc?.id ? r : null;
+}
+function twinOf(inst) {
+  if (inst.view.doc?.id !== inst.docId) return null;
+  const live = inst.view.views.get(inst.node.id)?.inst;
+  return live && live !== inst ? live : null;
+}
 async function patchNodeData(inst, patch) {
   inst.node = { ...inst.node, data: { ...inst.node.data, ...patch } };
   const view = inst.view;
   if (view.doc?.id === inst.docId && view.node(inst.node.id)) {
     view.setData(inst.node.id, patch);
     const live = view.views.get(inst.node.id)?.inst;
-    if (live && live !== inst) live.renderAll?.(); // the window was re-created meanwhile
+    if (live && live !== inst) { live.renderAll?.(); live.syncRunUi?.(); } // the window was re-created meanwhile
     return;
   }
   try {
@@ -334,7 +346,7 @@ class ChatInstance {
     this.list = h('div', { class: 'chat-list scrollable' });
     this.ctxRow = h('div', { class: 'chat-ctx' });
     this.input = h('textarea', { class: 'chat-input', rows: 2, placeholder: 'Сообщение… (Enter — отправить, Shift+Enter — новая строка)' });
-    this.sendBtn = h('button', { class: 'chat-send', title: 'Отправить', html: icon('send', 16), onclick: () => this.streaming ? this.stop() : this.send() });
+    this.sendBtn = h('button', { class: 'chat-send', title: 'Отправить', html: icon('send', 16), onclick: () => (this.isBusy() ? this.stop() : this.send()) });
     this.attach = new AttachBar({ root: this.root, input: this.input });
     this.list.addEventListener('load', (e) => { if (e.target.tagName === 'IMG' && this.list.scrollHeight - this.list.scrollTop - this.list.clientHeight < 400) this.list.scrollTop = this.list.scrollHeight; }, true);
     this.foot = h('div', { class: 'chat-foot' }, this.attach.button, this.input, this.sendBtn);
@@ -361,6 +373,7 @@ class ChatInstance {
     this.offEdges = bindContext(this);
     this.renderAll();
     this.renderCtx();
+    this.syncRunUi();
   }
 
   async fillProviders() {
@@ -442,32 +455,38 @@ class ChatInstance {
 
   async send() {
     const text = this.input.value.trim();
-    if ((!text && !this.attach.items.length) || this.streaming) return;
+    if ((!text && !this.attach.items.length) || this.isBusy()) return;
     if (this.attach.busy) { toast('Файлы ещё загружаются…'); return; }
     const attachments = this.attach.take();
     this.input.value = ''; this.input.style.height = 'auto';
     this.mentions?.close();
-    // an API chat remembers nothing between requests: the canvas context goes with every one
-    const ctx = await chatContext(this.view, this.node.id, text, null);
-    const ctxAtts = ctx.images.length ? await imagesToAttachments(ctx.images) : [];
-    const msgs = [...this.messages, { role: 'user', content: text, ts: Date.now(), ...(attachments.length ? { attachments } : {}), ...(ctx.labels.length ? { context: ctx.labels } : {}) }];
-    const system = [this.node.data.system, ctx.text ? `Ниже контекст с canvas пользователя: объекты, соединённые с этим чатом стрелкой или упомянутые через @${ctxAtts.length ? ' (картинки приложены к последнему сообщению)' : ''}.\n\n${ctx.text}` : ''].filter(Boolean).join('\n\n');
-    this.renderCtx();
+    // the message and "answering" show at once, the canvas context is collected after that
+    const user = { role: 'user', content: text, ts: Date.now(), ...(attachments.length ? { attachments } : {}) };
+    const msgs = [...this.messages, user];
     const asst = { role: 'assistant', content: '', ts: Date.now() };
     const all = [...msgs, asst];
     this.view.setData(this.node.id, { messages: all });
     if (!this.node.data.title || this.node.data.title === 'Новый чат') this.view.setData(this.node.id, { title: (text || attachments[0]?.name || 'Чат').slice(0, 40) });
-    this.renderAll();
-    const el = this.list.lastElementChild;
-    const textEl = el.querySelector('.msg-text');
-    textEl.innerHTML = '<span class="typing"><i></i><i></i><i></i></span>';
     const reqId = uid('req');
     this.docId = this.view.doc.id; activeRuns.set(this.node.id, this);
-    this.streaming = reqId;
-    this.sendBtn.innerHTML = icon('stop', 15); this.sendBtn.classList.add('stop');
+    this.streaming = reqId; this.preparing = reqId; this._prep = { all, asst };
+    const typing = () => { this.renderAll(); const t = this.list.lastElementChild.querySelector('.msg-text'); t.innerHTML = '<span class="typing"><i></i><i></i><i></i></span>'; return t; };
+    let textEl = typing();
+    this.syncRunUi();
     this.view.syncHead(this.view.node(this.node.id));
+    // an API chat remembers nothing between requests: the canvas context goes with every one
+    let system = this.node.data.system || '', ctxAtts = [];
+    try {
+      const ctx = await chatContext(this.view, this.node.id, text, null);
+      if (ctx.images.length) ctxAtts = await imagesToAttachments(ctx.images);
+      system = [this.node.data.system, ctx.text ? `Ниже контекст с canvas пользователя: объекты, соединённые с этим чатом стрелкой или упомянутые через @${ctxAtts.length ? ' (картинки приложены к последнему сообщению)' : ''}.\n\n${ctx.text}` : ''].filter(Boolean).join('\n\n');
+      if (ctx.labels.length) { user.context = ctx.labels; textEl = typing(); }
+    } catch (e) { console.warn('canvas context', e); }
+    this.renderCtx();
+    this.preparing = null;
+    if (this.streaming !== reqId) return; // stopped while the context was being collected
     let lastPaint = 0, pending = 0;
-    const paintNow = () => { pending = 0; lastPaint = performance.now(); textEl.innerHTML = renderChatMarkdown(asst.content); this.scrollDown(); };
+    const paintNow = () => { pending = 0; lastPaint = performance.now(); textEl.innerHTML = renderChatMarkdown(asst.content); this.scrollDown(); twinOf(this)?.showLive(asst); };
     // long answers: markdown is re-parsed less often (60 ms … 250 ms)
     const paint = () => { if (pending) return; const gap = Math.min(250, Math.max(60, asst.content.length / 40)); const wait = Math.max(0, gap - (performance.now() - lastPaint)); pending = setTimeout(paintNow, wait); };
     chatRoutes.set(reqId, (ev) => {
@@ -494,8 +513,22 @@ class ChatInstance {
     bus.emit('limits:refresh');
   }
 
-  stop() { if (this.streaming) native.chat.abort(this.streaming); }
-  isBusy() { return !!this.streaming; }
+  stop() {
+    if (this.preparing && this.streaming === this.preparing) { const { all, asst } = this._prep; asst.content = '_(остановлено)_'; this.preparing = null; this.finish(this.streaming, all); return; }
+    const r = this.streaming || runOf(this)?.streaming; if (r) native.chat.abort(r);
+  }
+  isBusy() { return !!(this.streaming || runOf(this)); }
+  // send button and header follow a run owned by an earlier instance of this window
+  syncRunUi() { const busy = this.isBusy(); this.sendBtn.innerHTML = icon(busy ? 'stop' : 'send', busy ? 15 : 16); this.sendBtn.classList.toggle('stop', busy); }
+  // the streaming answer, painted into this window by the instance that owns the run
+  showLive(asst) {
+    let el = this.list.querySelector(':scope > .msg.assistant:last-child .msg-text');
+    if (!el) { this.renderAll(); el = this.list.querySelector(':scope > .msg.assistant:last-child .msg-text'); }
+    if (!el) return;
+    el.innerHTML = renderChatMarkdown(asst.content || '') || '<span class="typing"><i></i><i></i><i></i></span>';
+    this.syncRunUi();
+    this.scrollDown();
+  }
   loadConversation({ convId = null, messages = [], title = '', provider, model }) {
     const patch = { convId, messages, title: title || 'Новый чат' };
     if (provider) { patch.provider = provider; patch.model = model || ''; }
@@ -509,7 +542,7 @@ class ChatInstance {
   }
 
   statusInfo() {
-    if (this.streaming) return { label: 'Отвечает…', kind: 'busy' };
+    if (this.streaming || runOf(this)) return { label: 'Отвечает…', kind: 'busy' };
     const m = this.messages[this.messages.length - 1];
     if (m?.error) return { label: 'Ошибка', kind: 'na' };
     return { label: this.messages.length ? `${this.messages.length} сообщ.` : 'Готов', kind: 'idle' };
@@ -571,7 +604,7 @@ class AgentChatInstance {
     this.list = h('div', { class: 'chat-list scrollable' });
     this.ctxRow = h('div', { class: 'chat-ctx' });
     this.input = h('textarea', { class: 'chat-input', rows: 2, placeholder: 'Задача для агента… (Enter — отправить, Shift+Enter — новая строка)' });
-    this.sendBtn = h('button', { class: 'chat-send', title: 'Отправить', html: icon('send', 16), onclick: () => (this.running ? this.stop() : this.send()) });
+    this.sendBtn = h('button', { class: 'chat-send', title: 'Отправить', html: icon('send', 16), onclick: () => (this.isBusy() ? this.stop() : this.send()) });
     this.usage = h('div', { class: 'chat-usage' });
     this.attach = new AttachBar({ root: this.root, input: this.input });
     this.list.addEventListener('load', (e) => { if (e.target.tagName === 'IMG' && this.list.scrollHeight - this.list.scrollTop - this.list.clientHeight < 400) this.list.scrollTop = this.list.scrollHeight; }, true);
@@ -604,6 +637,7 @@ class AgentChatInstance {
     this.renderCwd();
     this.renderAll();
     this.renderCtx();
+    this.syncRunUi();
   }
 
   get agent() { return state.agent(this.node.data.agentId); }
@@ -646,7 +680,19 @@ class AgentChatInstance {
   }
   async pickCwd() { const p = await native.dialog.folder('Рабочая папка агента'); if (p) { this.view.setData(this.node.id, { cwd: p }); this.renderCwd(); } }
   newSession() { if (this.isBusy()) return; this.hist.newChat(); toast('Новый чат: прошлый сохранён в истории'); }
-  isBusy() { return !!this.running; }
+  isBusy() { return !!(this.running || runOf(this)); }
+  syncRunUi() { const busy = this.isBusy(); this.sendBtn.innerHTML = icon(busy ? 'stop' : 'send', busy ? 15 : 16); this.sendBtn.classList.toggle('stop', busy); }
+  // the streaming answer, painted into this window by the instance that owns the run
+  showLive(asst) {
+    const find = () => this.list.querySelector(':scope > .msg.assistant:last-child .msg-body');
+    let body = find();
+    if (!body) { this.renderAll(); body = find(); }
+    if (!body) return;
+    const l = this.list, stick = l.scrollHeight - l.scrollTop - l.clientHeight < 120;
+    this.renderParts(asst, body);
+    if (stick) l.scrollTop = l.scrollHeight;
+    this.syncRunUi();
+  }
   loadConversation({ convId = null, messages = [], title = '', sessionId = null, cwd, model, actualModel }) {
     const patch = { convId, messages, title: title || '', sessionId, ctxHash: null, actualModel: actualModel || model || null };
     if (cwd) patch.cwd = cwd;
@@ -733,33 +779,40 @@ class AgentChatInstance {
 
   async send() {
     const text = this.input.value.trim();
-    if ((!text && !this.attach.items.length) || this.running) return;
+    if ((!text && !this.attach.items.length) || this.isBusy()) return;
     if (this.attach.busy) { toast('Файлы ещё загружаются…'); return; }
     const attachments = this.attach.take();
     this.input.value = ''; this.input.style.height = 'auto';
     this.mentions?.close();
-    // the agent keeps its session: linked objects go again only when they changed (a new chat
-    // starts without ctxHash), objects named with @ always go with their message
-    let prompt = text;
-    const ctx = await chatContext(this.view, this.node.id, text, this.node.data.ctxHash);
-    const ctxAtts = ctx.images.length ? await imagesToAttachments(ctx.images) : [];
-    if (ctx.text) prompt = `Контекст с canvas пользователя: объекты, соединённые с этим чатом стрелкой или упомянутые через @${ctxAtts.length ? '. Картинки из контекста приложены к сообщению' : ''}.\n\n${ctx.text}\n\n---\n\n${text}`;
-    if (ctx.linkedSig !== (this.node.data.ctxHash || null)) this.view.setData(this.node.id, { ctxHash: ctx.linkedSig });
-    this.renderCtx();
-    const user = { role: 'user', content: text, ts: Date.now(), ...(attachments.length ? { attachments } : {}), ...(ctx.labels.length ? { context: ctx.labels } : {}) };
+    // the message and "working" show at once; collecting the canvas context (pictures of a big
+    // area) may take a moment and happens after that
+    const user = { role: 'user', content: text, ts: Date.now(), ...(attachments.length ? { attachments } : {}) };
     const asst = { role: 'assistant', content: '', parts: [], running: true, ts: Date.now() };
     const all = [...this.messages, user, asst];
     this.view.setData(this.node.id, { messages: all });
     if (!this.node.data.title) this.view.setData(this.node.id, { title: (text || attachments[0]?.name || 'Задача').slice(0, 40) });
-    this.renderAll();
-    const body = this.list.lastElementChild.querySelector('.msg-body');
     const reqId = uid('ag');
     this.docId = this.view.doc.id; activeRuns.set(this.node.id, this);
-    this.running = reqId;
-    this.sendBtn.innerHTML = icon('stop', 15); this.sendBtn.classList.add('stop');
+    this.running = reqId; this.preparing = reqId; this._prep = { all, asst };
+    this.renderAll();
+    let body = this.list.lastElementChild.querySelector('.msg-body');
+    this.syncRunUi();
     this.syncHead();
+    // the agent keeps its session: linked objects go again only when they changed (a new chat
+    // starts without ctxHash), objects named with @ always go with their message
+    let prompt = text, ctxAtts = [];
+    try {
+      const ctx = await chatContext(this.view, this.node.id, text, this.node.data.ctxHash);
+      if (ctx.images.length) ctxAtts = await imagesToAttachments(ctx.images);
+      if (ctx.text) prompt = `Контекст с canvas пользователя: объекты, соединённые с этим чатом стрелкой или упомянутые через @${ctxAtts.length ? '. Картинки из контекста приложены к сообщению' : ''}.\n\n${ctx.text}\n\n---\n\n${text}`;
+      if (ctx.linkedSig !== (this.node.data.ctxHash || null)) this.view.setData(this.node.id, { ctxHash: ctx.linkedSig });
+      if (ctx.labels.length) { user.context = ctx.labels; this.renderAll(); body = this.list.lastElementChild.querySelector('.msg-body'); }
+    } catch (e) { console.warn('canvas context', e); }
+    this.renderCtx();
+    this.preparing = null;
+    if (this.running !== reqId) return; // stopped while the context was being collected
     let newText = true;
-    const paint = throttle(() => { const l = this.list; const stick = l.scrollHeight - l.scrollTop - l.clientHeight < 120; this.renderParts(asst, body); if (stick) l.scrollTop = l.scrollHeight; }, 70);
+    const paint = throttle(() => { const l = this.list; const stick = l.scrollHeight - l.scrollTop - l.clientHeight < 120; this.renderParts(asst, body); if (stick) l.scrollTop = l.scrollHeight; twinOf(this)?.showLive(asst); }, 70);
     const lastText = () => { const l = asst.parts[asst.parts.length - 1]; if (newText || !l || l.type !== 'text') { const p = { type: 'text', text: '' }; asst.parts.push(p); newText = false; return p; } return l; };
     chatRoutes.set(reqId, (ev) => {
       switch (ev.type) {
@@ -801,10 +854,14 @@ class AgentChatInstance {
     bus.emit('limits:refresh');
   }
 
-  stop() { if (this.running) native.agentChat.abort(this.running); }
+  stop() {
+    // stopped before the agent even started (still collecting the context): nothing to abort
+    if (this.preparing && this.running === this.preparing) { const { all, asst } = this._prep; this.preparing = null; this.finish(this.running, all, asst, { aborted: true }); return; }
+    const r = this.running || runOf(this)?.running; if (r) native.agentChat.abort(r);
+  }
   syncHead() { this.view.syncHead(this.view.node(this.node.id) || this.node); bus.emit('agents'); }
   statusInfo() {
-    if (this.running) return { label: 'Работает', kind: 'busy' };
+    if (this.running || runOf(this)) return { label: 'Работает', kind: 'busy' };
     const m = this.messages[this.messages.length - 1];
     if (m && (m.parts || []).some((p) => p.type === 'error')) return { label: 'Ошибка', kind: 'na' };
     if (m && m.needsInput) return { label: 'Нужно разрешение', kind: 'wait' };

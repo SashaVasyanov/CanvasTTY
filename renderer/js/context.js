@@ -5,6 +5,7 @@ import { h, icon } from './util.js';
 import { native } from './state.js';
 import { htmlText } from './sanitize.js';
 import { NODE_TYPES } from './nodes.js';
+import { vaultIndex } from './vaultIndex.js';
 
 export const CONTEXT_TYPES = ['frame', 'note', 'sticky', 'text', 'shape', 'image', 'chat', 'agentchat', 'terminal', 'web', 'widget'];
 const TYPE_LABEL = { frame: 'Область', note: 'Заметка', sticky: 'Стикер', text: 'Текст', shape: 'Фигура', image: 'Картинка', chat: 'API-чат', agentchat: 'Чат агента', terminal: 'Терминал', web: 'Ссылка', widget: 'Виджет' };
@@ -132,6 +133,12 @@ export async function imagesToAttachments(images) {
   const out = [];
   for (const n of images) {
     try {
+      // a picture from the vault is copied file to file by the main process (fast for big images)
+      if (n.data.vault && vaultIndex.root && native.attach?.importPath) {
+        const key = `vault|${n.data.vault}`;
+        if (!attCache.has(key)) attCache.set(key, native.attach.importPath(`${vaultIndex.root.replace(/[\\/]+$/, '')}/${n.data.vault}`));
+        try { out.push(await attCache.get(key)); continue; } catch { attCache.delete(key); }
+      }
       const url = n.data.vault ? await native.vault.readAsset(n.data.vault) : n.data.src;
       if (!url) continue;
       const key = `${n.data.vault || ''}|${url.length}|${url.slice(-64)}`;

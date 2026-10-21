@@ -6,6 +6,8 @@ const LS = {
 const listeners = {};
 const on = (ch) => (cb) => { (listeners[ch] = listeners[ch] || []).push(cb); return () => { listeners[ch] = listeners[ch].filter((f) => f !== cb); }; };
 const emit = (ch, p) => (listeners[ch] || []).forEach((f) => f(p));
+// tests drive streaming answers and other main-process events through this
+window.__mockEmit = emit;
 
 const files = LS.get('mock:vault', null) || {
   'Добро пожаловать в VibeTabula.md': '# Добро пожаловать в VibeTabula\n\nЭто хранилище заметок — обычная папка с файлами **Markdown**, совместимая с Obsidian.\n\n## Что умеют заметки\n- [x] Ссылки между заметками: [[Идеи]]\n- [ ] Теги: #старт #canvas\n- [ ] Перетащите заметку из списка слева на canvas\n\n> Панель инструментов сверху работает как в Apple Notes.\n',
