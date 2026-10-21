@@ -10,6 +10,7 @@ import { vaultIndex } from './vaultIndex.js';
 import { mountHub } from './hub.js';
 import { ChatHistory, saveConversation } from './chathistory.js';
 import { AttachBar, renderAttachments } from './attach.js';
+import { chatContext, imagesToAttachments, renderContextRow, renderContextNote, attachMentions } from './context.js';
 
 // ---------------- routers for main-process events ----------------
 const ptyRoutes = new Map();
@@ -54,35 +55,17 @@ const termTheme = () => (document.documentElement.dataset.theme === 'light' ? TE
 const stripAnsi = (s) => s.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '').replace(/\x1b\][^\x07\x1b]*(\x07|\x1b\\)/g, '').replace(/\x1b[()][0-9A-B]/g, '').replace(/\r/g, '');
 
 
-// ---------------- canvas context shared by chat windows ----------------
-const CTX_TYPES = ['note', 'sticky', 'text', 'chat', 'agentchat', 'terminal', 'shape', 'web'];
-function ctxNodes(view, id) { return view.connected(id).filter((n) => CTX_TYPES.includes(n.type)); }
-function renderCtxRow(row, view, id) {
-  const nodes = ctxNodes(view, id);
-  row.innerHTML = '';
-  if (!nodes.length) { row.style.display = 'none'; return; }
-  row.style.display = 'flex';
-  row.append(h('span', { class: 'muted' }, 'Контекст:'));
-  for (const n of nodes) {
-    const t = NODE_TYPES[n.type];
-    const label = t.title ? t.title(n) : n.type;
-    row.append(h('span', { class: 'ctx-chip', title: label, onclick: () => view.focusNode(n.id) }, label.slice(0, 26)));
-  }
+// ---------------- canvas context shared by chat windows (see context.js) ----------------
+// keeps the chips under the input current: arrows, @ in the text, what is inside linked areas
+function bindContext(inst) {
+  const { view } = inst;
+  inst.mentions = attachMentions(inst.input, { view, selfId: inst.node.id });
+  const soon = debounce(() => inst.renderCtx(), 250);
+  inst.input.addEventListener('input', soon);
+  const offs = [view.on('edges', () => inst.renderCtx()), view.on('changed', soon)];
+  return () => { offs.forEach((f) => f?.()); inst.mentions.close(); };
 }
-async function buildContextText(view, id) {
-  const parts = [];
-  for (const n of ctxNodes(view, id)) {
-    try {
-      if (n.type === 'note' && n.data.path) parts.push(`### Заметка «${n.data.path.replace(/\.md$/, '')}»\n${await native.vault.read(n.data.path)}`);
-      else if (n.type === 'sticky' || n.type === 'shape') { if (n.data.text) parts.push(`### Стикер\n${n.data.text}`); }
-      else if (n.type === 'text') { const t = htmlText(n.data.html); if (t.trim()) parts.push(`### Текст\n${t}`); }
-      else if (n.type === 'chat' || n.type === 'agentchat') { const last = [...(n.data.messages || [])].reverse().find((m) => m.role === 'assistant' && m.content); if (last) parts.push(`### Ответ из чата «${NODE_TYPES[n.type].title(n)}»\n${last.content}`); }
-      else if (n.type === 'terminal') { const inst = view.views.get(n.id)?.inst; const t = inst?.tailText?.(); if (t) parts.push(`### Вывод терминала «${NODE_TYPES.terminal.title(n)}» (последние строки)\n\`\`\`\n${t}\n\`\`\``); }
-      else if (n.type === 'web' && n.data.url) parts.push(`### Ссылка\n${n.data.url}`);
-    } catch {}
-  }
-  return parts.join('\n\n');
-}
+const CTX_HINT = 'Соедините стрелкой с этим окном область, заметку, картинку или другой объект — или упомяните его в сообщении через @. Всё это уйдёт как контекст: текст в запрос, картинки — вложениями.';
 
 // =====================================================================
 // Terminal / agent
@@ -364,8 +347,9 @@ class ChatInstance {
     this.providerSel.addEventListener('change', () => { const p = this.providerSel.value; this.view.setData(node.id, { provider: p, model: '' }); this.modelInput.value = ''; this.modelInput.placeholder = this.providers?.[p]?.model || 'модель'; this.view.syncHead(this.view.node(node.id)); });
     this.modelInput.addEventListener('change', () => this.view.setData(node.id, { model: this.modelInput.value.trim() }));
     this.input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); this.send(); }
       e.stopPropagation();
+      if (this.mentions?.handleKey(e)) return;
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); this.send(); }
     });
     this.input.addEventListener('input', () => { this.input.style.height = 'auto'; this.input.style.height = `${Math.min(160, this.input.scrollHeight)}px`; });
     this.list.addEventListener('click', (e) => {
@@ -374,7 +358,7 @@ class ChatInstance {
       const act = e.target.closest('[data-act]');
       if (act) this.msgAction(act.dataset.act, +act.dataset.i);
     });
-    this.offEdges = view.on('edges', () => this.renderCtx());
+    this.offEdges = bindContext(this);
     this.renderAll();
     this.renderCtx();
   }
@@ -405,7 +389,7 @@ class ChatInstance {
     if (!this.messages.length) {
       this.list.append(h('div', { class: 'chat-empty' },
         h('div', { class: 'chat-empty-title' }, 'Новый чат'),
-        h('div', { class: 'muted' }, 'Соедините заметки, стикеры или терминалы с этим чатом стрелкой — они попадут в контекст.')));
+        h('div', { class: 'muted small' }, CTX_HINT)));
     }
     renderWindowed(this);
     if (!this._keepScroll) this.scrollDown(true);
@@ -413,7 +397,7 @@ class ChatInstance {
 
   renderMsg(m, i) {
     const el = h('div', { class: `msg ${m.role}${m.error ? ' error' : ''}` });
-    if (m.role === 'user') { const atts = renderAttachments(m.attachments); if (atts) el.append(atts); if (m.content) el.append(h('div', { class: 'msg-text' }, m.content)); }
+    if (m.role === 'user') { const atts = renderAttachments(m.attachments); if (atts) el.append(atts); if (m.content) el.append(h('div', { class: 'msg-text' }, m.content)); const ctx = renderContextNote(m.context); if (ctx) el.append(ctx); }
     else {
       if (m.reasoning) el.append(h('details', { class: 'msg-reason' }, h('summary', {}, 'Размышления'), h('div', { class: 'reason-text' }, m.reasoning)));
       el.append(h('div', { class: 'msg-text md', html: m.error ? esc(m.content) : renderChatMarkdown(m.content) }));
@@ -454,9 +438,7 @@ class ChatInstance {
     if (force || l.scrollHeight - l.scrollTop - l.clientHeight < 120) l.scrollTop = l.scrollHeight;
   }
 
-  contextNodes() { return ctxNodes(this.view, this.node.id); }
-  renderCtx() { renderCtxRow(this.ctxRow, this.view, this.node.id); }
-  buildContext() { return buildContextText(this.view, this.node.id); }
+  renderCtx() { renderContextRow(this.ctxRow, this.view, this.node.id, this.input.value); }
 
   async send() {
     const text = this.input.value.trim();
@@ -464,9 +446,13 @@ class ChatInstance {
     if (this.attach.busy) { toast('Файлы ещё загружаются…'); return; }
     const attachments = this.attach.take();
     this.input.value = ''; this.input.style.height = 'auto';
-    const msgs = [...this.messages, { role: 'user', content: text, ts: Date.now(), ...(attachments.length ? { attachments } : {}) }];
-    const ctx = await this.buildContext();
-    const system = [this.node.data.system, ctx ? `Ниже контекст, связанный с этим чатом на canvas пользователя:\n\n${ctx}` : ''].filter(Boolean).join('\n\n');
+    this.mentions?.close();
+    // an API chat remembers nothing between requests: the canvas context goes with every one
+    const ctx = await chatContext(this.view, this.node.id, text, null);
+    const ctxAtts = ctx.images.length ? await imagesToAttachments(ctx.images) : [];
+    const msgs = [...this.messages, { role: 'user', content: text, ts: Date.now(), ...(attachments.length ? { attachments } : {}), ...(ctx.labels.length ? { context: ctx.labels } : {}) }];
+    const system = [this.node.data.system, ctx.text ? `Ниже контекст с canvas пользователя: объекты, соединённые с этим чатом стрелкой или упомянутые через @${ctxAtts.length ? ' (картинки приложены к последнему сообщению)' : ''}.\n\n${ctx.text}` : ''].filter(Boolean).join('\n\n');
+    this.renderCtx();
     const asst = { role: 'assistant', content: '', ts: Date.now() };
     const all = [...msgs, asst];
     this.view.setData(this.node.id, { messages: all });
@@ -490,7 +476,8 @@ class ChatInstance {
       else if (ev.type === 'error') { asst.content = `⚠ ${ev.message}`; asst.error = true; this.finish(reqId, all); }
       else if (ev.type === 'done') { if (ev.usage) { asst.usage = ev.usage; } if (!asst.content && ev.aborted) asst.content = '_(остановлено)_'; this.finish(reqId, all); }
     });
-    await native.chat.send({ reqId, provider: this.node.data.provider || 'openai', model: this.node.data.model, system, messages: msgs.map(({ role, content, attachments: a }) => ({ role, content, ...(a?.length ? { attachments: a } : {}) })), settings: state.settings });
+    const req = msgs.map(({ role, content, attachments: a }, i) => { const all = i === msgs.length - 1 ? [...(a || []), ...ctxAtts] : a || []; return { role, content, ...(all.length ? { attachments: all } : {}) }; });
+    await native.chat.send({ reqId, provider: this.node.data.provider || 'openai', model: this.node.data.model, system, messages: req, settings: state.settings });
   }
 
   async finish(reqId, all) {
@@ -605,7 +592,7 @@ class AgentChatInstance {
     this.effortSel.addEventListener('change', () => { this.view.setData(this.node.id, { effort: this.effortSel.value }); this.renderInfo(); });
     this.modeSel.value = node.data.mode || (AGENT_MODES[this.kind] || [[]])[0][0];
     this.modeSel.addEventListener('change', () => this.view.setData(this.node.id, { mode: this.modeSel.value }));
-    this.input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); this.send(); } e.stopPropagation(); });
+    this.input.addEventListener('keydown', (e) => { e.stopPropagation(); if (this.mentions?.handleKey(e)) return; if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); this.send(); } });
     this.input.addEventListener('input', () => { this.input.style.height = 'auto'; this.input.style.height = `${Math.min(160, this.input.scrollHeight)}px`; });
     this.list.addEventListener('click', (e) => {
       const btn = e.target.closest('[data-copy]');
@@ -613,7 +600,7 @@ class AgentChatInstance {
       const act = e.target.closest('[data-act]');
       if (act) this.msgAction(act.dataset.act, +act.dataset.i);
     });
-    this.offEdges = view.on('edges', () => this.renderCtx());
+    this.offEdges = bindContext(this);
     this.renderCwd();
     this.renderAll();
     this.renderCtx();
@@ -668,7 +655,7 @@ class AgentChatInstance {
     this.usage.textContent = sessionId ? `сессия ${String(sessionId).slice(0, 8)}` : '';
     this.renderCwd(); this.renderInfo(); this.renderAll(); this.syncHead();
   }
-  renderCtx() { renderCtxRow(this.ctxRow, this.view, this.node.id); }
+  renderCtx() { renderContextRow(this.ctxRow, this.view, this.node.id, this.input.value); }
 
   renderAll() {
     this.list.innerHTML = '';
@@ -678,7 +665,7 @@ class AgentChatInstance {
         badge(a.mono, a.color, 34, a.dark),
         h('div', { class: 'chat-empty-title' }, `${a.name} — чат`),
         h('div', { class: 'muted' }, 'Работает по вашей подписке и входу в CLI, без API-ключа. Агент действует в папке, показанной сверху; его команды и правки появятся в ленте.'),
-        h('div', { class: 'muted small' }, 'Соедините стрелкой заметку или стикер с этим окном — они уйдут агенту как контекст.')));
+        h('div', { class: 'muted small' }, CTX_HINT)));
     }
     renderWindowed(this);
     if (!this._keepScroll) this.list.scrollTop = this.list.scrollHeight;
@@ -722,7 +709,7 @@ class AgentChatInstance {
 
   renderMsg(m, i) {
     const el = h('div', { class: `msg ${m.role}` });
-    if (m.role === 'user') { const atts = renderAttachments(m.attachments); if (atts) el.append(atts); if (m.content) el.append(h('div', { class: 'msg-text' }, m.content)); }
+    if (m.role === 'user') { const atts = renderAttachments(m.attachments); if (atts) el.append(atts); if (m.content) el.append(h('div', { class: 'msg-text' }, m.content)); const ctx = renderContextNote(m.context); if (ctx) el.append(ctx); }
     else { const body = h('div', { class: 'msg-body' }); this.renderParts(m, body); el.append(body); }
     if (!m.running) el.append(h('div', { class: 'msg-actions' },
       h('button', { 'data-act': 'copy', 'data-i': i, title: 'Копировать', html: icon('copy', 12) }),
@@ -750,14 +737,16 @@ class AgentChatInstance {
     if (this.attach.busy) { toast('Файлы ещё загружаются…'); return; }
     const attachments = this.attach.take();
     this.input.value = ''; this.input.style.height = 'auto';
+    this.mentions?.close();
+    // the agent keeps its session: linked objects go again only when they changed (a new chat
+    // starts without ctxHash), objects named with @ always go with their message
     let prompt = text;
-    const ctx = await buildContextText(this.view, this.node.id);
-    const hash = ctx ? String(ctx.length) + ctx.slice(0, 200) + ctx.slice(-200) : null;
-    if (ctx && hash !== this.node.data.ctxHash) {
-      prompt = `Контекст с canvas пользователя (заметки и связанные окна):\n\n${ctx}\n\n---\n\n${text}`;
-      this.view.setData(this.node.id, { ctxHash: hash });
-    }
-    const user = { role: 'user', content: text, ts: Date.now(), ...(attachments.length ? { attachments } : {}) };
+    const ctx = await chatContext(this.view, this.node.id, text, this.node.data.ctxHash);
+    const ctxAtts = ctx.images.length ? await imagesToAttachments(ctx.images) : [];
+    if (ctx.text) prompt = `Контекст с canvas пользователя: объекты, соединённые с этим чатом стрелкой или упомянутые через @${ctxAtts.length ? '. Картинки из контекста приложены к сообщению' : ''}.\n\n${ctx.text}\n\n---\n\n${text}`;
+    if (ctx.linkedSig !== (this.node.data.ctxHash || null)) this.view.setData(this.node.id, { ctxHash: ctx.linkedSig });
+    this.renderCtx();
+    const user = { role: 'user', content: text, ts: Date.now(), ...(attachments.length ? { attachments } : {}), ...(ctx.labels.length ? { context: ctx.labels } : {}) };
     const asst = { role: 'assistant', content: '', parts: [], running: true, ts: Date.now() };
     const all = [...this.messages, user, asst];
     this.view.setData(this.node.id, { messages: all });
@@ -788,7 +777,7 @@ class AgentChatInstance {
       }
       paint();
     });
-    await native.agentChat.run({ reqId, kind: this.kind, cmd: this.agent.cmd || this.kind, prompt, sessionId: this.node.data.sessionId, mode: this.modeSel.value, model: this.node.data.model || '', effort: this.node.data.effort || '', cwd: this.cwd, attachments });
+    await native.agentChat.run({ reqId, kind: this.kind, cmd: this.agent.cmd || this.kind, prompt, sessionId: this.node.data.sessionId, mode: this.modeSel.value, model: this.node.data.model || '', effort: this.node.data.effort || '', cwd: this.cwd, attachments: [...attachments, ...ctxAtts] });
   }
 
   async finish(reqId, all, asst, ev) {

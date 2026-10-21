@@ -352,7 +352,17 @@ svg.guides line { stroke: #ff5ca8; stroke-width: 1; }
 .msg-reason summary { cursor: pointer; }
 .reason-text { white-space: pre-wrap; border-left: 2px solid var(--line-2); padding-left: 8px; margin-top: 4px; max-height: 200px; overflow: auto; }
 .chat-ctx { display: none; gap: 5px; flex-wrap: wrap; align-items: center; padding: 6px 10px; border-top: 1px solid var(--line); font-size: 11.5px; }
-.ctx-chip { background: rgba(124, 140, 255, 0.14); color: #c3cbff; padding: 1px 8px; border-radius: 10px; cursor: pointer; white-space: nowrap; }
+.ctx-chip { display: inline-flex; align-items: center; gap: 4px; background: rgba(124, 140, 255, 0.14); color: #c3cbff; padding: 1px 8px; border-radius: 10px; cursor: pointer; white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.ctx-chip.at { background: color-mix(in srgb, var(--green) 16%, transparent); color: color-mix(in srgb, var(--green) 70%, var(--text-strong)); }
+.ctx-ic { display: inline-flex; opacity: 0.8; flex: none; }
+/* in a sent message: what came from the canvas */
+.msg-ctx { display: flex; align-items: center; gap: 5px; margin-top: 6px; font-size: 11px; color: var(--muted); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msg.user .msg-ctx { justify-content: flex-end; }
+/* @ in a chat input */
+.mention-pop { min-width: 260px; max-width: 420px; padding: 5px; }
+.mention-head { padding: 4px 8px 6px; font-size: 11px; font-weight: 650; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+.mention-empty { padding: 6px 10px; color: var(--muted); font-size: 12px; }
+.mention-pop .menu-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-foot { display: flex; gap: 8px; align-items: flex-end; padding: 8px; border-top: 1px solid var(--line); }
 .chat-input { flex: 1; resize: none; min-height: 38px; max-height: 160px; padding: 9px 12px; border-radius: 10px; background: rgba(var(--sink-rgb), 0.3); border: 1px solid var(--line-2); outline: none; line-height: 1.4; }
 .chat-input:focus { border-color: var(--accent); }
@@ -746,6 +756,7 @@ button.ly-twisty:hover { background: rgba(var(--fg-rgb), 0.08); color: var(--tex
 .pet-slot-img img { width: 100%; height: 100%; object-fit: contain; }
 .pet-slot-label { font-size: 12px; color: var(--text-2); }
 :root[data-theme="light"] .ctx-chip { color: var(--accent-2); background: rgba(91, 108, 240, 0.12); }
+:root[data-theme="light"] .ctx-chip.at { color: color-mix(in srgb, var(--green) 75%, #000); background: color-mix(in srgb, var(--green) 14%, transparent); }
 
 /* agent chat: model / effort / folder */
 .agent-bar { flex-wrap: wrap; gap: 6px 8px; align-items: flex-end; }

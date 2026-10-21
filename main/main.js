@@ -10,6 +10,18 @@ const { getLimits } = require('./limits');
 const { AgentChatManager, agentDefaults } = require('./agentchat');
 const { HistoryStore, listSessions, readSession } = require('./history');
 const { Attachments } = require('./attachments');
+// automated tests run the app against a throw-away profile: settings, canvases, chats and the
+// notes vault all live in that folder, never in the user's own data
+function useTestHome() {
+  if (!process.env.VIBETABULA_TEST_HOME) return false;
+  const home = path.resolve(process.env.VIBETABULA_TEST_HOME);
+  app.setPath('home', home);
+  app.setPath('appData', path.join(home, 'AppData'));
+  app.setPath('userData', path.join(home, 'AppData', 'VibeTabula'));
+  app.setPath('documents', path.join(home, 'Documents'));
+  return true;
+}
+useTestHome();
 const attachments = new Attachments(app.getPath('userData'));
 const { SyncManager } = require('./sync');
 const codexPets = require('./codexpets');
@@ -32,6 +44,7 @@ function fixPath() {
 fixPath();
 
 app.setName('VibeTabula');
+useTestHome(); // setName must not move a test profile back to the real one
 // The app used to be called CanvasTTY: its data folder (workspace, canvases, chats, approved
 // commands…) moves to the new name once. If Electron already created the new folder at start-up
 // (crash reporter, caches), the old entries are moved into it; if moving is impossible, the old

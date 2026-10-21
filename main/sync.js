@@ -326,4 +326,4 @@ class SyncManager {
   }
 }
 
-module.exports = { SyncManager };
+module.exports = { SyncManager, mergeDocs };
