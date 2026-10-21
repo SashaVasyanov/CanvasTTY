@@ -4,6 +4,7 @@
 // One shared 1-second ticker drives every visible widget (off-screen ones are skipped).
 import { h, icon, uid, toast, relTime, bus } from './util.js';
 import { state } from './state.js';
+import { popover, colorRow, cssColor, OBJECT_COLORS } from './pentools.js';
 
 const pad2 = (n) => String(n).padStart(2, '0');
 const fmtDur = (ms) => { const s = Math.max(0, Math.round(ms / 1000)); const hh = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60; return hh ? `${hh}:${pad2(m)}:${pad2(sec)}` : `${pad2(m)}:${pad2(sec)}`; };
@@ -160,13 +161,22 @@ export const WIDGETS = {
   },
 
   calendar: {
-    name: 'Календарь', icon: 'calendar', desc: 'Месяц с сегодняшним днём', size: { w: 300, h: 300 },
-    defaults: () => ({ offset: 0 }),
+    name: 'Календарь', icon: 'calendar', desc: 'Месяц с сегодняшним днём, заметки и цвет у дней', size: { w: 320, h: 320 },
+    defaults: () => ({ offset: 0, notes: {} }),
     mount(w) {
       const head = h('div', { class: 'wg-cal-head' });
       const grid = h('div', { class: 'wg-cal' });
       w.body.append(head, grid);
       let dayKey = '';
+      const notes = () => w.data.notes || {};
+      // one day: { text, color }; an empty day is removed
+      const setNote = (key, patch, undoable = true) => {
+        const all = { ...notes() };
+        const next = { ...(all[key] || {}), ...patch };
+        if (!String(next.text || '').trim() && !next.color) delete all[key];
+        else all[key] = { text: String(next.text || '').replace(/\s+$/, ''), color: next.color || null };
+        w.set({ notes: all }, undoable);
+      };
       const render = () => {
         const now = new Date();
         const base = new Date(now.getFullYear(), now.getMonth() + (w.data.offset || 0), 1);
@@ -176,7 +186,7 @@ export const WIDGETS = {
         prev.style.transform = 'scaleX(-1)';
         prev.addEventListener('click', (e) => { e.stopPropagation(); w.set({ offset: (w.data.offset || 0) - 1 }, false, true); });
         next.addEventListener('click', (e) => { e.stopPropagation(); w.set({ offset: (w.data.offset || 0) + 1 }, false, true); });
-        const title = h('button', { class: 'wg-cal-title', title: 'К сегодняшнему дню' }, base.toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' }));
+        const title = h('button', { class: 'wg-cal-title', title: 'К сегодняшнему дню' }, base.toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' }).replace(/\s*г\.$/, ''));
         title.addEventListener('click', (e) => { e.stopPropagation(); w.set({ offset: 0 }, false, true); });
         head.replaceChildren(prev, title, next);
         const cells = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'].map((d, i) => h('div', { class: `wg-dow${i > 4 ? ' we' : ''}` }, d));
@@ -185,12 +195,62 @@ export const WIDGETS = {
         for (let d = 1; d <= days; d++) {
           const isToday = d === now.getDate() && base.getMonth() === now.getMonth() && base.getFullYear() === now.getFullYear();
           const wd = (first + d - 1) % 7;
-          cells.push(h('div', { class: `wg-day${isToday ? ' today' : ''}${wd > 4 ? ' we' : ''}` }, String(d)));
+          const key = `${base.getFullYear()}-${pad2(base.getMonth() + 1)}-${pad2(d)}`;
+          const note = notes()[key];
+          const cell = h('button', { class: `wg-day drag-ok${isToday ? ' today' : ''}${wd > 4 ? ' we' : ''}${note?.color ? ' marked' : ''}${note?.text ? ' has-note' : ''}` }, h('span', { class: 'wg-dn' }, String(d)));
+          if (note?.color) cell.style.setProperty('--dc', cssColor(note.color, 'blue'));
+          if (note?.text) cell.append(h('span', { class: 'wg-dot' }), h('span', { class: 'wg-dtext' }, note.text));
+          const date = new Date(base.getFullYear(), base.getMonth(), d);
+          const label = date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', weekday: 'long' });
+          cell.title = note?.text ? `${label}\n${note.text}` : `${label}: нажмите, чтобы добавить заметку или цвет`;
+          cell.addEventListener('click', (e) => { e.stopPropagation(); openDayNote(cell, label, key); });
+          cells.push(cell);
         }
         grid.replaceChildren(...cells);
       };
+      // Apple-style popover: the day's note and its colour; the colour applies at once,
+      // the text is saved when the popover closes (one undo step)
+      const openDayNote = (anchor, label, key) => {
+        const r = anchor.getBoundingClientRect();
+        let finish = null;
+        popover(anchor, 'wg-daypop', (pop, close) => {
+          const start = notes()[key] || {};
+          let color = start.color || null;
+          const text = h('textarea', { class: 'wg-daytext', placeholder: 'Заметка на этот день…', rows: 3 });
+          text.value = start.text || '';
+          text.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); close(); } });
+          const colors = h('div', { class: 'wg-daycolors' });
+          let picking = false;
+          const pick = (c, undoable = true) => { color = c; setNote(key, { text: text.value, color: c }, undoable); paintColors(); if (!document.querySelector('.pb-picker')) text.focus(); };
+          const paintColors = () => {
+            const none = h('button', { class: `pb-swatch wg-nocolor${color ? '' : ' on'}`, title: 'Без цвета' }, h('span', { class: 'pb-dot' }));
+            none.addEventListener('click', (e) => { e.stopPropagation(); pick(null); });
+            colors.replaceChildren(none, ...colorRow({ colors: OBJECT_COLORS, current: color, onPick: (c) => pick(c), onLive: (c) => { pick(c, !picking); picking = true; }, onOpen: () => { picking = false; } }));
+          };
+          paintColors();
+          const del = h('button', { class: 'btn sm danger', onclick: () => { text.value = ''; color = null; pop._deleted = true; close(); } }, 'Удалить');
+          pop.append(
+            h('div', { class: 'wg-dayhead' }, h('span', { class: 'wg-daylabel' }, label), h('span', { class: 'flex' }), h('button', { class: 'pk-tool', title: 'Закрыть', html: icon('x', 15), onclick: close })),
+            text, colors,
+            h('div', { class: 'wg-dayfoot' }, start.text || start.color ? del : h('span'), h('span', { class: 'flex' }), h('button', { class: 'btn sm primary', onclick: close }, 'Готово')));
+          finish = () => {
+            if (pop._deleted) { if (notes()[key]) setNote(key, { text: '', color: null }); return; }
+            if (text.value.replace(/\s+$/, '') !== String(notes()[key]?.text || '')) setNote(key, { text: text.value, color });
+          };
+          setTimeout(() => { text.focus(); text.setSelectionRange(text.value.length, text.value.length); }, 30);
+        }, { above: r.top > innerHeight / 2, onClose: () => finish?.() });
+      };
       render();
-      return { update: render, tick: () => { const now = new Date(); if (now.toDateString() + (w.data.offset || 0) !== dayKey) render(); } };
+      return {
+        update: render,
+        tick: () => { const now = new Date(); if (now.toDateString() + (w.data.offset || 0) !== dayKey) render(); },
+        menu: () => {
+          const now = new Date(), base = new Date(now.getFullYear(), now.getMonth() + (w.data.offset || 0), 1);
+          const prefix = `${base.getFullYear()}-${pad2(base.getMonth() + 1)}-`;
+          const n = Object.keys(notes()).filter((k) => k.startsWith(prefix)).length;
+          return [{ label: 'Очистить заметки месяца', icon: 'trash', disabled: !n, onClick: () => { const all = { ...notes() }; for (const k of Object.keys(all)) if (k.startsWith(prefix)) delete all[k]; w.set({ notes: all }, true); } }];
+        },
+      };
     },
   },
 
@@ -294,6 +354,10 @@ export function mountWidget({ node, view, body, el }) {
   const wbody = h('div', { class: 'wg-body' });
   root.append(head, wbody);
   body.append(root);
+  // dragging the widget by a button (a day, a checkbox) must not press that button on release
+  let downAt = null;
+  root.addEventListener('pointerdown', (e) => { downAt = [e.clientX, e.clientY]; }, true);
+  root.addEventListener('click', (e) => { if (downAt && Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 4) { e.stopPropagation(); e.preventDefault(); } }, true);
   const w = {
     get data() { return (view.node(node.id) || node).data; },
     body: wbody, el: root, view, node,

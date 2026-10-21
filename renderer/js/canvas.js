@@ -1075,7 +1075,8 @@ export class CanvasView extends Emitter {
     if (n) {
       const v = this.views.get(n.id);
       const inHead = !!e.target.closest('.node-head');
-      const inBtn = !!e.target.closest('button, input, select, textarea, a, .no-drag');
+      // .drag-ok buttons (calendar days) still drag the object; their click only fires without a move
+      const inBtn = !!e.target.closest('button:not(.drag-ok), input, select, textarea, a, .no-drag');
       const isWindow = v.def.chrome === 'window';
       const editing = e.target.closest('[contenteditable="true"]');
       if (n.type === 'frame' && !e.target.closest('.frame-title')) {
@@ -1783,7 +1784,7 @@ export class CanvasView extends Emitter {
     const tx = (x) => ox + (x - box.x) * s, ty = (y) => oy + (y - box.y) * s;
     for (const n of nodes) {
       const def = NODE_TYPES[n.type];
-      ctx.fillStyle = n.type === 'sticky' ? resolveColor(n.data.color || '#ffe27a') : n.type === 'frame' ? (light ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.06)') : def?.chrome === 'window' ? (light ? '#c9cfdb' : '#3a4150') : n.type === 'hub' ? (light ? '#9aa3b5' : '#cfd3da') : (light ? '#b5bccb' : '#4a5263');
+      ctx.fillStyle = n.type === 'sticky' ? resolveColor(n.data.color || 'yellow') : n.type === 'frame' ? (light ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.06)') : def?.chrome === 'window' ? (light ? '#c9cfdb' : '#3a4150') : n.type === 'hub' ? (light ? '#9aa3b5' : '#cfd3da') : (light ? '#b5bccb' : '#4a5263');
       ctx.fillRect(tx(n.x), ty(n.y), Math.max(2, n.w * s), Math.max(2, n.h * s));
       if (this.selection.has(n.id)) { ctx.strokeStyle = '#7c8cff'; ctx.lineWidth = 1.5; ctx.strokeRect(tx(n.x), ty(n.y), Math.max(2, n.w * s), Math.max(2, n.h * s)); }
     }

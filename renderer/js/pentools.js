@@ -16,13 +16,14 @@ export const APPLE_COLORS = ['auto', 'blue', 'green', 'yellow', 'orange', 'red',
 export const BAR_COLORS = ['auto', 'blue', 'green', 'yellow', 'red'];
 // shapes, areas, arrows, projects: the system colours, in the order Apple apps show them
 export const OBJECT_COLORS = ['blue', 'green', 'yellow', 'orange', 'red', 'pink', 'purple', 'gray'];
-// stickies: soft tints of the system colours, like the notes in Freeform (the same in both themes)
-export const STICKY_PALETTE = { '#ffe27a': 'Жёлтый', '#ffc98a': 'Оранжевый', '#ffb3c4': 'Розовый', '#dcc1f7': 'Фиолетовый', '#a9d4ff': 'Синий', '#b3ebc1': 'Зелёный', '#e5e5ea': 'Серый' };
-export const STICKY_COLORS = Object.keys(STICKY_PALETTE);
+// stickies use the same system colours; text is white on the deep ones, as in Apple apps
+export const STICKY_COLORS = OBJECT_COLORS;
+const WHITE_TEXT = new Set(['blue', 'red', 'pink', 'purple', 'indigo', 'brown', 'gray']);
 const COLOR_NAMES = { auto: 'Под тему', blue: 'Синий', green: 'Зелёный', yellow: 'Жёлтый', orange: 'Оранжевый', red: 'Красный', pink: 'Розовый', purple: 'Фиолетовый', indigo: 'Индиго', cyan: 'Голубой', mint: 'Мятный', brown: 'Коричневый', gray: 'Серый' };
 // colours of the old palettes: objects created before keep working and show up in the new range
 const LEGACY = {
-  '#ffe58a': '#ffe27a', '#ffcd9e': '#ffc98a', '#ffb8d1': '#ffb3c4', '#d6c2ff': '#dcc1f7', '#a8d8ff': '#a9d4ff', '#b5f0c0': '#b3ebc1', '#e2e5ea': '#e5e5ea',
+  '#ffe58a': 'yellow', '#ffcd9e': 'orange', '#ffb8d1': 'pink', '#d6c2ff': 'purple', '#a8d8ff': 'blue', '#b5f0c0': 'green', '#e2e5ea': 'gray',
+  '#ffe27a': 'yellow', '#ffc98a': 'orange', '#ffb3c4': 'pink', '#dcc1f7': 'purple', '#a9d4ff': 'blue', '#b3ebc1': 'green', '#e5e5ea': 'gray',
   '#7c8cff': 'blue', '#4fd1a5': 'green', '#f6a04d': 'orange', '#e86a92': 'pink', '#5bc0eb': 'cyan', '#e3c565': 'yellow', '#9aa3b2': 'gray', '#b88cff': 'purple',
   '#5566d6': 'blue', '#3aa6b9': 'cyan', '#3fae7c': 'green', '#d08a3a': 'orange', '#cf5a86': 'pink', '#8a5cd6': 'purple', '#6b7385': 'gray',
 };
@@ -35,14 +36,16 @@ export const cssColor = (c, fallback = 'auto') => {
   if (isRaw(c)) return safeColor(c) || `var(--pen-${fallback})`;
   return `var(--pen-${c && APPLE_COLORS.includes(c) ? c : fallback})`;
 };
-export const colorName = (c) => { c = normColor(c); return isRaw(c) ? STICKY_PALETTE[String(c).toLowerCase()] || String(c).toUpperCase() : COLOR_NAMES[c] || c; };
+export const colorName = (c) => { c = normColor(c); return isRaw(c) ? String(c).toUpperCase() : COLOR_NAMES[c] || c; };
 // real colour value of a token in the current theme
 export function resolveColor(c) {
   c = normColor(c);
   if (isRaw(c)) return safeColor(c) || '#ffffff';
   return getComputedStyle(document.documentElement).getPropertyValue(`--pen-${APPLE_COLORS.includes(c) ? c : 'auto'}`).trim() || '#ffffff';
 }
-// dark background → light text (stickies with a custom colour)
+// white text on this background? (stickies, calendar marks)
+export const wantsWhiteText = (c) => { c = normColor(c); return isRaw(c) ? isDark(c) : WHITE_TEXT.has(c); };
+// dark background → light text (custom colours)
 export function isDark(c) {
   const rgb = hexToRgb(toHex(c));
   if (!rgb) return false;
@@ -95,13 +98,24 @@ function toolSvg(kind) {
 }
 
 // ---------- popovers ----------
-function popover(anchor, cls, build, { above = true, onClose } = {}) {
-  document.querySelector('.pb-pop')?._close?.();
-  document.querySelector('.pb-pop')?.remove();
+// A popover opened from inside another one (the Spectrum window from a calendar day) stacks on
+// top of it; any other popover closes first. Esc and outside clicks close the top one only.
+const popStack = [];
+export const closePopovers = () => { for (const p of [...popStack].reverse()) p._close(); };
+export function popover(anchor, cls, build, { above = true, onClose } = {}) {
+  const parent = popStack.find((p) => p.contains(anchor)) || null;
+  for (const p of popStack.slice(parent ? popStack.indexOf(parent) + 1 : 0).reverse()) p._close();
   const pop = h('div', { class: `pb-pop ${cls}` });
-  const close = () => { if (!pop.isConnected) return; pop.remove(); document.removeEventListener('pointerdown', off, true); window.removeEventListener('keydown', key, true); onClose?.(); };
-  const off = (e) => { if (!pop.contains(e.target) && !anchor.contains(e.target)) close(); };
-  const key = (e) => { if (e.key === 'Escape') { e.stopImmediatePropagation(); e.preventDefault(); close(); } };
+  const children = () => popStack.slice(popStack.indexOf(pop) + 1);
+  const close = () => {
+    if (!popStack.includes(pop)) return;
+    for (const p of children().reverse()) p._close();
+    popStack.splice(popStack.indexOf(pop), 1);
+    pop.remove(); document.removeEventListener('pointerdown', off, true); window.removeEventListener('keydown', key, true); onClose?.();
+  };
+  const off = (e) => { if (!pop.contains(e.target) && !anchor.contains(e.target) && !children().some((p) => p.contains(e.target))) close(); };
+  const key = (e) => { if (e.key === 'Escape' && popStack[popStack.length - 1] === pop) { e.stopImmediatePropagation(); e.preventDefault(); close(); } };
+  popStack.push(pop);
   pop._close = close;
   build(pop, close);
   document.body.append(pop);
@@ -215,7 +229,7 @@ export class PenBar {
     for (const ev of ['pointerdown', 'dblclick', 'wheel']) this.el.addEventListener(ev, (e) => e.stopPropagation());
     this.paint();
   }
-  show(on) { this.el.classList.toggle('show', on); if (!on) document.querySelector('.pb-pop')?.remove(); else this.paint(); }
+  show(on) { this.el.classList.toggle('show', on); if (!on) closePopovers(); else this.paint(); }
   paint() {
     const cur = currentTool();
     for (const [id, b] of Object.entries(this.toolBtns)) {

@@ -1,6 +1,6 @@
 // Node type definitions for the canvas.
 import { h, icon, badge, esc, bus, toast, prompt, debounce, throttle, uid, readFileAsDataURL, keyName } from './util.js';
-import { cssColor, normColor, isDark, BAR_COLORS, OBJECT_COLORS, STICKY_COLORS } from './pentools.js';
+import { cssColor, wantsWhiteText, BAR_COLORS, OBJECT_COLORS, STICKY_COLORS } from './pentools.js';
 import { sanitizeHtml, htmlText } from './sanitize.js';
 import { WIDGETS, mountWidget } from './widgets.js';
 import { state, native, PROVIDER_META } from './state.js';
@@ -1059,15 +1059,15 @@ export const NODE_TYPES = {
   },
 
   sticky: {
-    chrome: 'bare', defaultSize: { w: 220, h: 220 }, minSize: { w: 80, h: 60 }, colors: STICKY_COLORS, colorGrid: STICKY_COLORS,
-    defaultData: () => ({ text: '', color: STICKY_COLORS[0] }),
+    chrome: 'bare', defaultSize: { w: 220, h: 220 }, minSize: { w: 80, h: 60 }, colors: STICKY_COLORS,
+    defaultData: () => ({ text: '', color: 'yellow' }),
     title: (n) => (n.data.text || 'Стикер').split('\n')[0].slice(0, 30),
     mount: ({ node, view, body }) => {
       const box = h('div', { class: 'sticky' });
       const txt = h('div', { class: 'txt', 'data-placeholder': 'Напишите что-нибудь…' });
       box.append(txt); body.append(box);
       let cur = node;
-      const paint = () => { const c = cur.data.color || STICKY_COLORS[0]; box.style.background = cssColor(c, 'yellow'); box.classList.toggle('dark', isDark(normColor(c))); txt.innerText = cur.data.text || ''; txt.classList.toggle('empty', !cur.data.text); requestAnimationFrame(() => fitText(txt, box)); };
+      const paint = () => { const c = cur.data.color || 'yellow'; box.style.background = cssColor(c, 'yellow'); box.classList.toggle('dark', wantsWhiteText(c)); txt.innerText = cur.data.text || ''; txt.classList.toggle('empty', !cur.data.text); requestAnimationFrame(() => fitText(txt, box)); };
       const edit = editableText(txt, { onCommit: (v) => view.updateNode(cur.id, { data: { text: v } }, { checkpoint: true, silent: true }) });
       txt.addEventListener('input', () => { txt.classList.toggle('empty', !txt.innerText.trim()); fitText(txt, box); });
       paint();
