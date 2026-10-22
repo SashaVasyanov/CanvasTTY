@@ -44,14 +44,16 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Unit tests
         run: npm run test:unit
+      # every group runs even when an earlier one failed, so one run shows all failures
       - name: Interface in a browser
-        run: npm run test:browser
+        if: success() || failure()
+        run: npx playwright test --project=browser --output=test-results/browser
       - name: Real app in Electron
-        if: runner.os == 'Windows'
-        run: npm run test:electron
+        if: (success() || failure()) && runner.os == 'Windows'
+        run: npx playwright test --project=electron --output=test-results/electron
       - name: Real app in Electron
-        if: runner.os == 'Linux'
-        run: xvfb-run -a npm run test:electron
+        if: (success() || failure()) && runner.os == 'Linux'
+        run: xvfb-run -a npx playwright test --project=electron --output=test-results/electron
       - name: Test results
         if: failure()
         uses: actions/upload-artifact@v4
