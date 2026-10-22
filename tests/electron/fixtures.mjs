@@ -256,7 +256,21 @@ export class App extends CanvasApp {
     await expect(this.el(id).locator('.chat-input')).toBeVisible();
     return id;
   }
+  // a window outside the visible canvas is not drawn (culled): show it first, like a person would
+  // (the CI Windows screen is only 1024 px wide)
+  async reveal(id) {
+    const moved = await this.page.evaluate((id) => {
+      const c = window.__app.canvas, n = c.node(id), r = c.rect();
+      const z = c.vp.z, x = r.left + c.vp.x + n.x * z, y = r.top + c.vp.y + n.y * z;
+      if (x >= r.left && y >= r.top && x + n.w * z <= r.right && y + n.h * z <= r.bottom) return false;
+      c.vp.x = r.width / 2 - (n.x + n.w / 2) * z; c.vp.y = r.height / 2 - (n.y + n.h / 2) * z;
+      c.applyViewport();
+      return true;
+    }, id);
+    if (moved) await this.idle();
+  }
   async send(id, text) {
+    await this.reveal(id);
     const input = this.el(id).locator('.chat-input');
     await input.fill(text);
     await input.press('Enter');
