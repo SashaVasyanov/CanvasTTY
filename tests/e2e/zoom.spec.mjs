@@ -31,18 +31,40 @@ test.describe('масштаб 70 %', () => {
     expect(Math.abs(r1.y - e1.y)).toBeLessThanOrEqual(1);
   });
 
-  test('ручка размера, рамка выделения и двойной клик для правки', async ({ app, page }) => {
+  // drag the bottom-right resize handle of A by 70 × 35 screen pixels (= 100 × 50 in the world)
+  const resizeA = async (app, page) => {
     await app.select([a]);
     const h = await page.locator('.sel-box .h-se').boundingBox();
     const hx = h.x + h.width / 2, hy = h.y + h.height / 2;
     await app.drag({ x: hx, y: hy }, { x: hx + 70, y: hy + 35 });
+  };
+
+  test('ручка размера меняет размер в мировых единицах', async ({ app, page }) => {
+    await resizeA(app, page);
     const n = await app.node(a);
     expect(Math.abs(n.w - 300), 'ширина +100 в мире').toBeLessThanOrEqual(8);
     expect(Math.abs(n.h - 250), 'высота +50 в мире').toBeLessThanOrEqual(8);
+  });
 
+  // App bug: the resize handle's pointerdown does not prevent the default action, so dragging it
+  // also makes a native text selection across the objects (here "\nA\nB\n", highlighted on screen).
+  // On Windows / Edge (CI) the next drag that starts over that selection becomes a native drag and
+  // drop: the canvas drop handler turns the dragged text into a new sticky, so a selection-frame drag
+  // selected one new sticky instead of A and B. (renderer/js/canvas.js onPointerDown → startResize;
+  // the background → startMarquee path does not prevent it either.)
+  test('после ручки размера не остаётся выделенного текста, и следующая рамка выделяет объекты', async ({ app, page }) => {
+    await resizeA(app, page);
+    expect(await page.evaluate(() => getSelection().toString().trim()), 'на странице не выделен текст').toBe('');
     await app.clearSelection();
     await app.drag(await toPage(page, -50, -50), await toPage(page, 650, 300));
     expect((await app.selection()).sort()).toEqual([a, b].sort());
+    expect(await app.nodes('sticky'), 'новых стикеров нет').toHaveLength(2);
+  });
+
+  test('рамка выделения и двойной клик для правки', async ({ app, page }) => {
+    await app.drag(await toPage(page, -50, -50), await toPage(page, 650, 300));
+    expect((await app.selection()).sort()).toEqual([a, b].sort());
+    expect(await app.nodes('sticky')).toHaveLength(2);
 
     await app.clearSelection();
     const bb = await app.box(b);
