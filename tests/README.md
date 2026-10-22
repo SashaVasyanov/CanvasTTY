@@ -62,7 +62,7 @@ xvfb-run -a -s "-screen 0 1920x1080x24" npx playwright test --project=electron
 | `mcp` | запускает MCP-сервер истории, который передало приложение, и ищет в нём слова вопроса |
 
 Каждый запуск записывается в `<профиль>/.fake-cli/calls.jsonl` (аргументы, папка, промпт из stdin,
-pid) — в тесте это `app.calls('codex')`. Вручную: `echo привет | FAKE_CODEX_SCENARIO=basic node tests/electron/bin/codex exec --json`.
+pid) — в тесте это `app.calls('codex')`. Вручную (bash): `echo привет | FAKE_CODEX_SCENARIO=basic node tests/electron/bin/codex exec --json`.
 
 Тесты, помеченные `test.fixme`, описывают найденные ошибки приложения (см. комментарии над ними):
 их надо включить, когда ошибка исправлена.
