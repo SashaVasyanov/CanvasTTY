@@ -2,12 +2,6 @@
 // page (boxes, the canvas viewport), never hard-coded screen pixels, so the tests hold at any DPI.
 import { expect } from '../fixtures.mjs';
 
-// a keydown as the app sees it (the Russian layout gives other e.key values for the same e.code)
-export const key = (page, k, code, mods = {}) => page.evaluate(([k, code, mods]) => {
-  document.activeElement?.blur?.();
-  window.dispatchEvent(new KeyboardEvent('keydown', { key: k, code, bubbles: true, cancelable: true, ...mods }));
-}, [k, code, mods]);
-
 // world point → page point
 export const toPage = (page, x, y) => page.evaluate(([x, y]) => {
   const c = window.__app.canvas; const r = c.rect(); const s = c.toScreen(x, y);

@@ -242,11 +242,11 @@ test.describe('окно чата агента', () => {
     await expect(info(codex)).toHaveText('gpt-6-preview · размышл.: средний');
   });
 
-  // BUG: the 'session' event goes through patchNodeData(), which replaces inst.node with a copy that
+  // Regression (fixed): the 'session' event goes through patchNodeData(), which replaces inst.node with a copy that
   // is detached from the canvas node; the following 'info' event stores actualModel on the canvas
   // node, but renderInfo() reads the stale copy, so the bar keeps the configured model until the
   // window is re-rendered (help.md: "После первого ответа там появляется точное название модели").
-  test.fixme('после ответа строка состояния показывает модель, которую сообщил агент', async ({ app, page }) => {
+  test('после ответа строка состояния показывает модель, которую сообщил агент', async ({ app, page }) => {
     const id = await page.evaluate(() => window.__app.launchAgentChat({ agentId: 'claude', world: { x: 0, y: 300 } }).id);
     const info = app.el(id).locator('.model-info');
     await expect(info).toHaveText('Sonnet (последний)');

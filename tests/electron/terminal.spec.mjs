@@ -7,7 +7,10 @@ import { test, expect } from './fixtures.mjs';
 const isWin = process.platform === 'win32';
 // prints "<mark> 42 <name of the current folder>" in bash and in PowerShell
 const echo = (mark) => (isWin ? `Write-Output "${mark} $(6*7) $(Split-Path -Leaf (Get-Location))"` : `echo "${mark} $((6*7)) \${PWD##*/}"`);
-const later = (mark) => (isWin ? `Start-Sleep -Milliseconds 1500; Write-Output "${mark}"` : `sleep 1.5; echo "${mark}"`);
+// prints "<mark>_42" a moment later (the typed line has the formula, only the output has "42")
+const later = (mark) => (isWin ? `Start-Sleep -Milliseconds 1500; Write-Output "${mark}_$(6*7)"` : `sleep 1.5; echo "${mark}_$((6*7))"`);
+// raw pty output without colours / cursor moves (ConPTY on Windows redraws a lot)
+const plain = (s) => s.replace(/\x1b\[[0-9;?]*[ -\/]*[@-~]|\x1b\][^\x07]*\x07|\x1b[()][0-9A-Za-z]/g, '');
 
 async function openShell(app) {
   const id = await app.page.evaluate(() => window.__app.launchAgent({ agentId: 'shell', world: { x: 420, y: 260 } }).id);
@@ -32,16 +35,16 @@ test('терминал: оболочка в папке проекта выпол
 test('сессия терминала продолжает работать, пока открыт другой canvas', async ({ app }) => {
   const term = await openShell(app);
   const session = await app.page.evaluate((id) => window.__app.canvas.node(id).data.sessionId, term);
-  await type(app, term, later('LATER_MARK'));
+  await type(app, term, later('LATER'));
 
   // the window is destroyed with its canvas; the process and its output stay in the main process
   await app.page.evaluate(async () => { const { state } = await import('/js/state.js'); await state.createCanvas(state.project.id, 'Второй'); });
   await expect(app.page.locator('.ctab.active')).toHaveText('Второй');
   await expect(app.el(term)).toHaveCount(0);
-  await expect.poll(() => app.page.evaluate((s) => window.native.pty.attach(s).then((a) => a?.buffer || ''), session), { timeout: 20_000 }).toMatch(/LATER_MARK\r?\n/);
+  await expect.poll(async () => plain(await app.page.evaluate((s) => window.native.pty.attach(s).then((a) => a?.buffer || ''), session)), { timeout: 20_000 }).toContain('LATER_42');
 
   await app.page.locator('.ctab', { hasText: 'Главный' }).click();
-  await expect.poll(() => tail(app, term)).toMatch(/^LATER_MARK$/m);
+  await expect.poll(() => tail(app, term)).toContain('LATER_42');
   expect(await app.page.evaluate((id) => window.__app.canvas.node(id).data.sessionId, term)).toBe(session);
   expect((await app.page.evaluate(() => window.native.pty.statuses()))[session]).toMatchObject({ exited: false });
   await type(app, term, echo('STILL_HERE'));

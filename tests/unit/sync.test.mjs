@@ -94,11 +94,11 @@ describe('mergeDocs: слияние canvas по объектам', () => {
     for (const args of [[b, l, r], [null, l, r], [b, r, l], [b, b, b]]) assert.deepEqual(mergeDocs(...args), mergeDocsRenderer(...args));
   });
 
-  // BUG: merge.js says "keep the remote order, then local additions", but objects present on both
+  // Regression (fixed): merge.js says "keep the remote order, then local additions", but objects present on both
   // sides get the local index (the order Map is built from [...remote, ...local], later keys win),
   // so objects only the remote has jump to the front. The merged canvas then differs from the
   // remote one by order alone, which makes the computers send it back and forth (see below).
-  test('порядок: сначала порядок пришедшей стороны, потом новые локальные объекты', { todo: 'общие объекты остаются в локальном порядке, вопреки комментарию в merge.js' }, () => {
+  test('порядок: сначала порядок пришедшей стороны, потом новые локальные объекты', () => {
     const b = doc([sticky('a', 'A'), sticky('b', 'B')]);
     const m = mergeDocs(b, doc([sticky('a', 'A'), sticky('b', 'B'), sticky('l', 'L')]), doc([sticky('b', 'B'), sticky('a', 'A')]));
     assert.deepEqual(m.nodes.map((n) => n.id), ['b', 'a', 'l']);
@@ -121,6 +121,15 @@ describe('SyncManager: два компьютера через общую пап�
   });
 
   const readJson = (f) => JSON.parse(fs.readFileSync(f, 'utf8'));
+  // apply() sends a merged version back to the folder 50 ms later (setTimeout); run those sends
+  // right after `fn` instead, so each step of a scenario is finished before the next one
+  async function settled(fn) {
+    const realSetTimeout = globalThis.setTimeout;
+    const held = [];
+    globalThis.setTimeout = (cb, ms, ...args) => (ms === 50 ? (held.push(cb), 0) : realSetTimeout(cb, ms, ...args));
+    try { await fn(); } finally { globalThis.setTimeout = realSetTimeout; }
+    for (const cb of held) await cb();
+  }
   const writeJson = (f, v) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, JSON.stringify(v)); };
 
   // a computer with its workspace, canvases and chats on disk
@@ -141,9 +150,8 @@ describe('SyncManager: два компьютера через общую пап�
       ws: () => readJson(wsFile),
       canvas: (id) => readJson(path.join(canvasDir, `${id}.json`)),
       hasCanvas: (id) => fs.existsSync(path.join(canvasDir, `${id}.json`)),
-      // take what is in the folder; a merged version this computer sends back goes out 50 ms
-      // later (setTimeout in apply), so give it time before the next step
-      async pull() { await sync.pull(); await sleep(150); },
+      // take what is in the folder, including sending back a merged version (see settled())
+      pull: () => settled(() => sync.pull()),
       // the app saved a canvas / the workspace: write it and tell the sync manager
       async edit(id, fn) { const c = d.canvas(id); fn(c); writeJson(path.join(canvasDir, `${id}.json`), c); await sleep(3); await sync.localChanged('canvas', id, c); },
       async editWs(fn) { const w = d.ws(); fn(w); writeJson(wsFile, w); await sleep(3); await sync.localChanged('workspace', 'workspace', w); },
@@ -174,8 +182,7 @@ describe('SyncManager: два компьютера через общую пап�
     const A = computerA(nodes);
     await A.sync.reconcile();
     const B = freshB();
-    await B.sync.reconcile();
-    await sleep(150);
+    await settled(() => B.sync.reconcile());
     return { A, B };
   }
 
@@ -278,11 +285,11 @@ describe('SyncManager: два компьютера через общую пап�
     assert.deepEqual(texts(B.canvas('c1')), ['B v2', 'Привет v3']);
   });
 
-  // BUG: when the version B edited from is unknown to A (here: B's own re-sent copy, which A never
+  // Regression (fixed): when the version B edited from is unknown to A (here: B's own re-sent copy, which A never
   // pulled because A's next edit overwrote it in the folder), apply() falls back to "the last version
   // we synced" — A's own latest push. A's newest edit then counts as already known to B, B's older
   // value wins and A's edit is reverted. In this scenario B re-sends because of the order bug above.
-  test('правка со старой версии не откатывает новую, даже если её версия неизвестна', { todo: 'запасной общий предок — своя последняя отправка: откат «Привет v3»' }, async () => {
+  test('правка со старой версии не откатывает новую, даже если её версия неизвестна', async () => {
     const { A, B } = await joined();
     await A.edit('c1', (c) => c.nodes.push(sticky('s4', 'B одновременно')));
     await B.pull(); // B merges s4 in its own order and sends that copy back
@@ -348,10 +355,10 @@ describe('SyncManager: два компьютера через общую пап�
     assert.equal(A.sync.status.pushed, 0, 'выключенная синхронизация ничего не пишет');
   });
 
-  // BUG: after B adds an object, A's merge puts it first ([s2, s1] instead of [s1, s2]); the hash
+  // Regression (fixed): after B adds an object, A's merge puts it first ([s2, s1] instead of [s1, s2]); the hash
   // differs from B's version only by order, so A sends it back, B merges it back into its own order
   // and sends it again... every pull, forever (both computers keep rewriting the same canvas).
-  test('после слияния canvas не пересылается между компьютерами по кругу', { todo: 'порядок объектов после слияния (см. тест порядка) — бесконечная пересылка' }, async () => {
+  test('после слияния canvas не пересылается между компьютерами по кругу', async () => {
     const { A, B } = await joined();
     await B.edit('c1', (c) => c.nodes.push(sticky('s2', 'Ответ с B')));
     for (let i = 0; i < 2; i++) { await A.pull(); await B.pull(); }
@@ -361,10 +368,10 @@ describe('SyncManager: два компьютера через общую пап�
     assert.deepEqual(texts(A.canvas('c1')), texts(B.canvas('c1')));
   });
 
-  // BUG (race): apply() sends the merged canvas back 50 ms later with the snapshot taken at apply
+  // Regression (race, fixed): apply() sends the merged canvas back 50 ms later with the snapshot taken at apply
   // time; a local edit pushed meanwhile is overwritten in the folder by that older version, and the
   // computer records it as synced, so other computers never get the edit.
-  test('отложенная отправка объединённой версии не затирает правку, сделанную сразу после неё', { todo: 'setTimeout(localChanged(merged), 50) в apply() отправляет устаревший снимок' }, async () => {
+  test('отложенная отправка объединённой версии не затирает правку, сделанную сразу после неё', async () => {
     const { A, B } = await joined();
     await A.edit('c1', (c) => c.nodes.push(sticky('sa', 'с A')));
     await B.edit('c1', (c) => c.nodes.push(sticky('sb', 'с B'))); // B had not seen sa: the folder loses it for now

@@ -23,7 +23,7 @@ test('заметка из редактора сохраняется в .md, по
   await kb.press('Enter');
   await kb.press('Enter');
   await kb.type('Связь с [[Доб');
-  await expect(app.page.locator('.menu, .suggest, .ac-list, [class*="suggest"]').filter({ hasText: 'Добро пожаловать в VibeTabula' }).first()).toBeVisible();
+  await expect(app.page.locator('.ac-pop')).toContainText('Добро пожаловать в VibeTabula');
   await kb.press('Enter');
   await kb.type('и **готово**');
 

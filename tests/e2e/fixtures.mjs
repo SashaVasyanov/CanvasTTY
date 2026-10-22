@@ -94,9 +94,9 @@ export const test = base.extend({
     const errors = [];
     page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
     page.on('console', (m) => { if (m.type() === 'error' && !IGNORED.test(m.text())) errors.push(`console: ${m.text()}`); });
+    // every test has its own browser context, so storage starts empty (no clear + reload, whose
+    // debounced saves of the first page could land after the clear)
     await page.goto('/');
-    await page.evaluate(() => { try { localStorage.clear(); } catch {} });
-    await page.reload();
     await page.waitForFunction(() => window.__app?.canvas?.doc && !document.querySelector('#boot'), null, { timeout: 15_000 }).catch(() => page.waitForFunction(() => window.__app?.canvas?.doc));
     const app = new App(page);
     await app.reset();

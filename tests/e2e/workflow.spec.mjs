@@ -1,7 +1,7 @@
 // End-to-end scenarios around the canvas: a clean start, launching agents from the hub dock,
 // the pet picker, theme / minimap / help / launch menu, a note from the sidebar, long chats.
 import { test, expect } from './fixtures.mjs';
-import { menuItem, waitRest, setting } from './helpers/canvas.mjs';
+import { menuItem, waitRest, setting, view } from './helpers/canvas.mjs';
 
 test.beforeEach(async ({ app, page }) => { await waitRest(page); });
 
@@ -19,6 +19,10 @@ test.describe('пульт агентов', () => {
   test.beforeEach(async ({ app }) => { hub = await app.add('hub', { x: 0, y: 0 }); });
 
   test('из дока: терминал отвечает на команду, чат агента и API-чат получают ответ', async ({ app, page }) => {
+    // zoomed out around the hub, so the new windows appear on screen (a window focused while still
+    // off screen scrolls the canvas: see the fixme in objects.spec.mjs)
+    const r = await page.evaluate(() => { const c = window.__app.canvas.rect(); return { w: c.width, h: c.height }; });
+    await view(page, { x: r.w / 2 - 270 * 0.5, y: r.h / 2 - 160 * 0.5, z: 0.5 });
     await page.locator('.dock-btn[title="Терминал"]').click();
     await expect.poll(async () => (await app.nodes('terminal')).length).toBe(1);
     const term = (await app.nodes('terminal'))[0].id;

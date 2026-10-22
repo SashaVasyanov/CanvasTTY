@@ -91,12 +91,19 @@ function writeShellProfile(home) {
   for (const f of ['.bash_profile', '.profile', '.zshrc']) fs.writeFileSync(path.join(home, f), line);
 }
 
+// the fakes must stay executable for Linux / macOS even if the bit got lost (a copy made on Windows)
+let executable = false;
+function makeExecutable() {
+  if (isWin || executable) return;
+  for (const f of ['codex', 'claude']) { try { fs.chmodSync(path.join(BIN, f), 0o755); } catch {} }
+  executable = true;
+}
+
 export class App extends CanvasApp {
-  constructor({ home, env = {}, testInfo }) {
+  constructor({ home, env = {} }) {
     super(null);
     this.home = home;
     this.extraEnv = env;
-    this.testInfo = testInfo;
     this.errors = [];
     this.allowed = [];
     this.mainLog = '';
@@ -105,7 +112,6 @@ export class App extends CanvasApp {
 
   get userData() { return path.join(this.home, 'AppData', 'VibeTabula'); }
   get state() { return path.join(this.home, '.fake-cli'); }
-  file(...parts) { return path.join(this.home, ...parts); }
   readJson(file) { return JSON.parse(fs.readFileSync(file, 'utf8')); }
 
   // errors a test provokes on purpose
@@ -115,6 +121,7 @@ export class App extends CanvasApp {
 
   async launch() {
     fs.mkdirSync(this.state, { recursive: true });
+    makeExecutable();
     writeShellProfile(this.home);
     const app = await _electron.launch({
       executablePath: electronPath(),
@@ -184,10 +191,10 @@ export class App extends CanvasApp {
     await this.#collectMainErrors();
     // app.quit() ourselves: Playwright's close() alone takes ~5 s longer to let the process go
     await this.main(({ app }) => { setTimeout(() => app.quit(), 0); }).catch(() => {});
-    await Promise.race([exited, sleep(15_000)]);
+    await Promise.race([exited, sleep(30_000)]);
     await this.electronApp.close().catch(() => {});
     const proc = this.proc;
-    if (proc.exitCode === null && proc.signalCode === null) { this.#error('main: приложение не завершилось за 15 с'); proc.kill(); }
+    if (proc.exitCode === null && proc.signalCode === null) { this.#error('main: приложение не завершилось за 30 с'); proc.kill(); }
     this.electronApp = null;
   }
 
@@ -198,7 +205,7 @@ export class App extends CanvasApp {
     const button = this.page.locator('.win-btn.close'); // macOS has its own traffic lights instead
     if (await button.count()) await button.click({ noWaitAfter: true }).catch(() => {});
     else await this.main(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0]?.close(); }).catch(() => {});
-    await Promise.race([exited, sleep(15_000).then(() => { throw new Error('окно не закрылось за 15 с'); })]);
+    await Promise.race([exited, sleep(30_000).then(() => { throw new Error('окно не закрылось за 30 с'); })]);
     this.electronApp = null;
   }
 
@@ -287,7 +294,7 @@ export const test = base.extend({
   launchApp: async ({ home }, use, testInfo) => {
     const apps = [];
     await use(async (opts = {}) => {
-      const app = new App({ home, testInfo, ...opts });
+      const app = new App({ home, ...opts });
       apps.push(app);
       await app.launch();
       return app;

@@ -5,6 +5,12 @@ import { canvasIdle, reloadApp, setViewport } from './helpers/notes.mjs';
 
 const comments = (page) => page.evaluate(() => JSON.parse(JSON.stringify(window.__app.canvas.doc.comments || [])));
 const pinBox = async (page) => { const b = await page.locator('.cmt-bubble').first().boundingBox(); return { x: b.x + 14, y: b.y + 14, w: Math.round(b.width), h: Math.round(b.height) }; };
+// size of the pin once its hover transition (expanding into the preview) has finished
+const restingPinSize = async (page) => {
+  await page.locator('.cmt-bubble').first().evaluate((el) => Promise.all(el.getAnimations({ subtree: true }).map((a) => a.finished.catch(() => {}))));
+  const b = await pinBox(page);
+  return [b.w, b.h];
+};
 
 test('комментарий: имя автора, ответ в ветке, едет с объектом, скрывается, решается и сохраняется', async ({ app, page }) => {
   test.slow();
@@ -64,10 +70,9 @@ test('комментарий: имя автора, ответ в ветке, е�
   list = await comments(page);
   expect([list[0].x, list[0].y]).toEqual([400, 200]);
   await page.mouse.move(1350, 820); // not hovering the pin (hover expands it)
-  const at1 = await pinBox(page);
+  const at1 = await restingPinSize(page);
   await setViewport(page, { x: 300, y: 150, z: 0.4 });
-  const at04 = await pinBox(page);
-  expect([at04.w, at04.h]).toEqual([at1.w, at1.h]);
+  expect(await restingPinSize(page)).toEqual(at1);
   await setViewport(page, { x: 300, y: 150, z: 1 });
   expect(await app.node(sticky), 'стикер на месте').toBeTruthy();
 

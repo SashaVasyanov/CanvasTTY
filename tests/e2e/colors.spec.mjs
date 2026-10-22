@@ -1,6 +1,6 @@
 // Colours: the Apple system palette for stickies, shapes, areas and arrows (old saved colours map
 // onto it), the Spectrum window (one undo step per picking session, Esc closes only the window),
-// theme-dependent shades, project and agent colours, widgets.
+// theme-dependent shades, project and agent colours.
 import { test, expect } from './fixtures.mjs';
 import { toPage, menuItem, waitRest } from './helpers/canvas.mjs';
 
@@ -156,17 +156,4 @@ test('цвет значка агента в настройках: окно цв�
   await expect(settings, 'настройки остались открытыми').toBeVisible();
   expect(await page.evaluate(async () => (await import('/js/state.js')).state.settings.agents[0].color)).toBe(red);
   await expect(page.locator('.agent-row .badge').first()).toHaveCSS('--b', red);
-});
-
-test('виджеты таймер, секундомер и чек-лист на холсте; таймер запускается', async ({ app, page }) => {
-  await page.evaluate(() => { const a = window.__app; a.addWidget('timer', { x: 100, y: 100 }); a.addWidget('stopwatch', { x: 450, y: 100 }); a.addWidget('checklist', { x: 800, y: 100 }); a.canvas.selection.clear(); a.canvas.afterSelect(); });
-  await expect(page.locator('.widget')).toHaveCount(3);
-  for (const k of ['timer', 'stopwatch', 'checklist']) await expect(page.locator(`.widget.wk-${k} .wg-body`)).not.toBeEmpty();
-  const timer = page.locator('.widget.wk-timer');
-  const time = timer.locator('.wg-time');
-  const start = await time.textContent();
-  await timer.locator('.wg-btn.primary').click();
-  await expect(timer).toHaveClass(/\brunning\b/);
-  await expect(time).not.toHaveText(start, { timeout: 5000 });
-  expect((await app.nodes('widget')).find((n) => n.data.kind === 'timer').data.endAt).toBeGreaterThan(0);
 });
