@@ -73,11 +73,13 @@ class AgentChatManager {
     const file = path.join(this.userData, 'mcp-vibetabula.json');
     try { fs.writeFileSync(file, JSON.stringify({ mcpServers: { vibetabula: { type: 'stdio', ...this.historyServer() } } }, null, 1)); return file; } catch { return null; }
   }
-  codexMcpArgs() {
+  codexMcpArgs(approve = true) {
     const srv = this.historyServer();
     const lit = (v) => `'${String(v).replace(/'/g, '')}'`; // TOML literal string
     const env = Object.entries(srv.env).map(([k, v]) => `${k}=${lit(v)}`).join(',');
-    return ['-c', `mcp_servers.vibetabula.command=${lit(srv.command)}`, '-c', `mcp_servers.vibetabula.args=[${srv.args.map(lit).join(',')}]`, '-c', `mcp_servers.vibetabula.env={${env}}`];
+    // codex exec runs with approval policy "never": a tool that needs approval is cancelled at once.
+    // The history tools only read saved chats, so they are approved up front.
+    return ['-c', `mcp_servers.vibetabula.command=${lit(srv.command)}`, '-c', `mcp_servers.vibetabula.args=[${srv.args.map(lit).join(',')}]`, '-c', `mcp_servers.vibetabula.env={${env}}`, ...(approve ? ['-c', `mcp_servers.vibetabula.default_tools_approval_mode='approve'`] : [])];
   }
 
   abort(reqId) {
@@ -211,7 +213,7 @@ class AgentChatManager {
     else args.push('-s', mode === 'read' ? 'read-only' : 'workspace-write');
     if (model) args.push('-m', model);
     if (opts.effort) args.push('-c', `model_reasoning_effort=${opts.effort}`);
-    if (!opts.noMcp && this.userData) args.push(...this.codexMcpArgs());
+    if (!opts.noMcp && this.userData) args.push(...this.codexMcpArgs(!opts.noMcpApprove));
     const files = this.attachedFiles(opts);
     const resuming = !!(sessionId && withResume);
     // new sessions get images directly; a resumed session looks at them with view_image
@@ -308,6 +310,8 @@ class AgentChatManager {
       if (buf.trim().startsWith('{')) { try { handle(JSON.parse(buf.trim())); } catch {} }
       await scanImages(true).catch(() => {});
       if (run.aborted) { emit('done', { sessionId: sid, aborted: true }); return; }
+      // an older Codex that does not know the approval key: without it first, then without the history tools
+      if (!gotOutput && code !== 0 && !opts.noMcp && !opts.noMcpApprove && /default_tools_approval_mode/i.test(stderr)) { this.runCodex({ ...opts, noMcpApprove: true }, resolved, emit, withResume); return; }
       if (!gotOutput && code !== 0 && !opts.noMcp && /mcp_servers|mcp server|invalid.*config|config.*invalid/i.test(stderr)) { this.runCodex({ ...opts, noMcp: true }, resolved, emit, withResume); return; }
       if (!gotOutput && withResume && sessionId && code !== 0) {
         emit('notice', { text: 'Не удалось продолжить прошлую сессию Codex — начинаю новую.' });
