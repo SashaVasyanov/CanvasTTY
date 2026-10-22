@@ -42,13 +42,13 @@ test('объект, добавленный перед самым закрыти�
   expect((await app.nodes()).map((n) => [n.type, n.data.text])).toEqual([['sticky', 'ДОЛЖНО_СОХРАНИТЬСЯ']]);
 });
 
-// BUG: main.js writeJson() writes every save of a file to the same "<file>.tmp" and renames it.
+// Regression (fixed): main.js writeJson() used to write every save of a file to the same "<file>.tmp" and renames it.
 // Two saves of one canvas that overlap (the debounced save, a running chat writing its answer into
 // a canvas that is not open, a slow disk) write into the same temp file at once: the later rename
 // fails with ENOENT, and the file can end up as two JSON documents glued together, which
 // readJsonSync() then reads as null — the canvas opens empty. A per-call temp name (pid + counter)
 // or a per-file write queue fixes it.
-test.fixme('одновременные сохранения одного canvas не теряют и не портят файл', async ({ app }) => {
+test('одновременные сохранения одного canvas не теряют и не портят файл', async ({ app }) => {
   const results = await app.page.evaluate(async () => {
     const doc = (n) => ({ id: 'c_race', nodes: Array.from({ length: n }, (_, i) => ({ id: `n${i}`, type: 'sticky', x: i * 10, y: 0, w: 10, h: 10, data: { text: 'текст '.repeat(50) } })), edges: [] });
     const saves = [400, 3, 200].map((n) => window.native.canvas.save('c_race', doc(n)));
@@ -59,23 +59,72 @@ test.fixme('одновременные сохранения одного canvas 
   expect(saved.nodes).toHaveLength(200); // the last save wins
 });
 
-test('выход во время ответа агента завершает его процессы, а ответ после перезапуска помечен «Прервано»', async ({ app }) => {
+// An agent's answer survives quitting: the CLI runs in a detached helper (main/agent-runner.js)
+// that writes a journal; the chat window replays it on the next start.
+test('выход во время ответа: агент дописывает ответ в фоне, после запуска он в чате', async ({ app }) => {
   app.scenario({ codex: 'slow' });
   const chat = await app.openAgentChat('codex');
   await app.send(chat, 'Долгая задача');
   await expect(app.el(chat).locator('.tool-call')).toContainText('sleep 600');
   const [run] = app.calls('codex');
-  expect(isAlive(run.pid) && isAlive(run.childPid), 'агент и его команда работают').toBe(true);
+
+  await app.closeWindow();
+  expect([isAlive(run.pid), isAlive(run.childPid)], 'агент работает после закрытия приложения').toEqual([true, true]);
+
+  // started again while the agent still works: the window follows the run
+  await app.launch();
+  await expect.poll(() => app.status(chat)).toBe('Работает');
+  await expect(app.el(chat).locator('.tool-call')).toContainText('sleep 600');
+  app.release('codex');
+  const answer = await app.waitAnswer(chat);
+  expect(answer.content).toBe('Codex: Долгая задача');
+  expect(answer.interrupted).toBeFalsy();
+  expect(await app.status(chat)).toBe('Ожидает');
+  await expect.poll(() => [isAlive(run.pid), isAlive(run.childPid)]).toEqual([false, false]);
+});
+
+test('ответ, законченный при закрытом приложении, появляется при следующем запуске', async ({ app }) => {
+  app.scenario({ codex: 'slow' });
+  const chat = await app.openAgentChat('codex');
+  await app.send(chat, 'Сделай пока меня нет');
+  await expect(app.el(chat).locator('.tool-call')).toContainText('sleep 600');
+  const [run] = app.calls('codex');
+  await app.closeWindow();
+  app.release('codex');
+  await expect.poll(() => isAlive(run.pid), { message: 'агент закончил без приложения' }).toBe(false);
+
+  await app.launch();
+  const answer = await app.waitAnswer(chat);
+  expect(answer.content).toBe('Codex: Сделай пока меня нет');
+  expect(answer.parts.some((p) => p.type === 'tool' && p.status === 'ok')).toBe(true);
+  expect(await app.status(chat)).toBe('Ожидает');
+});
+
+test('если в настройках выключено, выход останавливает агента, а ответ помечен «Прервано»', async ({ app }) => {
+  await app.page.evaluate(async () => { const { state } = await import('./js/state.js'); state.setSetting('agentsKeepRunning', false); });
+  app.scenario({ codex: 'slow' });
+  const chat = await app.openAgentChat('codex');
+  await app.send(chat, 'Долгая задача');
+  await expect(app.el(chat).locator('.tool-call')).toContainText('sleep 600');
+  const [run] = app.calls('codex');
 
   await app.closeWindow();
   await expect.poll(() => [isAlive(run.pid), isAlive(run.childPid)], { message: 'процессы агента завершены вместе с приложением' }).toEqual([false, false]);
 
   await app.launch();
-  const [user, answer] = await app.messages(chat);
-  expect(user.content).toBe('Долгая задача');
-  expect(answer.running).toBeFalsy();
-  expect(answer.parts.map((p) => p.text || p.type)).toEqual(['Думаю над задачей\n', 'tool', 'Прервано']);
-  expect(await app.status(chat)).toBe('Ожидает');
+  const answer = await app.waitAnswer(chat);
+  expect(answer.interrupted).toBe(true);
+  expect(answer.parts.map((p) => p.text || p.type)).toEqual(['Думаю над задачей\n', 'tool', 'Ответ прервался: приложение или компьютер закрылись, пока агент работал.']);
+  expect(await app.status(chat)).toBe('Прервано');
+  await expect(app.el(chat).locator('.msg-cta button')).toHaveText(['Продолжить', 'Начать ответ заново']);
+
+  // «Продолжить» resumes the same Codex session
+  app.scenario({ codex: 'basic' });
+  await app.el(chat).locator('.msg-cta button', { hasText: 'Продолжить' }).click();
+  await app.waitAnswer(chat);
+  const resumed = app.calls('codex').at(-1);
+  expect(resumed.argv.slice(-2)[0]).toBe('resume');
+  expect(resumed.prompt).toMatch(/^Продолжи с того места/);
 });
 
 test.describe('переход со старого названия CanvasTTY', () => {
@@ -126,10 +175,10 @@ test.describe('переход со старого названия CanvasTTY', (
     expect(fs.existsSync(path.join(old, 'workspace.json')), 'старый workspace.json перенесён, а не скопирован').toBe(false);
   });
 
-  // BUG: main.js creates <userData>/attachments (new Attachments(...)) before migrateUserData()
+  // Regression (fixed): main.js creates <userData>/attachments (new Attachments(...)) before migrateUserData()
   // runs, so the old "attachments" folder is skipped as "already exists" and pictures attached in
   // CanvasTTY chats show as unavailable.
-  test.fixme('вложения чатов старой версии открываются после переезда', async ({ launchApp, home }) => {
+  test('вложения чатов старой версии открываются после переезда', async ({ launchApp, home }) => {
     seedOldProfile(home);
     const app = await launchApp();
     const status = await app.page.evaluate(() => fetch('app://vibetabula/__attach/0a1b2c3d4e-%D0%A1%D1%85%D0%B5%D0%BC%D0%B0.png').then((r) => r.status, (e) => String(e)));

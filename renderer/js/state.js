@@ -13,6 +13,10 @@ export const DEFAULT_AGENTS = [
   { id: 'shell', name: 'Терминал', cmd: '', args: '', mono: '>_', color: '#59606f', limitKey: null },
 ];
 
+export function providerName(id) {
+  return ({ openai: 'OpenAI', anthropic: 'Claude (API Anthropic)', moonshot: 'Kimi (Moonshot API)', openrouter: 'OpenRouter', deepseek: 'DeepSeek', gemini: 'Gemini', ollama: 'Ollama (локально)', custom: 'Свой OpenAI-совместимый' })[id] || id;
+}
+
 export const PROVIDER_META = {
   openai: { mono: 'AI', color: '#10a37f' },
   anthropic: { mono: 'A', color: '#d9825b' },

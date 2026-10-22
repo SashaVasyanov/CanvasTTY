@@ -54,6 +54,12 @@ test('когда снова можно — из текста ошибки', () =
   assert.match(explainError(`Claude AI usage limit reached|${ts}`, claude).hint, /сегодня в \d\d:\d\d|в \d\d:\d\d/);
 });
 
+test('неизвестная ошибка CLI с кодом выхода — «завершился с ошибкой»', () => {
+  assert.equal(explainError('claude: внутренняя ошибка', { ...claude, exitCode: 3 }).kind, 'crash');
+  assert.equal(explainError('claude: внутренняя ошибка', claude).kind, 'other');
+  assert.equal(explainError('что-то', { ...api, exitCode: 1 }).kind, 'other');
+});
+
 test('знак ⚠ из старых сообщений не мешает', () => {
   assert.equal(explainError('⚠ 503: Service Unavailable', api).kind, 'overloaded');
 });

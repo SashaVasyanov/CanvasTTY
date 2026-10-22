@@ -26,8 +26,10 @@ function mergeDocs(base, local, remote) {
       else if (rv && !lv) { if (!base || !bv || !same(rv, bv)) out.push(rv); } // deleted here and unchanged there → stays deleted
       else if (lv && !rv) { if (!base || !bv || !same(lv, bv)) out.push(lv); } // deleted there and unchanged here → delete
     }
-    // keep the remote order, then local additions
-    const order = new Map([...(r || []), ...(l || [])].map((x, i) => [x.id, i]));
+    // keep the remote order, then local additions (an order that differs only here would make two
+    // computers send the same canvas back and forth forever)
+    const order = new Map();
+    for (const x of [...(r || []), ...(l || [])]) if (!order.has(x.id)) order.set(x.id, order.size);
     return out.sort((a, b) => order.get(a.id) - order.get(b.id));
   };
   return { ...local, ...remote, nodes: mergeList(base?.nodes, local?.nodes, remote?.nodes), edges: mergeList(base?.edges, local?.edges, remote?.edges), comments: mergeList(base?.comments, local?.comments, remote?.comments) };
@@ -118,14 +120,23 @@ class SyncManager {
         if (remote && !remote.deleted && remote.data) { body = this.strip('canvas', mergeDocs(null, body, remote.data)); this.st.items[k] = { ts: remote.ts, hash: remote.hash }; await this.addVersion(id, remote.hash, remote.data); }
       }
       const hash = hashOf(body);
-      if (this.st.items[k]?.hash === hash) return; // nothing that matters changed (e.g. only the viewport)
-      const env = { v: 1, kind, id, ts: Date.now(), device: this.st.deviceId, deviceName: os.hostname(), hash, parent: this.st.items[k]?.hash || null, data: body };
+      const prev = this.st.items[k];
+      if (prev?.hash === hash) return; // nothing that matters changed (e.g. only the viewport)
+      // the versions this one grew from: the other computer may not know the newest of them (it was
+      // overwritten in the folder before it pulled it), an older one still makes a common ancestor
+      const ancestors = prev?.hash ? [prev.hash, ...(prev.ancestors || [])].slice(0, 12) : [];
+      const env = { v: 1, kind, id, ts: Date.now(), device: this.st.deviceId, deviceName: os.hostname(), hash, parent: prev?.hash || null, ancestors, data: body };
       await writeAtomic(this.remoteFile(kind, id), env);
       if (kind === 'canvas') await this.addVersion(id, hash, body);
-      this.st.items[k] = { ts: env.ts, hash };
+      this.st.items[k] = { ts: env.ts, hash, ancestors };
       this.saveState();
       this.status.pushed++; this.status.last = Date.now(); this.status.state = 'ok'; this.status.error = '';
     } catch (e) { this.fail(e); }
+  }
+  async sendBackCurrent(kind, id, file, fallback) {
+    let cur = null;
+    try { cur = await readJson(file); if (kind === 'workspace') cur = this.decodeWs(cur); } catch {}
+    return this.localChanged(kind, id, cur || fallback);
   }
   async localDeleted(kind, id) {
     if (!this.on) return;
@@ -190,28 +201,33 @@ class SyncManager {
       this.pristine = null;
       // projects that only exist here go back to the folder
       // push back only if this computer adds real content (not just its own API keys)
-      if (hashCore(this.strip('workspace', ws)) !== hashCore(env.data)) setTimeout(() => this.localChanged('workspace', 'workspace', ws), 50);
+      // (what is in the file then: an edit made meanwhile must not be replaced by this snapshot)
+      if (hashCore(this.strip('workspace', ws)) !== hashCore(env.data)) setTimeout(() => this.sendBackCurrent('workspace', 'workspace', this.wsFile, ws), 50);
     } else if (kind === 'canvas') {
       const file = path.join(this.canvasDir, `${id}.json`);
       if (env.deleted) { await fsp.unlink(file).catch(() => {}); }
       else {
         let local = null;
         try { local = await readJson(file); } catch {}
-        // common ancestor: the version the other computer edited from, else the last one we synced
-        const base = (await this.version(id, env.parent)) || (await this.version(id, this.st.items[this.key(kind, id)]?.hash));
+        // common ancestor: the version the other computer edited from, else the newest of its earlier
+        // versions we know, else the last one we synced
+        let base = null;
+        for (const h of [env.parent, ...(env.ancestors || [])]) if (h && (base = await this.version(id, h))) break;
+        if (!base) base = await this.version(id, this.st.items[this.key(kind, id)]?.hash);
         const merged = local ? mergeDocs(base, local, env.data) : clone(env.data);
         await writeAtomic(file, { ...merged, viewport: local?.viewport || { x: 0, y: 0, z: 1 } });
         const mergedBody = this.strip('canvas', merged);
         await this.addVersion(id, env.hash, env.data);
         extra = { base, remote: env.data };
         // this computer had changes the folder doesn't have yet → send the merged version back
-        if (hashOf(mergedBody) !== env.hash) setTimeout(() => this.localChanged('canvas', id, merged), 50);
+        // (as it is in the file then: an edit made in these 50 ms must not be replaced by this snapshot)
+        if (hashOf(mergedBody) !== env.hash) setTimeout(() => this.sendBackCurrent('canvas', id, file, merged), 50);
       }
     } else if (kind === 'chat') {
       if (env.deleted) await this.history.removeLocal(id);
       else await this.history.importRecord(env.data);
     }
-    this.st.items[this.key(kind, id)] = { ts: env.ts, hash: env.deleted ? 'deleted' : env.hash };
+    this.st.items[this.key(kind, id)] = { ts: env.ts, hash: env.deleted ? 'deleted' : env.hash, ...(env.deleted ? {} : { ancestors: (env.ancestors || []).slice(0, 12) }) };
     this.saveState();
     this.status.pulled++;
     this.send('sync:changed', { kind, id, deleted: !!env.deleted, from: env.deviceName, ...extra });

@@ -17,8 +17,10 @@ export function mergeDocs(base, local, remote) {
       else if (rv && !lv) { if (!base || !bv || !same(rv, bv)) out.push(rv); } // deleted here and unchanged there → stays deleted
       else if (lv && !rv) { if (!base || !bv || !same(lv, bv)) out.push(lv); } // deleted there and unchanged here → delete
     }
-    // keep the remote order, then local additions
-    const order = new Map([...(r || []), ...(l || [])].map((x, i) => [x.id, i]));
+    // keep the remote order, then local additions (an order that differs only here would make two
+    // computers send the same canvas back and forth forever)
+    const order = new Map();
+    for (const x of [...(r || []), ...(l || [])]) if (!order.has(x.id)) order.set(x.id, order.size);
     return out.sort((a, b) => order.get(a.id) - order.get(b.id));
   };
   return { ...local, ...remote, nodes: mergeList(base?.nodes, local?.nodes, remote?.nodes), edges: mergeList(base?.edges, local?.edges, remote?.edges), comments: mergeList(base?.comments, local?.comments, remote?.comments) };

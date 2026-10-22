@@ -3,7 +3,7 @@ import { h, icon, badge, esc, bus, toast, prompt, debounce, throttle, uid, readF
 import { cssColor, wantsWhiteText, BAR_COLORS, OBJECT_COLORS, STICKY_COLORS } from './pentools.js';
 import { sanitizeHtml, htmlText } from './sanitize.js';
 import { WIDGETS, mountWidget } from './widgets.js';
-import { state, native, PROVIDER_META } from './state.js';
+import { state, native, PROVIDER_META, providerName } from './state.js';
 import { renderChatMarkdown } from './md.js';
 import { RichEditor } from './editor.js';
 import { vaultIndex } from './vaultIndex.js';
@@ -11,6 +11,7 @@ import { mountHub } from './hub.js';
 import { ChatHistory, saveConversation } from './chathistory.js';
 import { AttachBar, renderAttachments, viewImages } from './attach.js';
 import { chatContext, imagesToAttachments, renderContextRow, renderContextNote, attachMentions } from './context.js';
+import { explainError, ERROR_ACTIONS } from './errors.js';
 
 // ---------------- routers for main-process events ----------------
 const ptyRoutes = new Map();
@@ -315,6 +316,9 @@ async function patchNodeData(inst, patch) {
   const view = inst.view;
   if (view.doc?.id === inst.docId && view.node(inst.node.id)) {
     view.setData(inst.node.id, patch);
+    // keep following the canvas' own node: a copy would go stale with the next setData
+    // (the next question would not show until its answer ended)
+    inst.node = view.node(inst.node.id);
     const live = view.views.get(inst.node.id)?.inst;
     if (live && live !== inst) { live.renderAll?.(); live.syncRunUi?.(); } // the window was re-created meanwhile
     return;
@@ -327,14 +331,81 @@ async function patchNodeData(inst, patch) {
     await native.canvas.save(inst.docId, doc);
   } catch (e) { console.error('patchNodeData', e); }
 }
-// an answer left "running" by a previous run that no longer exists (app closed mid-answer)
+const INTERRUPTED = 'Ответ прервался: приложение или компьютер закрылись, пока агент работал.';
+const CONTINUE_PROMPT = 'Продолжи с того места, где остановился: твой предыдущий ответ прервался.';
+// an answer that is being written on another computer (synced canvas) is not ours to settle
+const runsElsewhere = (m) => !!(m?.running && m.host && state.info.host && m.host !== state.info.host);
+// an answer left "running" by a run that no longer exists (app or computer closed mid-answer)
 function settleStale(inst) {
   const msgs = inst.node.data.messages || [];
   const last = msgs[msgs.length - 1];
-  if (!last?.running || activeRuns.has(inst.node.id)) return;
-  const fixed = [...msgs.slice(0, -1), { ...last, running: false, ...(last.parts ? { parts: [...last.parts, { type: 'notice', text: 'Прервано' }] } : { content: last.content || '_(прервано)_' }) }];
+  if (!last?.running || activeRuns.has(inst.node.id) || runsElsewhere(last)) return;
+  const fixed = [...msgs.slice(0, -1), { ...last, running: false, interrupted: true, ...(last.parts ? { parts: [...last.parts, { type: 'notice', text: INTERRUPTED }] } : { content: last.content || '_(прервано)_' }) }];
   inst.view.setData(inst.node.id, { messages: fixed });
   inst.node = inst.view.node(inst.node.id) || inst.node;
+}
+// the last question once more, without the answer that failed or broke off
+function retryLast(inst) {
+  const msgs = inst.messages;
+  let u = msgs.length - 1;
+  while (u >= 0 && msgs[u].role !== 'user') u--;
+  if (u < 0 || inst.isBusy()) return;
+  const { content, attachments } = msgs[u];
+  inst.view.setData(inst.node.id, { messages: msgs.slice(0, u) });
+  inst.node = inst.view.node(inst.node.id) || inst.node;
+  inst.send({ text: content || '', attachments: attachments || [] });
+}
+// an error in plain words with what to do about it (buttons only under the last message)
+function renderError(raw, ctx) {
+  const e = explainError(raw, ctx);
+  const other = e.kind === 'other';
+  const hint = other ? e.raw.slice(0, 400) : e.hint;
+  return h('div', { class: `msg-error err-${e.kind}` },
+    h('div', { class: 'err-title' }, `⚠ ${e.title}`),
+    hint ? h('div', { class: 'err-hint' }, hint) : null,
+    e.actions.length ? h('div', { class: 'msg-cta err-actions' }, ...e.actions.map((a, k) => h('button', { class: `btn sm no-drag${k === 0 ? ' primary' : ''}`, 'data-act': `err-${a}` }, ERROR_ACTIONS[a]))) : null,
+    e.raw && (!other || e.raw.length > 400) ? h('details', { class: 'err-raw' }, h('summary', {}, 'Подробности'), h('pre', {}, e.raw)) : null);
+}
+// the agent's CLI in a terminal next to the chat (login, or this session to see more)
+function openAgentTerminal(inst, extra) {
+  const a = inst.agent, view = inst.view, n = view.node(inst.node.id);
+  if (!n) return;
+  native.trust?.add([[a.cmd, a.args, extra].filter(Boolean).join(' ')]); // started by the user here
+  const t = view.addNode('terminal', { x: n.x + n.w + 60, y: n.y, data: { agentId: a.id, extraArgs: extra, cwd: inst.cwd } }, { center: false });
+  view.select([t.id]);
+}
+function errAction(inst, act) {
+  const agent = !!inst.continueRun;
+  const pick = (el) => { if (!el) return; el.focus(); try { el.showPicker?.(); } catch {} };
+  switch (act) {
+    case 'err-retry': retryLast(inst); break;
+    case 'err-login':
+      openAgentTerminal(inst, inst.kind === 'codex' ? 'login' : '');
+      toast(inst.kind === 'codex' ? 'Войдите в Codex в терминале справа, затем нажмите «Повторить»' : 'В терминале справа введите /login, войдите и нажмите «Повторить»');
+      break;
+    case 'err-model-auto': inst.view.setData(inst.node.id, { model: '', actualModel: null }); inst.node = inst.view.node(inst.node.id) || inst.node; inst.fillModelOptions?.(); retryLast(inst); break;
+    case 'err-model': if (agent) pick(inst.modelSel); else { inst.modelInput?.focus(); inst.modelInput?.select(); } break;
+    case 'err-providers': bus.emit('openSettings', 'providers'); break;
+    case 'err-limits': bus.emit('openSettings', 'limits'); break;
+    case 'err-access': pick(inst.modeSel); break;
+    case 'err-new-chat': if (agent) inst.newSession(); else { inst.hist.newChat(); toast('Новый чат: прошлый сохранён в истории'); } break;
+    case 'err-install': if (inst.agent?.install) { native.clipboard.write(inst.agent.install); toast(`Скопировано: ${inst.agent.install} — выполните в терминале`); } break;
+    case 'err-terminal': {
+      const sid = inst.node.data.sessionId;
+      openAgentTerminal(inst, sid ? (inst.kind === 'codex' ? `resume ${sid}` : `--resume ${sid}`) : '');
+      break;
+    }
+    default: break;
+  }
+}
+
+// "Продолжить" / "Повторить" under an answer that broke off
+function renderResume(inst, m, i) {
+  if (!m.interrupted || m.running || i !== inst.messages.length - 1) return null;
+  const canContinue = inst.continueRun && inst.node.data.sessionId;
+  return h('div', { class: 'msg-cta' },
+    h('button', { class: 'btn sm primary no-drag', 'data-act': canContinue ? 'continue' : 'retry', 'data-i': i }, canContinue ? 'Продолжить' : 'Повторить'),
+    canContinue ? h('button', { class: 'btn sm no-drag', 'data-act': 'retry', 'data-i': i }, 'Начать ответ заново') : null);
 }
 
 // Long conversations render only the newest messages; older ones load on demand
@@ -436,11 +507,13 @@ class ChatInstance {
   }
 
   renderMsg(m, i) {
-    const el = h('div', { class: `msg ${m.role}${m.error ? ' error' : ''}` });
+    const el = h('div', { class: `msg ${m.role}${m.error ? ' error' : ''}${i === this.messages.length - 1 ? ' is-last' : ''}` });
     if (m.role === 'user') { const atts = renderAttachments(m.attachments); if (atts) el.append(atts); if (m.content) el.append(h('div', { class: 'msg-text' }, m.content)); const ctx = renderContextNote(m.context); if (ctx) el.append(ctx); }
     else {
       if (m.reasoning) el.append(h('details', { class: 'msg-reason' }, h('summary', {}, 'Размышления'), h('div', { class: 'reason-text' }, m.reasoning)));
-      el.append(h('div', { class: 'msg-text md', html: m.error ? esc(m.content) : renderChatMarkdown(m.content) }));
+      if (m.error) el.append(renderError(m.errorText || m.content, { source: 'api', provider: this.providers?.[this.node.data.provider]?.name || providerName(this.node.data.provider || 'openai'), model: this.node.data.model }));
+      else el.append(h('div', { class: 'msg-text md', html: renderChatMarkdown(m.content) }));
+      const cta = renderResume(this, m, i); if (cta) el.append(cta);
     }
     el.append(h('div', { class: 'msg-actions' },
       h('button', { 'data-act': 'copy', 'data-i': i, title: 'Копировать', html: icon('copy', 12) }),
@@ -452,8 +525,10 @@ class ChatInstance {
   }
 
   async msgAction(act, i) {
+    if (act.startsWith('err-')) { errAction(this, act); return; }
     const m = this.messages[i];
     if (!m) return;
+    if (act === 'retry') { retryLast(this); return; }
     if (act === 'copy') { native.clipboard.write(m.content); toast('Скопировано'); }
     if (act === 'del') { const msgs = this.messages.filter((_, j) => j !== i); this.view.setData(this.node.id, { messages: msgs }); this.renderAll(); }
     if (act === 'note') {
@@ -480,17 +555,18 @@ class ChatInstance {
 
   renderCtx() { renderContextRow(this.ctxRow, this.view, this.node.id, this.input.value); }
 
-  async send() {
-    const text = this.input.value.trim();
-    if ((!text && !this.attach.items.length) || this.isBusy()) return;
-    if (this.attach.busy) { toast('Файлы ещё загружаются…'); return; }
-    const attachments = this.attach.take();
-    this.input.value = ''; this.input.style.height = 'auto';
+  // again = { text, attachments }: a question sent once more (retry), the input stays as it is
+  async send(again = null) {
+    const text = again ? again.text : this.input.value.trim();
+    if ((!text && !(again ? again.attachments.length : this.attach.items.length)) || this.isBusy()) return;
+    if (!again && this.attach.busy) { toast('Файлы ещё загружаются…'); return; }
+    const attachments = again ? again.attachments : this.attach.take();
+    if (!again) { this.input.value = ''; this.input.style.height = 'auto'; }
     this.mentions?.close();
     // the message and "answering" show at once, the canvas context is collected after that
     const user = { role: 'user', content: text, ts: Date.now(), ...(attachments.length ? { attachments } : {}) };
     const msgs = [...this.messages, user];
-    const asst = { role: 'assistant', content: '', ts: Date.now() };
+    const asst = { role: 'assistant', content: '', running: true, host: state.info.host, ts: Date.now() };
     const all = [...msgs, asst];
     this.view.setData(this.node.id, { messages: all });
     if (!this.node.data.title || this.node.data.title === 'Новый чат') this.view.setData(this.node.id, { title: (text || attachments[0]?.name || 'Чат').slice(0, 40) });
@@ -520,7 +596,7 @@ class ChatInstance {
     chatRoutes.set(reqId, (ev) => {
       if (ev.type === 'delta') { asst.content += ev.text; paint(); }
       else if (ev.type === 'reasoning') { asst.reasoning = (asst.reasoning || '') + ev.text; }
-      else if (ev.type === 'error') { asst.content = `⚠ ${ev.message}`; asst.error = true; this.finish(reqId, all); }
+      else if (ev.type === 'error') { asst.content = `⚠ ${ev.message}`; asst.errorText = String(ev.message || ''); asst.error = true; this.finish(reqId, all); }
       else if (ev.type === 'done') { if (ev.usage) { asst.usage = ev.usage; } if (!asst.content && ev.aborted) asst.content = '_(остановлено)_'; this.finish(reqId, all); }
     });
     const req = msgs.map(({ role, content, attachments: a }, i) => { const all = i === msgs.length - 1 ? [...(a || []), ...ctxAtts] : a || []; return { role, content, ...(all.length ? { attachments: all } : {}) }; });
@@ -530,6 +606,8 @@ class ChatInstance {
   async finish(reqId, all) {
     chatRoutes.delete(reqId);
     this.streaming = null;
+    const last = all[all.length - 1];
+    if (last?.running) delete last.running;
     this.sendBtn.innerHTML = icon('send', 16); this.sendBtn.classList.remove('stop');
     activeRuns.delete(this.node.id);
     await patchNodeData(this, { messages: [...all] });
@@ -572,6 +650,8 @@ class ChatInstance {
   statusInfo() {
     if (this.streaming || runOf(this)) return { label: 'Отвечает…', kind: 'busy' };
     const m = this.messages[this.messages.length - 1];
+    if (runsElsewhere(m)) return { label: 'Отвечает на другом компьютере', kind: 'busy' };
+    if (m?.interrupted) return { label: 'Прервано', kind: 'wait' };
     if (m?.error) return { label: 'Ошибка', kind: 'na' };
     return { label: this.messages.length ? `${this.messages.length} сообщ.` : 'Готов', kind: 'idle' };
   }
@@ -616,8 +696,8 @@ const agentDefaults = () => (agentDefaultsP = agentDefaultsP || (native.agentCha
 class AgentChatInstance {
   constructor({ node, view, body }) {
     this.node = node; this.view = view;
-    settleStale(this);
     this.running = null;
+    this.continueRun = true;
     this.root = h('div', { class: 'chat agent-chat' });
     this.modeSel = h('select', { class: 'select sm no-drag', title: 'Что агенту разрешено делать' });
     this.modelSel = h('select', { class: 'select sm no-drag', title: 'Модель' });
@@ -666,6 +746,32 @@ class AgentChatInstance {
     this.renderAll();
     this.renderCtx();
     this.syncRunUi();
+    this.reattach();
+  }
+
+  // An answer saved as "running" while no run of this app owns it: the app was closed or reloaded
+  // mid-answer. The agent keeps working in the background (main/agent-runner.js), so the run is
+  // picked up again: main replays its journal from the start and the answer is rebuilt. When there
+  // is no journal (older version, the computer was restarted before…) the answer is marked as
+  // broken off, with «Продолжить».
+  reattach() {
+    const msgs = this.messages, last = msgs[msgs.length - 1];
+    if (!last?.running || activeRuns.has(this.node.id) || runsElsewhere(last)) return;
+    const reqId = uid('ag');
+    const asst = { ...last, content: '', parts: [], running: true };
+    const all = [...msgs.slice(0, -1), asst];
+    this.docId = this.view.doc.id; activeRuns.set(this.node.id, this);
+    this.running = reqId;
+    this.listen(reqId, all, asst);
+    this.syncRunUi();
+    const giveUp = () => {
+      if (this.running !== reqId) return;
+      chatRoutes.delete(reqId); activeRuns.delete(this.node.id); this.running = null;
+      settleStale(this);
+      this.renderAll(); this.syncRunUi(); this.syncHead();
+    };
+    Promise.resolve(native.agentChat.attach ? native.agentChat.attach({ nodeId: this.node.id, reqId }) : null)
+      .then((r) => { if (!r) giveUp(); else this.syncHead(); }, giveUp);
   }
 
   get agent() { return state.agent(this.node.data.agentId); }
@@ -760,7 +866,7 @@ class AgentChatInstance {
         if (p.output) d.append(h('pre', { class: 'tool-out' }, p.output));
         return d;
       }
-      if (p.type === 'error') return h('div', { class: 'msg-error' }, `⚠ ${p.text}`);
+      if (p.type === 'error') return renderError(p.text, { source: this.kind, name: this.agent.name, model: this.node.data.model, install: this.agent.install, cmd: this.agent.cmd, exitCode: p.code });
       if (p.type === 'notice') return h('div', { class: `muted small${p.reconnect ? ' msg-retry' : ''}`, title: p.detail || '' }, p.text);
       if (p.type === 'image' && p.att) {
         // a picture the agent generated: open it, put it on the canvas, show the file
@@ -775,7 +881,7 @@ class AgentChatInstance {
       }
       return null;
     };
-    el.querySelector(':scope > .typing')?.remove();
+    el.querySelector(':scope > .typing, :scope > .typing-else')?.remove();
     parts.forEach((p, i) => {
       const key = keyOf(p);
       const c = cache[i];
@@ -788,13 +894,13 @@ class AgentChatInstance {
     });
     for (let i = parts.length; i < cache.length; i++) cache[i]?.node?.remove();
     cache.length = Math.min(cache.length, parts.length);
-    if (m.running && !parts.length) el.append(h('span', { class: 'typing' }, h('i'), h('i'), h('i')));
+    if (m.running && !parts.length) el.append(runsElsewhere(m) ? h('div', { class: 'muted small typing-else' }, 'Ответ пишется на другом компьютере — появится здесь после синхронизации.') : h('span', { class: 'typing' }, h('i'), h('i'), h('i')));
   }
 
   renderMsg(m, i) {
-    const el = h('div', { class: `msg ${m.role}` });
+    const el = h('div', { class: `msg ${m.role}${i === this.messages.length - 1 ? ' is-last' : ''}` });
     if (m.role === 'user') { const atts = renderAttachments(m.attachments); if (atts) el.append(atts); if (m.content) el.append(h('div', { class: 'msg-text' }, m.content)); const ctx = renderContextNote(m.context); if (ctx) el.append(ctx); }
-    else { const body = h('div', { class: 'msg-body' }); this.renderParts(m, body); el.append(body); }
+    else { const body = h('div', { class: 'msg-body' }); this.renderParts(m, body); el.append(body); const cta = renderResume(this, m, i); if (cta) el.append(cta); }
     if (!m.running) el.append(h('div', { class: 'msg-actions' },
       h('button', { 'data-act': 'copy', 'data-i': i, title: 'Копировать', html: icon('copy', 12) }),
       m.role === 'assistant' ? h('button', { 'data-act': 'note', 'data-i': i, title: 'В заметку', html: icon('note', 12) }) : null));
@@ -806,15 +912,18 @@ class AgentChatInstance {
     try {
       const blob = await (await fetch(a.url)).blob();
       const me = this.view.node(this.node.id);
-      const n = await imageNodeFromFile(this.view, new File([blob], a.name || 'Картинка.png', { type: blob.type || a.mime || 'image/png' }), { x: me.x + me.w + 60, y: me.y });
+      const n = await imageNodeFromFile(this.view, new File([blob], a.name || 'Картинка.png', { type: blob.type || a.mime || 'image/png' }), { x: me.x + me.w + 60, y: me.y }, { center: false });
       this.view.select([n.id]);
       toast('Картинка на холсте');
     } catch (e) { toast(`Не удалось вынести картинку: ${e.message || e}`, 'error'); }
   }
 
   async msgAction(act, i) {
+    if (act.startsWith('err-')) { errAction(this, act); return; }
     const m = this.messages[i];
     if (!m) return;
+    if (act === 'retry') { retryLast(this); return; }
+    if (act === 'continue') { this.send({ text: CONTINUE_PROMPT, attachments: [] }); return; }
     if (act === 'copy') { native.clipboard.write(m.content || ''); toast('Скопировано'); }
     if (act === 'note') {
       const title = (m.content.split('\n').find((l) => l.trim()) || 'Ответ агента').replace(/[#*_`]/g, '').slice(0, 60).trim();
@@ -826,43 +935,55 @@ class AgentChatInstance {
     }
   }
 
-  async send() {
-    const text = this.input.value.trim();
-    if ((!text && !this.attach.items.length) || this.isBusy()) return;
-    if (this.attach.busy) { toast('Файлы ещё загружаются…'); return; }
-    const attachments = this.attach.take();
-    this.input.value = ''; this.input.style.height = 'auto';
+  // again = { text, attachments }: sent from «Продолжить» / «Повторить», the input stays as it is
+  async send(again = null) {
+    const text = again ? again.text : this.input.value.trim();
+    if ((!text && !(again ? again.attachments.length : this.attach.items.length)) || this.isBusy()) return;
+    if (!again && this.attach.busy) { toast('Файлы ещё загружаются…'); return; }
+    const attachments = again ? again.attachments : this.attach.take();
+    if (!again) { this.input.value = ''; this.input.style.height = 'auto'; }
     this.mentions?.close();
     // the message and "working" show at once; collecting the canvas context (pictures of a big
     // area) may take a moment and happens after that
     const user = { role: 'user', content: text, ts: Date.now(), ...(attachments.length ? { attachments } : {}) };
-    const asst = { role: 'assistant', content: '', parts: [], running: true, ts: Date.now() };
+    const asst = { role: 'assistant', content: '', parts: [], running: true, host: state.info.host, ts: Date.now() };
     const all = [...this.messages, user, asst];
     this.view.setData(this.node.id, { messages: all });
-    if (!this.node.data.title) this.view.setData(this.node.id, { title: (text || attachments[0]?.name || 'Задача').slice(0, 40) });
+    if (!this.node.data.title && text !== CONTINUE_PROMPT) this.view.setData(this.node.id, { title: (text || attachments[0]?.name || 'Задача').slice(0, 40) });
     const reqId = uid('ag');
     this.docId = this.view.doc.id; activeRuns.set(this.node.id, this);
     this.running = reqId; this.preparing = reqId; this._prep = { all, asst };
     this.follow = true; // a new question: show it and the answer
     this.renderAll();
-    let body = this.list.lastElementChild.querySelector('.msg-body');
     this.syncRunUi();
     this.syncHead();
     // the agent keeps its session: linked objects go again only when they changed (a new chat
     // starts without ctxHash), objects named with @ always go with their message
-    let prompt = text, ctxAtts = [];
+    let prompt = text, ctxAtts = [], sig;
     try {
       const ctx = await chatContext(this.view, this.node.id, text, this.node.data.ctxHash);
       if (ctx.images.length) ctxAtts = await imagesToAttachments(ctx.images);
       if (ctx.text) prompt = `Контекст с canvas пользователя: объекты, соединённые с этим чатом стрелкой или упомянутые через @${ctxAtts.length ? '. Картинки из контекста приложены к сообщению' : ''}.\n\n${ctx.text}\n\n---\n\n${text}`;
-      if (ctx.linkedSig !== (this.node.data.ctxHash || null)) this.view.setData(this.node.id, { ctxHash: ctx.linkedSig });
-      if (ctx.labels.length) { user.context = ctx.labels; this.renderAll(); body = this.list.lastElementChild.querySelector('.msg-body'); }
+      sig = ctx.linkedSig;
+      if (ctx.labels.length) { user.context = ctx.labels; this.renderAll(); }
     } catch (e) { console.warn('canvas context', e); }
     this.renderCtx();
     this.preparing = null;
-    if (this.running !== reqId) return; // stopped while the context was being collected
-    let newText = true;
-    const paint = throttle(() => { this.renderParts(asst, body); this.toEnd(); twinOf(this)?.showLive(asst); }, 70);
+    if (this.running !== reqId) return; // stopped while the context was being collected: nothing was sent
+    // remembered only once the context really goes to the agent
+    if (sig !== undefined && sig !== (this.node.data.ctxHash || null)) this.view.setData(this.node.id, { ctxHash: sig });
+    this.listen(reqId, all, asst);
+    await native.agentChat.run({ reqId, kind: this.kind, cmd: this.agent.cmd || this.kind, prompt, sessionId: this.node.data.sessionId, mode: this.modeSel.value, model: this.node.data.model || '', effort: this.node.data.effort || '', cwd: this.cwd, attachments: [...attachments, ...ctxAtts], nodeId: this.node.id, docId: this.docId, keepRunning: state.settings.agentsKeepRunning !== false });
+  }
+
+  // events of a run → the answer; also replays a run picked up after a restart (reattach)
+  listen(reqId, all, asst) {
+    let body = null, newText = true;
+    const paint = throttle(() => {
+      if (!body?.isConnected) body = this.list.lastElementChild?.querySelector('.msg-body');
+      if (body) this.renderParts(asst, body);
+      this.toEnd(); twinOf(this)?.showLive(asst);
+    }, 70);
     const dropRetry = () => { for (let i = asst.parts.length - 1; i >= 0; i--) if (asst.parts[i].reconnect) asst.parts.splice(i, 1); };
     const lastText = () => { const l = asst.parts[asst.parts.length - 1]; if (newText || !l || l.type !== 'text') { const p = { type: 'text', text: '' }; asst.parts.push(p); newText = false; return p; } return l; };
     chatRoutes.set(reqId, (ev) => {
@@ -882,13 +1003,12 @@ class AgentChatInstance {
           if (ev.needsInput) asst.needsInput = true;
           break;
         }
-        case 'error': dropRetry(); asst.parts.push({ type: 'error', text: ev.message }); break;
+        case 'error': dropRetry(); asst.parts.push({ type: 'error', text: ev.message, ...(ev.code != null ? { code: ev.code } : {}) }); break;
         case 'done': this.finish(reqId, all, asst, ev); return;
         default: break;
       }
       paint();
     });
-    await native.agentChat.run({ reqId, kind: this.kind, cmd: this.agent.cmd || this.kind, prompt, sessionId: this.node.data.sessionId, mode: this.modeSel.value, model: this.node.data.model || '', effort: this.node.data.effort || '', cwd: this.cwd, attachments: [...attachments, ...ctxAtts] });
   }
 
   async finish(reqId, all, asst, ev) {
@@ -897,9 +1017,11 @@ class AgentChatInstance {
     asst.running = false;
     for (const p of asst.parts) if (p.type === 'tool' && p.status === 'run') p.status = ev.aborted ? 'err' : 'ok';
     if (ev.aborted) asst.parts.push({ type: 'notice', text: 'Остановлено' });
+    if (ev.interrupted) { asst.interrupted = true; asst.parts.push({ type: 'notice', text: INTERRUPTED }); }
     asst.content = asst.parts.filter((p) => p.type === 'text').map((p) => p.text).join('\n\n').trim();
     activeRuns.delete(this.node.id);
     await patchNodeData(this, { messages: [...all], ...(ev.sessionId ? { sessionId: ev.sessionId } : {}) });
+    native.agentChat.release?.(reqId); // the answer is saved: main may delete the run's journal
     this.sendBtn.innerHTML = icon('send', 16); this.sendBtn.classList.remove('stop');
     const bits = [];
     if (ev.usage) bits.push(`${(ev.usage.input + ev.usage.output).toLocaleString('ru-RU')} ток.`);
@@ -921,6 +1043,8 @@ class AgentChatInstance {
   statusInfo() {
     if (this.running || runOf(this)) return { label: 'Работает', kind: 'busy' };
     const m = this.messages[this.messages.length - 1];
+    if (runsElsewhere(m)) return { label: 'Работает на другом компьютере', kind: 'busy' };
+    if (m?.interrupted) return { label: 'Прервано', kind: 'wait' };
     if (m && (m.parts || []).some((p) => p.type === 'error')) return { label: 'Ошибка', kind: 'na' };
     if (m && m.needsInput) return { label: 'Нужно разрешение', kind: 'wait' };
     return { label: this.messages.length ? 'Ожидает' : 'Готов', kind: 'idle' };
@@ -1320,7 +1444,9 @@ export const NODE_TYPES = {
   },
 };
 
-export async function imageNodeFromFile(view, file, world) {
+// world: where the picture goes — its centre (a drop under the cursor) or, with { center: false },
+// its top-left corner
+export async function imageNodeFromFile(view, file, world, opts = {}) {
   const dataUrl = await readFileAsDataURL(file);
   const rel = await native.vault.saveAsset(dataUrl, file.name);
   vaultIndex.addAsset(rel);
@@ -1329,5 +1455,5 @@ export async function imageNodeFromFile(view, file, world) {
   let w = img.naturalWidth || 360, hh = img.naturalHeight || 240;
   const k = Math.min(1, 520 / Math.max(w, hh));
   w = Math.round(w * k); hh = Math.round(hh * k);
-  return view.addNode('image', { x: world.x, y: world.y, w, h: hh, data: { vault: rel } });
+  return view.addNode('image', { x: world.x, y: world.y, w, h: hh, data: { vault: rel } }, opts);
 }

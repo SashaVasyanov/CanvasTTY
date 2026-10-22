@@ -27,7 +27,7 @@ let seq = 0;
 export const mockNative = {
   isElectron: false,
   win: { minimize() {}, maximize() {}, close() {}, isMaximized: async () => false, onState: on('win:state') },
-  info: async () => ({ version: '1.4.0', platform: 'browser', home: '/home/user' }),
+  info: async () => ({ version: '1.4.0', platform: 'browser', home: '/home/user', host: 'demo-pc' }),
   ws: { load: async () => LS.get('mock:ws', null), save: async (ws) => LS.set('mock:ws', ws) },
   canvas: { load: async (id) => LS.get(`mock:canvas:${id}`, null), save: async (id, d) => LS.set(`mock:canvas:${id}`, d), remove: async (id) => localStorage.removeItem(`mock:canvas:${id}`) },
   pty: {
@@ -102,7 +102,10 @@ export const mockNative = {
       }, 90);
       return true;
     },
-    imagesDir: async () => '', abort: async () => {}, defaults: async () => ({ claude: { model: 'sonnet' }, codex: { model: 'gpt-5-codex', effort: 'medium', models: [] } }), onEvent: on('agentchat:event'),
+    imagesDir: async () => '', abort: async () => {},
+    // a run left from before a restart: tests can set window.__mockAttach({ nodeId, reqId }) → info or null
+    attach: async (o) => (window.__mockAttach ? window.__mockAttach(o) : null), release: async () => true,
+    defaults: async () => ({ claude: { model: 'sonnet' }, codex: { model: 'gpt-5-codex', effort: 'medium', models: [] } }), onEvent: on('agentchat:event'),
   },
   setBg: async () => {},
   attach: {

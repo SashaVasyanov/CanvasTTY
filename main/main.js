@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, protocol, net, shell, dialog, Menu, clipboard, nativeImage, screen, session } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const fsp = fs.promises;
 const { pathToFileURL } = require('url');
 const { PtyManager } = require('./pty');
@@ -22,7 +23,6 @@ function useTestHome() {
   return true;
 }
 useTestHome();
-const attachments = new Attachments(app.getPath('userData'));
 const { SyncManager } = require('./sync');
 const codexPets = require('./codexpets');
 
@@ -61,6 +61,24 @@ useTestHome(); // setName must not move a test profile back to the real one
     }
   } catch { try { app.setPath('userData', path.join(app.getPath('appData'), 'CanvasTTY')); } catch {} }
 })();
+// Chat attachments: the folder used to be created before the move above, so the old CanvasTTY
+// attachments stayed behind and pictures in old chats showed as unavailable. Copy what is missing
+// (once; the old folder is left as it is).
+(function migrateAttachments() {
+  try {
+    const oldA = path.join(app.getPath('appData'), 'CanvasTTY', 'attachments');
+    const newA = path.join(app.getPath('userData'), 'attachments');
+    const mark = path.join(newA, '.from-canvastty');
+    if (oldA === newA || !fs.existsSync(oldA) || fs.existsSync(mark)) return;
+    fs.mkdirSync(newA, { recursive: true });
+    for (const name of fs.readdirSync(oldA)) {
+      const to = path.join(newA, name);
+      if (!fs.existsSync(to)) { try { fs.copyFileSync(path.join(oldA, name), to); } catch {} }
+    }
+    fs.writeFileSync(mark, '');
+  } catch {}
+})();
+const attachments = new Attachments(app.getPath('userData'));
 // rendering performance: GPU rasterization even on blocklisted drivers
 app.commandLine.appendSwitch('enable-gpu-rasterization');
 app.commandLine.appendSwitch('ignore-gpu-blocklist');
@@ -109,10 +127,27 @@ const chat = new ChatManager({
   },
 });
 
-async function writeJson(file, data) {
-  const tmp = file + '.tmp';
-  await fsp.writeFile(tmp, JSON.stringify(data, null, 1), 'utf8');
-  await fsp.rename(tmp, file);
+// Saves of one file run one after another, each through its own temp file: two overlapping saves
+// (the delayed save and the flush when the window closes) used to share "<file>.tmp" and could
+// leave a broken canvas. The newest save is written last.
+const writeQueues = new Map();
+function writeJson(file, data) {
+  const text = JSON.stringify(data, null, 1); // the state at the moment of the call
+  const prev = writeQueues.get(file) || Promise.resolve();
+  const next = prev.catch(() => {}).then(async () => {
+    const tmp = `${file}.${process.pid}.${Math.random().toString(36).slice(2, 10)}.tmp`;
+    await fsp.writeFile(tmp, text, 'utf8');
+    // Windows: an antivirus or a cloud client may hold the target for a moment
+    for (let i = 0; ; i++) {
+      try { await fsp.rename(tmp, file); return; } catch (e) {
+        if (i >= 4 || !['EPERM', 'EBUSY', 'EACCES'].includes(e.code)) { await fsp.unlink(tmp).catch(() => {}); throw e; }
+        await new Promise((r) => setTimeout(r, 60 * (i + 1)));
+      }
+    }
+  });
+  writeQueues.set(file, next);
+  next.then(() => {}, () => {}).then(() => { if (writeQueues.get(file) === next) writeQueues.delete(file); });
+  return next;
 }
 function readJsonSync(file, fallback) {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return fallback; }
@@ -263,7 +298,7 @@ app.whenReady().then(() => {
     }
     return out[0] || '';
   });
-  ipcMain.handle('app:info', () => ({ version: app.getVersion(), platform: process.platform, home: app.getPath('home'), userData }));
+  ipcMain.handle('app:info', () => ({ version: app.getVersion(), platform: process.platform, home: app.getPath('home'), userData, host: os.hostname() }));
 
   // ---------- storage ----------
   ipcMain.handle('ws:load', () => loadWorkspace());
@@ -292,6 +327,8 @@ app.whenReady().then(() => {
   // ---------- agent chat (CLI agents in chat window) ----------
   ipcMain.handle('agentchat:run', (e, opts) => { agentChat.run(opts); return true; });
   ipcMain.handle('agentchat:abort', (e, reqId) => agentChat.abort(reqId));
+  ipcMain.handle('agentchat:attach', (e, o) => agentChat.attach(o));
+  ipcMain.handle('agentchat:release', (e, reqId) => agentChat.release(reqId));
   ipcMain.handle('agentchat:defaults', () => agentDefaults());
   // where Codex keeps the pictures it generated in a session (~/.codex/generated_images/<session>)
   ipcMain.handle('agentchat:imagesDir', (e, sid) => {
@@ -361,5 +398,6 @@ app.whenReady().then(() => {
   createWindow();
 });
 
-app.on('window-all-closed', () => { ptys.killAll(); for (const id of [...agentChat.runs.keys()]) agentChat.abort(id); app.quit(); });
+// agent chats keep answering in the background (agent-runner.js) unless that is turned off
+app.on('window-all-closed', () => { ptys.killAll(); agentChat.onQuit(); app.quit(); });
 app.on('before-quit', () => ptys.killAll());

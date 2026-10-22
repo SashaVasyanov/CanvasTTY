@@ -228,7 +228,11 @@ export function attachMentions(input, { view, selfId, onChange }) {
     const q = query();
     if (!q) { close(); return; }
     const needle = q.q.toLowerCase();
-    items = mentionables(view, selfId).filter((c) => !needle || c.title.toLowerCase().includes(needle)).slice(0, 8);
+    const all = mentionables(view, selfId);
+    // a finished mention ("@Название " and the text after it) does not open the list again
+    if (all.some((c) => needle.startsWith(`${c.title.toLowerCase()} `))) { close(); return; }
+    items = all.filter((c) => !needle || c.title.toLowerCase().includes(needle)).slice(0, 8);
+    if (!items.length && /\s/.test(needle)) { close(); return; } // just a sentence after an @
     start = q.at;
     if (!pop) {
       pop = h('div', { class: 'menu mention-pop' });

@@ -21,7 +21,7 @@ contextBridge.exposeInMainWorld('native', {
     onData: on('pty:data'), onExit: on('pty:exit'),
   },
   chat: { providers: inv('chat:providers'), send: inv('chat:send'), abort: inv('chat:abort'), models: inv('chat:models'), onEvent: on('chat:event') },
-  agentChat: { run: inv('agentchat:run'), abort: inv('agentchat:abort'), defaults: inv('agentchat:defaults'), imagesDir: inv('agentchat:imagesDir'), onEvent: on('agentchat:event') },
+  agentChat: { run: inv('agentchat:run'), abort: inv('agentchat:abort'), attach: inv('agentchat:attach'), release: inv('agentchat:release'), defaults: inv('agentchat:defaults'), imagesDir: inv('agentchat:imagesDir'), onEvent: on('agentchat:event') },
   setBg: inv('win:setBg'),
   perf: { info: inv('perf:info'), save: inv('perf:save') },
   history: { list: inv('history:list'), get: inv('history:get'), save: inv('history:save'), remove: inv('history:remove') },

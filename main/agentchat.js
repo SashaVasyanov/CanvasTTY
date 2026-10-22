@@ -2,7 +2,10 @@
 //   Claude Code: claude -p --output-format stream-json --verbose [--include-partial-messages] [--resume <id>]
 //   Codex:       codex exec --json --skip-git-repo-check [resume <id>]
 // The prompt is written to stdin, so no quoting problems. Uses the agent's own login (subscription).
+// Every turn runs in a detached helper (agent-runner.js) that writes the CLI's output to a journal
+// folder; see "background runs" below.
 const { spawn, execFile } = require('child_process');
+const { StringDecoder } = require('string_decoder');
 const path = require('path');
 const os = require('os');
 // a folder from another computer (synced canvas) may not exist here
@@ -11,20 +14,32 @@ const fs = require('fs');
 
 const isWin = process.platform === 'win32';
 
-function spawnCli(resolved, args, opts) {
+// the command line for a CLI; npm installs .cmd shims on Windows, which only cmd.exe can start
+function cliCommand(resolved, args) {
   if (isWin && /\.(cmd|bat)$/i.test(resolved)) {
     const q = (a) => (/[\s"&|<>^()%!]/.test(a) ? `"${String(a).replace(/"/g, '""')}"` : a);
     const line = [q(resolved), ...args.map(q)].join(' ');
-    return spawn(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', `"${line}"`], { ...opts, windowsVerbatimArguments: true, windowsHide: true });
+    return { file: process.env.ComSpec || 'cmd.exe', args: ['/d', '/s', '/c', `"${line}"`], verbatim: true };
   }
-  return spawn(resolved, args, { ...opts, windowsHide: true });
+  return { file: resolved, args, verbatim: false };
 }
 
-function killTree(proc) {
-  if (!proc || proc.exitCode != null) return;
-  if (isWin) execFile('taskkill', ['/pid', String(proc.pid), '/T', '/F'], { windowsHide: true }, () => {});
-  else { try { proc.kill('SIGTERM'); } catch {} }
+// the helper and everything it started (it runs in its own process group on Linux/macOS)
+function killTree(pid) {
+  if (!pid) return;
+  if (isWin) { execFile('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true }, () => {}); return; }
+  try { process.kill(-pid, 'SIGTERM'); } catch { try { process.kill(pid, 'SIGTERM'); } catch {} }
 }
+function pidAlive(pid) {
+  if (!pid) return false;
+  try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
+}
+const readJson = (p) => { try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { return null; } };
+const writeJson = (p, v) => { try { fs.writeFileSync(p, JSON.stringify(v)); } catch {} };
+const mtimeOf = (p) => { try { return fs.statSync(p).mtimeMs; } catch { return null; } };
+const RUNNER = path.join(__dirname, 'agent-runner.js');
+const QUIET_CHECKS = 30; // ~30 s of the app's own running time without a heartbeat: the helper is gone
+const JOURNAL_DAYS = 7;
 
 function asText(content) {
   if (content == null) return '';
@@ -50,7 +65,10 @@ class AgentChatManager {
     this.send = send;
     this.ptys = ptys;
     this.userData = userData;
-    this.runs = new Map();
+    this.runs = new Map(); // reqId → run (also finished ones, until the renderer releases them)
+    this.runsDir = userData ? path.join(userData, 'agent-runs') : null;
+    this.ticker = null;
+    setTimeout(() => this.prune(), 5000);
   }
 
   // absolute paths of the files attached to this message
@@ -82,9 +100,173 @@ class AgentChatManager {
     return ['-c', `mcp_servers.vibetabula.command=${lit(srv.command)}`, '-c', `mcp_servers.vibetabula.args=[${srv.args.map(lit).join(',')}]`, '-c', `mcp_servers.vibetabula.env={${env}}`, ...(approve ? ['-c', `mcp_servers.vibetabula.default_tools_approval_mode='approve'`] : [])];
   }
 
+  // ---------------- background runs ----------------
+  // A turn runs in agent-runner.js, started detached: it keeps going when the app is closed or
+  // reloaded. The app reads the journal (out.jsonl) while the turn runs. When the chat window
+  // shows up again (after a restart or reload) it calls attach(): the journal is replayed from the
+  // start through the same parser, so the answer is rebuilt from the agent's own output, and
+  // followed further if the agent is still working. Once the renderer has saved the finished
+  // answer it calls release() and the journal is deleted; leftovers are pruned after a week.
+  spawnRunner(o) {
+    if (!this.runsDir) throw new Error('Нет папки для журнала запуска.');
+    const dir = path.join(this.runsDir, `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`);
+    fs.mkdirSync(dir, { recursive: true });
+    const f = (n) => path.join(dir, n);
+    fs.writeFileSync(f('run.json'), JSON.stringify({ ...o.cmd, cwd: o.cwd }));
+    fs.writeFileSync(f('prompt.txt'), o.prompt || '');
+    const { reqId: _r, ...opts } = o.opts;
+    const meta = { v: 1, reqId: o.reqId, nodeId: opts.nodeId || null, docId: opts.docId || null, kind: o.kind, opts, resolved: o.resolved, flag: o.flag, startedAt: Date.now(), keepRunning: opts.keepRunning !== false };
+    const how = { cwd: o.cwd, env: { ...this.env(), ELECTRON_RUN_AS_NODE: '1' }, detached: true, stdio: 'ignore', windowsHide: true };
+    // Linux/macOS: a child inherits every descriptor the app left open (Chromium's sockets, the lock
+    // files of its storage…); a helper that outlives the app must not hold them, so a shell closes
+    // them before it becomes the helper (exec keeps the pid)
+    const child = isWin ? spawn(process.execPath, [RUNNER, dir], how)
+      : spawn(fs.existsSync('/bin/bash') ? '/bin/bash' : '/bin/sh', ['-c', 'for fd in $(ls /dev/fd); do [ "$fd" -gt 2 ] 2>/dev/null && eval "exec $fd>&-" 2>/dev/null; done; exec "$0" "$@"', process.execPath, RUNNER, dir], how);
+    meta.pid = child.pid;
+    child.on('error', (e) => { try { fs.appendFileSync(f('err.log'), `${e.message}\n`); } catch {} if (!fs.existsSync(f('exit.json'))) writeJson(f('exit.json'), { code: -1, at: Date.now() }); this.checkDir(dir); });
+    child.on('exit', () => setTimeout(() => this.checkDir(dir), 30));
+    child.unref(); // the app may quit while the agent keeps working
+    writeJson(f('meta.json'), meta);
+    return { dir, meta };
+  }
+
+  // o: { reqId, journal?, kind, opts, resolved, flag, cmd, cwd, prompt, onLine(line), onClose(code, stderr, { lost }) }
+  startRun(o) {
+    let dir = o.journal, meta;
+    if (dir) meta = readJson(path.join(dir, 'meta.json')) || {};
+    else {
+      const old = this.runs.get(o.reqId); // a retry with other flags replaces the failed attempt
+      if (old) { this.stopFollowing(old); this.removeJournal(old.dir); }
+      ({ dir, meta } = this.spawnRunner(o));
+    }
+    const run = { reqId: o.reqId, dir, meta, pid: meta.pid, offset: 0, decoder: new StringDecoder('utf8'), buf: '', checks: 0, quiet: 0, beat: null, timers: [], aborted: !!meta.aborted, closed: false, onLine: o.onLine, onClose: o.onClose };
+    this.runs.set(o.reqId, run);
+    if (!this.ticker) this.ticker = setInterval(() => this.tick(), 250);
+    return run;
+  }
+  stopFollowing(run) { run.stopped = true; for (const t of run.timers) clearInterval(t); }
+  removeJournal(dir) { try { if (dir && this.runsDir && dir.startsWith(this.runsDir)) fs.rmSync(dir, { recursive: true, force: true }); } catch {} }
+
+  tick() {
+    let any = false;
+    for (const run of this.runs.values()) {
+      if (run.closed || run.stopped) continue;
+      any = true;
+      this.pump(run);
+      if (run.aborted) { this.close(run, null); continue; }
+      if (++run.checks % 4 === 0) this.check(run);
+    }
+    if (!any) { clearInterval(this.ticker); this.ticker = null; }
+  }
+  // new output of the CLI → whole lines → parser
+  pump(run) {
+    let fd;
+    try { fd = fs.openSync(path.join(run.dir, 'out.jsonl'), 'r'); } catch { return; }
+    try {
+      const size = fs.fstatSync(fd).size;
+      while (run.offset < size) {
+        const chunk = Buffer.alloc(Math.min(size - run.offset, 1 << 20));
+        const n = fs.readSync(fd, chunk, 0, chunk.length, run.offset);
+        if (n <= 0) break;
+        run.offset += n;
+        run.buf += run.decoder.write(chunk.subarray(0, n)); // never splits a multi-byte character
+        let i;
+        while ((i = run.buf.indexOf('\n')) >= 0) {
+          const line = run.buf.slice(0, i).trim(); run.buf = run.buf.slice(i + 1);
+          if (line) { try { run.onLine(line); } catch (e) { console.error('agent event', e); } }
+        }
+      }
+    } catch {} finally { try { fs.closeSync(fd); } catch {} }
+  }
+  checkDir(dir) { for (const run of this.runs.values()) if (run.dir === dir && !run.closed && !run.stopped) { this.pump(run); this.check(run); } }
+  // finished (exit.json), or the helper is gone (computer restarted, process killed)
+  check(run) {
+    const ex = readJson(path.join(run.dir, 'exit.json'));
+    if (ex) { this.pump(run); this.close(run, ex.code ?? null); return; }
+    const beat = mtimeOf(path.join(run.dir, 'alive'));
+    if (beat !== run.beat) { run.beat = beat; run.quiet = 0; } else run.quiet++;
+    // counted in checks, not wall time: after the computer wakes up the helper needs a moment too
+    if (!pidAlive(run.pid) || run.quiet > QUIET_CHECKS) {
+      const late = readJson(path.join(run.dir, 'exit.json'));
+      this.pump(run);
+      this.close(run, late ? late.code ?? null : null, late ? {} : { lost: true });
+    }
+  }
+  close(run, code, extra = {}) {
+    if (run.closed) return;
+    run.closed = true;
+    if (run.meta.quit && !run.aborted) extra = { lost: true }; // stopped by quitting the app: broke off
+    for (const t of run.timers) clearInterval(t);
+    const rest = (run.buf + run.decoder.end()).trim(); run.buf = '';
+    if (rest) { try { run.onLine(rest); } catch {} }
+    let stderr = '';
+    try { stderr = fs.readFileSync(path.join(run.dir, 'err.log'), 'utf8'); } catch {}
+    Promise.resolve(run.onClose(code, stderr, extra)).catch((e) => console.error('agent close', e))
+      .then(() => { if (run.released && this.runs.get(run.reqId) === run) { this.runs.delete(run.reqId); this.removeJournal(run.dir); } });
+  }
+
   abort(reqId) {
-    const r = this.runs.get(reqId);
-    if (r) { r.aborted = true; killTree(r.proc); }
+    const run = this.runs.get(reqId);
+    if (!run || run.closed) return;
+    run.aborted = true;
+    run.meta.aborted = true; writeJson(path.join(run.dir, 'meta.json'), run.meta);
+    killTree(run.pid);
+    this.pump(run);
+    this.close(run, null);
+  }
+
+  // the chat window is back (app restarted or reloaded): replay its run under a new request id
+  attach({ nodeId, reqId } = {}) {
+    if (!this.runsDir || !nodeId || !reqId) return null;
+    let dir = null;
+    for (const [k, run] of this.runs) {
+      if (run.meta.nodeId !== nodeId) continue;
+      dir = run.dir; this.stopFollowing(run); this.runs.delete(k);
+    }
+    if (!dir) dir = this.findJournal(nodeId);
+    const meta = dir && readJson(path.join(dir, 'meta.json'));
+    if (!meta) return null;
+    meta.reqId = reqId; writeJson(path.join(dir, 'meta.json'), meta);
+    const emit = (type, payload = {}) => this.send('agentchat:event', { reqId, type, ...payload });
+    const opts = { ...meta.opts, reqId };
+    if (meta.kind === 'codex') this.runCodex(opts, meta.resolved, emit, meta.flag, dir);
+    else this.runClaude(opts, meta.resolved, emit, meta.flag, dir);
+    return { startedAt: meta.startedAt, running: !fs.existsSync(path.join(dir, 'exit.json')) };
+  }
+  findJournal(nodeId) {
+    let best = null;
+    for (const name of this.journalNames()) {
+      const dir = path.join(this.runsDir, name);
+      const m = readJson(path.join(dir, 'meta.json'));
+      if (m && m.nodeId === nodeId && (!best || m.startedAt > best.t)) best = { dir, t: m.startedAt };
+    }
+    return best && best.dir;
+  }
+  journalNames() { try { return fs.readdirSync(this.runsDir); } catch { return []; } }
+  // the finished answer is saved in the canvas: the journal is no longer needed
+  release(reqId) {
+    const run = this.runs.get(reqId);
+    if (!run) return false;
+    // Claude Code reports the result a moment before its process exits: delete once it has
+    if (!run.closed) { run.released = true; return false; }
+    this.runs.delete(reqId);
+    this.removeJournal(run.dir);
+    return true;
+  }
+  prune() {
+    const now = Date.now(), live = new Set([...this.runs.values()].map((r) => r.dir));
+    for (const name of this.journalNames()) {
+      const dir = path.join(this.runsDir, name);
+      if (live.has(dir)) continue;
+      const ended = mtimeOf(path.join(dir, 'exit.json')) || (!pidAlive(readJson(path.join(dir, 'meta.json'))?.pid) && mtimeOf(path.join(dir, 'alive')));
+      const age = now - (ended || mtimeOf(dir) || now);
+      if (age > JOURNAL_DAYS * 86400e3) this.removeJournal(dir);
+    }
+  }
+  // the app is quitting: runs keep going unless the user turned that off
+  onQuit() {
+    for (const run of this.runs.values()) if (!run.closed && run.meta.keepRunning === false) { killTree(run.pid); run.meta.quit = true; writeJson(path.join(run.dir, 'meta.json'), run.meta); }
+    clearInterval(this.ticker); this.ticker = null;
   }
 
   env() {
@@ -120,7 +302,7 @@ class AgentChatManager {
   }
 
   // ---------------- Claude Code ----------------
-  runClaude(opts, resolved, emit, partial) {
+  runClaude(opts, resolved, emit, partial, journal = null) {
     const { reqId, prompt, sessionId, mode, model, cwd } = opts;
     const args = ['-p', '--output-format', 'stream-json', '--verbose'];
     if (partial) args.push('--include-partial-messages');
@@ -133,10 +315,7 @@ class AgentChatManager {
     const fullPrompt = this.withFiles(prompt, files, 'Пользователь приложил файлы. Открой их инструментом Read (он читает и картинки, и PDF):');
     const mcpFile = !opts.noMcp && this.claudeMcpConfig();
     if (mcpFile) args.push('--mcp-config', mcpFile, '--allowedTools', HISTORY_TOOLS.join(','), '--append-system-prompt', HISTORY_HINT);
-    const proc = spawnCli(resolved, args, { cwd: safeCwd(cwd), env: this.env(), stdio: ['pipe', 'pipe', 'pipe'] });
-    const run = { proc, aborted: false };
-    this.runs.set(reqId, run);
-    let buf = '', stderr = '', gotOutput = false, streamedThisMsg = false, sid = sessionId || null, finished = false;
+    let gotOutput = false, streamedThisMsg = false, sid = sessionId || null, finished = false;
     const handle = (j) => {
       gotOutput = true;
       if (j.session_id && j.session_id !== sid) { sid = j.session_id; emit('session', { sessionId: sid }); }
@@ -168,22 +347,9 @@ class AgentChatManager {
         emit('done', { sessionId: sid, cost: j.total_cost_usd, usage: j.usage ? { input: (j.usage.input_tokens || 0) + (j.usage.cache_read_input_tokens || 0), output: j.usage.output_tokens || 0 } : null, durationMs: j.duration_ms });
       }
     };
-    proc.stdout.setEncoding('utf8'); proc.stderr.setEncoding('utf8'); // never split a multi-byte character
-    proc.stdout.on('data', (d) => {
-      buf += d.toString('utf8');
-      let i;
-      while ((i = buf.indexOf('\n')) >= 0) {
-        const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
-        if (!line) continue;
-        try { handle(JSON.parse(line)); } catch { /* non-json noise */ }
-      }
-    });
-    proc.stderr.on('data', (d) => { stderr += d; });
-    proc.on('error', (e) => { emit('error', { message: e.message }); emit('done', {}); this.runs.delete(reqId); });
-    proc.on('close', (code) => {
-      this.runs.delete(reqId);
-      if (buf.trim()) { try { handle(JSON.parse(buf.trim())); } catch {} }
+    const onClose = (code, stderr, { lost } = {}) => {
       if (run.aborted) { emit('done', { sessionId: sid, aborted: true }); return; }
+      if (lost) { if (!finished) emit('done', { sessionId: sid, interrupted: true }); return; }
       if (!gotOutput && opts.effort && !opts.noEffort && /--effort|effort/i.test(stderr) && /unknown|invalid|error/i.test(stderr)) {
         emit('notice', { text: 'Эта версия Claude Code не поддерживает выбор уровня размышления — используется уровень по умолчанию. Обновите: npm i -g @anthropic-ai/claude-code' });
         this.runClaude({ ...opts, noEffort: true }, resolved, emit, partial); return;
@@ -197,16 +363,15 @@ class AgentChatManager {
       if (!gotOutput && mcpFile && /mcp-config|allowedTools|append-system-prompt|mcp/i.test(stderr) && /unknown|invalid|error/i.test(stderr)) { this.runClaude({ ...opts, noMcp: true }, resolved, emit, partial); return; }
       if (!gotOutput && partial && /include-partial-messages|unknown option/i.test(stderr)) { this.runClaude(opts, resolved, emit, false); return; }
       if (!finished) {
-        if (code !== 0) emit('error', { message: (stderr.trim() || `Процесс завершился с кодом ${code}`).slice(-1500) });
+        if (code !== 0) emit('error', { message: (stderr.trim() || `Процесс завершился с кодом ${code}`).slice(-1500), code });
         emit('done', { sessionId: sid });
       }
-    });
-    proc.stdin.on('error', () => {});
-    proc.stdin.end(fullPrompt);
+    };
+    const run = this.launch(emit, { reqId, journal, kind: 'claude', opts, resolved, flag: partial, cmd: cliCommand(resolved, args), cwd: safeCwd(cwd), prompt: fullPrompt, onLine: (line) => { try { handle(JSON.parse(line)); } catch { /* non-json noise */ } }, onClose });
   }
 
   // ---------------- Codex ----------------
-  runCodex(opts, resolved, emit, withResume) {
+  runCodex(opts, resolved, emit, withResume, journal = null) {
     const { reqId, prompt, sessionId, mode, model, cwd } = opts;
     const args = ['exec', '--json', '--skip-git-repo-check'];
     if (mode === 'full') args.push('--dangerously-bypass-approvals-and-sandbox');
@@ -220,10 +385,7 @@ class AgentChatManager {
     if (!resuming) for (const f of files) if (f.kind === 'image') args.push('-i', f.abs);
     const fullPrompt = this.withFiles(prompt, resuming ? files : files.filter((f) => f.kind !== 'image'), resuming ? 'Пользователь приложил файлы (картинки можно открыть инструментом view_image):' : 'Пользователь приложил файлы:');
     if (sessionId && withResume) args.push('resume', sessionId);
-    const proc = spawnCli(resolved, args, { cwd: safeCwd(cwd), env: this.env(), stdio: ['pipe', 'pipe', 'pipe'] });
-    const run = { proc, aborted: false };
-    this.runs.set(reqId, run);
-    let buf = '', stderr = '', gotOutput = false, sid = (withResume && sessionId) || null, usage = null, failed = false;
+    let gotOutput = false, sid = (withResume && sessionId) || null, usage = null, failed = false, ended = false;
     // "Reconnecting... 2/5 (stream disconnected …)": Codex lost the connection to OpenAI and retries
     // by itself; only when the retries run out the turn fails (turn.failed)
     const errorOrRetry = (message) => {
@@ -234,7 +396,8 @@ class AgentChatManager {
     // pictures Codex generates are saved to ~/.codex/generated_images/<session>/: new ones are
     // copied into the chat attachments and shown in the answer
     const genRoot = path.join(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), 'generated_images');
-    const since = Date.now() - 3000, seen = new Set(), sizes = new Map();
+    let since = Date.now() - 3000;
+    const seen = new Set(), sizes = new Map();
     const scanImages = async (final = false) => {
       if (!sid || !this.attachments) return;
       const dir = path.join(genRoot, path.basename(String(sid)));
@@ -251,7 +414,6 @@ class AgentChatManager {
         try { emit('image', { att: await this.attachments.importPath(abs), path: abs }); } catch {}
       }
     };
-    const imgTimer = setInterval(() => { scanImages().catch(() => {}); }, 1500);
     const tool = (item) => {
       if (item.type === 'command_execution') return { name: 'Команда', input: item.command };
       if (item.type === 'file_change') return { name: 'Файлы', input: (item.changes || []).map((c) => `${c.kind || ''} ${c.path}`).join('\n') };
@@ -278,8 +440,8 @@ class AgentChatManager {
         }
         return;
       }
-      if (j.type === 'turn.completed') { if (j.usage) usage = { input: j.usage.input_tokens || 0, output: j.usage.output_tokens || 0 }; return; }
-      if (j.type === 'turn.failed') { failed = true; emit('error', { message: (j.error && j.error.message) || 'Ошибка хода' }); return; }
+      if (j.type === 'turn.completed') { ended = true; if (j.usage) usage = { input: j.usage.input_tokens || 0, output: j.usage.output_tokens || 0 }; return; }
+      if (j.type === 'turn.failed') { ended = true; failed = true; emit('error', { message: (j.error && j.error.message) || 'Ошибка хода' }); return; }
       if (j.type === 'error') { errorOrRetry(j.message); return; }
       // legacy format {msg:{type,...}}
       const m = j.msg;
@@ -292,24 +454,10 @@ class AgentChatManager {
       else if (m.type === 'error') errorOrRetry(m.message);
       else if (m.type === 'token_count' && m.info && m.info.last_token_usage) usage = { input: m.info.last_token_usage.input_tokens || 0, output: m.info.last_token_usage.output_tokens || 0 };
     };
-    proc.stdout.setEncoding('utf8'); proc.stderr.setEncoding('utf8'); // never split a multi-byte character
-    proc.stdout.on('data', (d) => {
-      buf += d.toString('utf8');
-      let i;
-      while ((i = buf.indexOf('\n')) >= 0) {
-        const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
-        if (!line || line[0] !== '{') continue;
-        try { handle(JSON.parse(line)); } catch {}
-      }
-    });
-    proc.stderr.on('data', (d) => { stderr += d; });
-    proc.on('error', (e) => { clearInterval(imgTimer); emit('error', { message: e.message }); emit('done', {}); this.runs.delete(reqId); });
-    proc.on('close', async (code) => {
-      clearInterval(imgTimer);
-      this.runs.delete(reqId);
-      if (buf.trim().startsWith('{')) { try { handle(JSON.parse(buf.trim())); } catch {} }
+    const onClose = async (code, stderr, { lost } = {}) => {
       await scanImages(true).catch(() => {});
       if (run.aborted) { emit('done', { sessionId: sid, aborted: true }); return; }
+      if (lost) { emit('done', { sessionId: sid, usage, ...(ended ? {} : { interrupted: true }) }); return; }
       // an older Codex that does not know the approval key: without it first, then without the history tools
       if (!gotOutput && code !== 0 && !opts.noMcp && !opts.noMcpApprove && /default_tools_approval_mode/i.test(stderr)) { this.runCodex({ ...opts, noMcpApprove: true }, resolved, emit, withResume); return; }
       if (!gotOutput && code !== 0 && !opts.noMcp && /mcp_servers|mcp server|invalid.*config|config.*invalid/i.test(stderr)) { this.runCodex({ ...opts, noMcp: true }, resolved, emit, withResume); return; }
@@ -318,11 +466,21 @@ class AgentChatManager {
         this.runCodex(opts, resolved, emit, false);
         return;
       }
-      if (code !== 0 && !failed) emit('error', { message: (stderr.trim() || `Процесс завершился с кодом ${code}`).slice(-1500) });
+      if (code !== 0 && !failed) emit('error', { message: (stderr.trim() || `Процесс завершился с кодом ${code}`).slice(-1500), code });
       emit('done', { sessionId: sid, usage });
-    });
-    proc.stdin.on('error', () => {});
-    proc.stdin.end(fullPrompt);
+    };
+    const run = this.launch(emit, { reqId, journal, kind: 'codex', opts, resolved, flag: withResume, cmd: cliCommand(resolved, args), cwd: safeCwd(cwd), prompt: fullPrompt, onLine: (line) => { if (line[0] === '{') { try { handle(JSON.parse(line)); } catch {} } }, onClose });
+    if (!run) return;
+    since = (run.meta.startedAt || Date.now()) - 3000; // a replayed run looks for its pictures since it started
+    run.timers.push(setInterval(() => { scanImages().catch(() => {}); }, 1500));
+  }
+
+  // start (or, with a journal, replay) a run; a failure to start shows up as an error in the chat
+  launch(emit, o) {
+    try { return this.startRun(o); } catch (e) {
+      emit('error', { message: `Не удалось запустить агента: ${e.message}` }); emit('done', {});
+      return null;
+    }
   }
 }
 

@@ -49,10 +49,6 @@ function platformArgs() {
 // noise that is not a bug of the app
 const IGNORED = [
   /favicon|ResizeObserver loop|Failed to load resource/i,
-  // KNOWN BUG (app.spec.mjs «одновременные сохранения…», test.fixme): writeJson() in main.js uses one
-  // shared "<file>.tmp" for every save, so overlapping saves of the same canvas fail on rename.
-  // Ignored here only so that it does not make unrelated tests flaky; remove once fixed.
-  /Error occurred in handler for '(canvas|ws):save': Error: ENOENT: no such file or directory, rename '.*\.json\.tmp'/,
 ];
 // what the main process prints when something threw: an IPC handler, an uncaught exception
 const MAIN_ERROR = /Error occurred in handler for|Uncaught|UnhandledPromiseRejection|A JavaScript error occurred/i;

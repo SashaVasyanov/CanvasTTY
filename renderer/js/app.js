@@ -1,6 +1,6 @@
 import { h, icon, badge, bus, menu, prompt, confirmBox, toast, modal, isEditable, esc, debounce, keyName } from './util.js';
 import { renderChatMarkdown } from './md.js';
-import { state, native, PROVIDER_META, DEFAULT_AGENTS } from './state.js';
+import { state, native, PROVIDER_META, DEFAULT_AGENTS, providerName } from './state.js';
 import { CanvasView } from './canvas.js';
 import { NODE_TYPES, imageNodeFromFile } from './nodes.js';
 import { clipboardFiles } from './attach.js';
@@ -878,6 +878,12 @@ class App {
         ));
       }
       wrap.append(h('button', { class: 'btn', onclick: () => { s.agents.push({ id: `custom_${Date.now().toString(36)}`, name: 'Мой агент', cmd: '', args: '', mono: 'A', color: '#34c759' }); state.saveWs(); render(); } }, '+ Добавить агента'));
+      // chat windows: the agent keeps answering when the app is closed (main/agent-runner.js)
+      const keep = h('input', { type: 'checkbox', class: 'switch' }); keep.checked = s.agentsKeepRunning !== false;
+      keep.onchange = () => state.setSetting('agentsKeepRunning', keep.checked);
+      wrap.append(h('h3', {}, 'Окна чатов с агентами'),
+        h('div', { class: 'set-row' }, h('div', {}, h('div', { class: 'set-label' }, 'Агент продолжает работать после закрытия приложения'),
+          h('div', { class: 'muted small' }, 'Ответ дописывается в фоне и появляется в окне чата при следующем запуске. Если выключить, закрытие приложения останавливает агента, а в чате появляется кнопка «Продолжить».')), keep));
     };
     render();
     return wrap;
@@ -981,10 +987,6 @@ class App {
     setInterval(() => setCls(walking, Date.now() - last > 15000), 5000);
     step();
   }
-}
-
-function providerName(id) {
-  return ({ openai: 'OpenAI', anthropic: 'Claude (API Anthropic)', moonshot: 'Kimi (Moonshot API)', openrouter: 'OpenRouter', deepseek: 'DeepSeek', gemini: 'Gemini', ollama: 'Ollama (локально)', custom: 'Свой OpenAI-совместимый' })[id] || id;
 }
 
 const app = new App();

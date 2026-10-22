@@ -714,6 +714,13 @@ button.ly-twisty:hover { background: rgba(var(--fg-rgb), 0.08); color: var(--tex
 .tool-call.err .tool-dot { background: var(--red); }
 .tool-call pre { margin: 0; padding: 8px 10px; border-top: 1px solid var(--line); font: 11.5px/1.45 var(--mono); white-space: pre-wrap; word-break: break-word; max-height: 260px; overflow: auto; background: var(--code-bg); }
 .tool-call pre.tool-in { color: var(--text-2); }
+.msg-cta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.msg:not(.is-last) .err-actions { display: none; }
+.msg-error .err-title { font-weight: 600; }
+.msg-error .err-hint { color: var(--text); opacity: .85; margin-top: 3px; line-height: 1.4; }
+.msg-error .err-raw { margin-top: 6px; color: var(--muted); }
+.msg-error .err-raw summary { cursor: pointer; font-size: 11.5px; }
+.msg-error .err-raw pre { margin: 4px 0 0; max-height: 160px; overflow: auto; white-space: pre-wrap; word-break: break-word; font-size: 11px; }
 .msg-error { color: var(--red); background: color-mix(in srgb, var(--red) 10%, transparent); padding: 7px 10px; border-radius: 8px; white-space: pre-wrap; font-size: 12.5px; }
 .chat-empty .badge { margin: 0 auto 4px; }
 

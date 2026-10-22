@@ -48,10 +48,10 @@ test('Claude Code: потоковый ответ с инструментом, с
   await expect.poll(() => fs.existsSync(index) && Object.values(app.readJson(index)).map((r) => [r.kind, r.agent, r.model, r.sessionId, r.count, r.title])).toEqual([['agentchat', 'claude', 'claude-fake-5', sid, 4, question.slice(0, 40)]]);
 });
 
-// BUG: the 'session' event (it comes before 'info') replaces inst.node with a copy in
+// Regression (fixed): the 'session' event (it comes before 'info') replaces inst.node with a copy in
 // patchNodeData(); 'info' then writes actualModel to the canvas node, but renderInfo() reads the
 // stale copy, so the window keeps showing "модель из настроек агента" until it is re-rendered.
-test.fixme('модель, о которой сообщил Claude Code, сразу видна в окне чата', async ({ app }) => {
+test('модель, о которой сообщил Claude Code, сразу видна в окне чата', async ({ app }) => {
   const chat = await app.openAgentChat('claude');
   await app.send(chat, 'Привет');
   await app.waitAnswer(chat);
@@ -173,7 +173,9 @@ test('ошибки агента и нехватка прав видны в ок�
   const a1 = await app.waitAnswer(codex);
   // five reconnects end in turn.failed: one error, no leftover retry line
   expect(a1.parts).toEqual([{ type: 'error', text: 'stream disconnected before completion: связь потеряна' }]);
-  await expect(app.el(codex).locator('.msg-error')).toHaveText('⚠ stream disconnected before completion: связь потеряна');
+  // in plain words with what to do; the original text under «Подробности»
+  await expect(app.el(codex).locator('.msg-error .err-title')).toHaveText('⚠ Нет связи с сервером');
+  await expect(app.el(codex).locator('.msg-error .err-raw pre')).toHaveText('stream disconnected before completion: связь потеряна');
   await expect(app.el(codex).locator('.msg-retry')).toHaveCount(0);
   expect(await app.status(codex)).toBe('Ошибка');
 
@@ -181,7 +183,8 @@ test('ошибки агента и нехватка прав видны в ок�
   const claude = await app.add('agentchat', { x: 520, y: 0, w: 480, h: 480, data: { agentId: 'claude', kind: 'claude', messages: [] } });
   await app.send(claude, 'Сделай');
   await app.waitAnswer(claude);
-  await expect(app.el(claude).locator('.msg-error')).toHaveText('⚠ claude: внутренняя ошибка (fake crash)');
+  await expect(app.el(claude).locator('.msg-error .err-title')).toHaveText('⚠ Claude Code завершился с ошибкой');
+  await expect(app.el(claude).locator('.msg-error .err-raw pre')).toHaveText('claude: внутренняя ошибка (fake crash)');
   expect(await app.status(claude)).toBe('Ошибка');
 
   // the agent was not allowed to write: it waits for the user
