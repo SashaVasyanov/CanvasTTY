@@ -9,3 +9,5 @@ Thumbs.db
 .idea/
 perf-report.json
 renderer/__test/
+test-results/
+playwright-report/
