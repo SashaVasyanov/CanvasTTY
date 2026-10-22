@@ -55,6 +55,33 @@ const termTheme = () => (document.documentElement.dataset.theme === 'light' ? TE
 const stripAnsi = (s) => s.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '').replace(/\x1b\][^\x07\x1b]*(\x07|\x1b\\)/g, '').replace(/\x1b[()][0-9A-B]/g, '').replace(/\r/g, '');
 
 
+// ---------------- following the newest message ----------------
+// The list stays at the bottom while an answer streams, unless the reader scrolled up: then it
+// stays where they are (reading history during a long answer) and a "to the newest" button shows.
+function bindFollow(inst) {
+  const l = inst.list;
+  inst.follow = true;
+  let ours = 0;
+  inst.jumpBtn = h('button', { class: 'chat-jump no-drag', title: 'К последнему сообщению', html: icon('chevronDown', 15), onclick: (e) => { e.stopPropagation(); inst.follow = true; inst.toEnd(); } });
+  const paintJump = () => inst.jumpBtn.classList.toggle('show', !inst.follow && l.scrollHeight - l.scrollTop - l.clientHeight > 60);
+  inst.toEnd = () => {
+    if (!inst.follow) { paintJump(); return; }
+    if (!l.clientHeight) return; // hidden (zoomed out, off screen, not laid out yet): done when it shows
+    ours = performance.now(); l.scrollTop = l.scrollHeight; paintJump();
+  };
+  // a list that just became visible or changed size keeps showing the newest message
+  new ResizeObserver(() => { if (inst.follow && l.clientHeight) { ours = performance.now(); l.scrollTop = l.scrollHeight; } }).observe(l);
+  l.addEventListener('scroll', () => {
+    if (performance.now() - ours < 120 || !l.clientHeight) return; // our own jump to the bottom / hidden
+    inst.follow = l.scrollHeight - l.scrollTop - l.clientHeight < 40;
+    paintJump();
+  }, { passive: true });
+  l.addEventListener('wheel', (e) => { if (e.deltaY < 0 && l.scrollTop > 0) { inst.follow = false; paintJump(); } }, { passive: true });
+  // pictures that finish loading make the list taller
+  l.addEventListener('load', (e) => { if (e.target.tagName === 'IMG') inst.toEnd(); }, true);
+  inst.listWrap = h('div', { class: 'chat-list-wrap' }, l, inst.jumpBtn);
+}
+
 // ---------------- canvas context shared by chat windows (see context.js) ----------------
 // keeps the chips under the input current: arrows, @ in the text, what is inside linked areas
 function bindContext(inst) {
@@ -348,10 +375,10 @@ class ChatInstance {
     this.input = h('textarea', { class: 'chat-input', rows: 2, placeholder: 'Сообщение… (Enter — отправить, Shift+Enter — новая строка)' });
     this.sendBtn = h('button', { class: 'chat-send', title: 'Отправить', html: icon('send', 16), onclick: () => (this.isBusy() ? this.stop() : this.send()) });
     this.attach = new AttachBar({ root: this.root, input: this.input });
-    this.list.addEventListener('load', (e) => { if (e.target.tagName === 'IMG' && this.list.scrollHeight - this.list.scrollTop - this.list.clientHeight < 400) this.list.scrollTop = this.list.scrollHeight; }, true);
+    bindFollow(this);
     this.foot = h('div', { class: 'chat-foot' }, this.attach.button, this.input, this.sendBtn);
     this.usage = h('div', { class: 'chat-usage' });
-    this.root.append(this.bar, this.list, this.ctxRow, this.attach.chips, this.foot, this.usage);
+    this.root.append(this.bar, this.listWrap, this.ctxRow, this.attach.chips, this.foot, this.usage);
     this.hist = new ChatHistory(this);
     this.bar.prepend(this.hist.button);
     body.append(this.root);
@@ -405,7 +432,7 @@ class ChatInstance {
         h('div', { class: 'muted small' }, CTX_HINT)));
     }
     renderWindowed(this);
-    if (!this._keepScroll) this.scrollDown(true);
+    if (!this._keepScroll) this.toEnd();
   }
 
   renderMsg(m, i) {
@@ -447,8 +474,8 @@ class ChatInstance {
   }
 
   scrollDown(force) {
-    const l = this.list;
-    if (force || l.scrollHeight - l.scrollTop - l.clientHeight < 120) l.scrollTop = l.scrollHeight;
+    if (force) this.follow = true;
+    this.toEnd();
   }
 
   renderCtx() { renderContextRow(this.ctxRow, this.view, this.node.id, this.input.value); }
@@ -470,6 +497,7 @@ class ChatInstance {
     const reqId = uid('req');
     this.docId = this.view.doc.id; activeRuns.set(this.node.id, this);
     this.streaming = reqId; this.preparing = reqId; this._prep = { all, asst };
+    this.follow = true; // a new question: show it and the answer
     const typing = () => { this.renderAll(); const t = this.list.lastElementChild.querySelector('.msg-text'); t.innerHTML = '<span class="typing"><i></i><i></i><i></i></span>'; return t; };
     let textEl = typing();
     this.syncRunUi();
@@ -607,8 +635,8 @@ class AgentChatInstance {
     this.sendBtn = h('button', { class: 'chat-send', title: 'Отправить', html: icon('send', 16), onclick: () => (this.isBusy() ? this.stop() : this.send()) });
     this.usage = h('div', { class: 'chat-usage' });
     this.attach = new AttachBar({ root: this.root, input: this.input });
-    this.list.addEventListener('load', (e) => { if (e.target.tagName === 'IMG' && this.list.scrollHeight - this.list.scrollTop - this.list.clientHeight < 400) this.list.scrollTop = this.list.scrollHeight; }, true);
-    this.root.append(this.bar, this.infoBar, this.list, this.ctxRow, this.attach.chips, h('div', { class: 'chat-foot' }, this.attach.button, this.input, this.sendBtn), this.usage);
+    bindFollow(this);
+    this.root.append(this.bar, this.infoBar, this.listWrap, this.ctxRow, this.attach.chips, h('div', { class: 'chat-foot' }, this.attach.button, this.input, this.sendBtn), this.usage);
     this.hist = new ChatHistory(this);
     this.bar.prepend(this.hist.button);
     body.append(this.root);
@@ -688,9 +716,8 @@ class AgentChatInstance {
     let body = find();
     if (!body) { this.renderAll(); body = find(); }
     if (!body) return;
-    const l = this.list, stick = l.scrollHeight - l.scrollTop - l.clientHeight < 120;
     this.renderParts(asst, body);
-    if (stick) l.scrollTop = l.scrollHeight;
+    this.toEnd();
     this.syncRunUi();
   }
   loadConversation({ convId = null, messages = [], title = '', sessionId = null, cwd, model, actualModel }) {
@@ -714,7 +741,7 @@ class AgentChatInstance {
         h('div', { class: 'muted small' }, CTX_HINT)));
     }
     renderWindowed(this);
-    if (!this._keepScroll) this.list.scrollTop = this.list.scrollHeight;
+    if (!this._keepScroll) this.toEnd();
   }
 
   // incremental: unchanged parts keep their DOM (so an expanded tool call stays open and long
@@ -816,6 +843,7 @@ class AgentChatInstance {
     const reqId = uid('ag');
     this.docId = this.view.doc.id; activeRuns.set(this.node.id, this);
     this.running = reqId; this.preparing = reqId; this._prep = { all, asst };
+    this.follow = true; // a new question: show it and the answer
     this.renderAll();
     let body = this.list.lastElementChild.querySelector('.msg-body');
     this.syncRunUi();
@@ -834,7 +862,7 @@ class AgentChatInstance {
     this.preparing = null;
     if (this.running !== reqId) return; // stopped while the context was being collected
     let newText = true;
-    const paint = throttle(() => { const l = this.list; const stick = l.scrollHeight - l.scrollTop - l.clientHeight < 120; this.renderParts(asst, body); if (stick) l.scrollTop = l.scrollHeight; twinOf(this)?.showLive(asst); }, 70);
+    const paint = throttle(() => { this.renderParts(asst, body); this.toEnd(); twinOf(this)?.showLive(asst); }, 70);
     const dropRetry = () => { for (let i = asst.parts.length - 1; i >= 0; i--) if (asst.parts[i].reconnect) asst.parts.splice(i, 1); };
     const lastText = () => { const l = asst.parts[asst.parts.length - 1]; if (newText || !l || l.type !== 'text') { const p = { type: 'text', text: '' }; asst.parts.push(p); newText = false; return p; } return l; };
     chatRoutes.set(reqId, (ev) => {
