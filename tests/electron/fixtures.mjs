@@ -265,12 +265,25 @@ export class App extends CanvasApp {
   status(id) { return this.page.evaluate((id) => window.__app.canvas.views.get(id)?.inst?.statusInfo().label, id); }
   // the agent finished: the last answer is complete and the window is idle; returns that answer
   async waitAnswer(id, { timeout = 30_000 } = {}) {
-    await this.page.waitForFunction((id) => {
-      const c = window.__app.canvas;
-      const msgs = c.node(id)?.data.messages || [];
-      const inst = c.views.get(id)?.inst;
-      return msgs.length && msgs[msgs.length - 1].role === 'assistant' && !msgs[msgs.length - 1].running && inst && !inst.isBusy();
-    }, id, { timeout });
+    try {
+      await this.page.waitForFunction((id) => {
+        const c = window.__app.canvas;
+        const msgs = c.node(id)?.data.messages || [];
+        const inst = c.views.get(id)?.inst;
+        return msgs.length && msgs[msgs.length - 1].role === 'assistant' && !msgs[msgs.length - 1].running && inst && !inst.isBusy();
+      }, id, { timeout });
+    } catch (e) {
+      // CI shows only the error text: put the state of the chat, the CLI calls and the end of the
+      // main-process output into it
+      const state = await this.page.evaluate((id) => {
+        const c = window.__app.canvas, inst = c.views.get(id)?.inst;
+        return { status: inst?.statusInfo?.().label, busy: inst?.isBusy?.(), messages: (c.node(id)?.data.messages || []).map((m) => ({ role: m.role, running: m.running, content: (m.content || '').slice(0, 120), parts: (m.parts || []).map((p) => `${p.type}:${(p.text || p.name || '').slice(0, 80)}`) })) };
+      }, id).catch((x) => ({ error: String(x) }));
+      let calls = [];
+      try { calls = this.calls().slice(-3).map((c) => ({ cli: c.cli, scenario: c.scenario, argv: c.argv.join(' ').slice(0, 200) })); } catch {}
+      e.message += `\nchat: ${JSON.stringify(state)}\ncalls: ${JSON.stringify(calls)}\nmain: ${this.mainLog.slice(-1500)}`;
+      throw e;
+    }
     return (await this.messages(id)).at(-1);
   }
 }
