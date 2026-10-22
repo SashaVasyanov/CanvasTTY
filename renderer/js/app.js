@@ -731,8 +731,16 @@ class App {
     const toggle = (key) => { const i = h('input', { type: 'checkbox', class: 'switch' }); i.checked = !!s[key]; i.onchange = () => { state.setSetting(key, i.checked); this.canvas.applyViewport(); if (key === 'pet') this.updatePet(); }; return i; };
     const wheel = h('select', { class: 'select' }, h('option', { value: 'zoom' }, 'Масштаб'), h('option', { value: 'scroll' }, 'Прокрутка'));
     wheel.value = s.wheel; wheel.onchange = () => state.setSetting('wheel', wheel.value);
-    const lod = h('input', { type: 'range', min: '0.2', max: '0.9', step: '0.05', value: s.lodZoom });
-    lod.oninput = () => { state.setSetting('lodZoom', +lod.value); this.canvas.lod = null; this.canvas.applyViewport(); };
+    // zoom threshold slider with its value in percent
+    const zoomSlider = (key, min, def) => {
+      const out = h('span', { class: 'muted small range-val' });
+      const show = () => { out.textContent = `${Math.round(+i.value * 100)} %`; };
+      const i = h('input', { type: 'range', min: String(min), max: '0.9', step: '0.05', value: s[key] || def });
+      i.oninput = () => { state.setSetting(key, +i.value); show(); this.canvas.resetLod(); };
+      show();
+      return h('div', { class: 'row range-row' }, i, out);
+    };
+    const lod = zoomSlider('lodZoom', 0.2, 0.3), chatLod = zoomSlider('chatLodZoom', 0.1, 0.2);
     const vault = h('div', { class: 'row' }, h('code', { class: 'path' }, vaultIndex.root || s.vaultPath || ''), h('button', { class: 'btn', onclick: async () => { await this.chooseVault(); vault.querySelector('code').textContent = vaultIndex.root; } }, 'Изменить…'));
     const theme = h('select', { class: 'select' }, h('option', { value: 'dark' }, 'Тёмная'), h('option', { value: 'light' }, 'Светлая'), h('option', { value: 'system' }, 'Как в системе'));
     theme.value = s.theme || 'dark'; theme.onchange = () => { state.setSetting('theme', theme.value); this.applyTheme(); };
@@ -747,7 +755,8 @@ class App {
       row('Колесо мыши', wheel, 'Ctrl + колесо всегда масштабирует, Shift + колесо — горизонтальная прокрутка'),
       row('Сетка из точек', toggle('grid')),
       row('Привязка к сетке', toggle('snap'), 'Умные направляющие работают всегда. Alt — временно без привязки'),
-      row('Карточки при отдалении', lod, 'Ниже какого масштаба окна (чаты, заметки, терминалы) заменяются компактными карточками. Левее — окна видны дальше, правее — быстрее при большом количестве окон'),
+      row('Карточки при отдалении', lod, 'Ниже какого масштаба окна (заметки, терминалы, браузер) заменяются компактными карточками. Левее — окна видны дальше, правее — быстрее при большом количестве окон'),
+      row('Чаты нейросетей при отдалении', chatLod, 'Чаты с агентами и API-чаты остаются полными окнами до этого масштаба, даже когда остальные окна уже карточки'),
       h('h3', { 'data-anchor': 'clock' }, 'Часы в пульте'),
       this.clockSettings(s),
       row('Питомец', petBtn, 'Готовые питомцы или своя картинка. Также: ПКМ по питомцу в пульте'),

@@ -1065,7 +1065,7 @@ export const NODE_TYPES = {
   },
 
   chat: {
-    chrome: 'window', defaultSize: { w: 460, h: 560 }, minSize: { w: 300, h: 260 },
+    chrome: 'window', farLod: true, defaultSize: { w: 460, h: 560 }, minSize: { w: 300, h: 260 },
     defaultData: () => ({ provider: state.settings.defaultProvider || 'openai', model: '', messages: [], title: 'Новый чат' }),
     title: (n) => n.data.title || 'Новый чат',
     badge: (n, size) => { const m = PROVIDER_META[n.data.provider] || PROVIDER_META.custom; return badge(m.mono, m.color, size, m.dark); },
@@ -1086,7 +1086,7 @@ export const NODE_TYPES = {
   },
 
   agentchat: {
-    chrome: 'window', defaultSize: { w: 500, h: 620 }, minSize: { w: 320, h: 280 },
+    chrome: 'window', farLod: true, defaultSize: { w: 500, h: 620 }, minSize: { w: 320, h: 280 },
     defaultData: () => ({ agentId: 'claude', kind: 'claude', messages: [], sessionId: null }),
     title: (n) => n.data.title || `${state.agent(n.data.agentId).name} · чат`,
     badge: (n, size) => { const a = state.agent(n.data.agentId); return badge(a.mono, a.color, size, a.dark); },

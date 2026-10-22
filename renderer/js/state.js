@@ -37,11 +37,19 @@ function defaultSettings() {
     snap: true,
     pet: true,
     lodZoom: 0.3,
+    chatLodZoom: 0.2, // AI chat windows stay full windows further out than the rest
     agents: DEFAULT_AGENTS.map((a) => ({ ...a })),
     providers: {},
     defaultProvider: 'openai',
     limitRows: ['codex', 'claude', 'kimi'],
   };
+}
+
+// settings saved by older versions (also ones that arrive from another computer)
+function migrateSettings(st) {
+  // windows used to turn into cards already at 50 %: the untouched old default moves to the new one
+  if (!st.lodV2) { if (st.lodZoom === 0.5) st.lodZoom = 0.3; st.lodV2 = true; }
+  return st;
 }
 
 export function emptyCanvas(id) {
@@ -71,9 +79,7 @@ class State extends Emitter {
         settings: defaultSettings(),
       };
     }
-    ws.settings = { ...defaultSettings(), ...(ws.settings || {}) };
-    // windows used to turn into cards already at 50 %: the untouched old default moves to the new one
-    if (!ws.settings.lodV2) { if (ws.settings.lodZoom === 0.5) ws.settings.lodZoom = 0.3; ws.settings.lodV2 = true; }
+    ws.settings = migrateSettings({ ...defaultSettings(), ...(ws.settings || {}) });
     // merge in new default agents without overriding user's edits
     for (const a of DEFAULT_AGENTS) {
       const mine = ws.settings.agents.find((x) => x.id === a.id);
@@ -122,7 +128,7 @@ class State extends Emitter {
 
   // ----- changes that arrived from another computer (sync) -----
   normalizeWs(ws) {
-    ws.settings = { ...defaultSettings(), ...(ws.settings || {}) };
+    ws.settings = migrateSettings({ ...defaultSettings(), ...(ws.settings || {}) });
     for (const a of DEFAULT_AGENTS) if (!ws.settings.agents.find((x) => x.id === a.id)) ws.settings.agents.push({ ...a });
     return ws;
   }

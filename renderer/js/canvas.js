@@ -167,10 +167,10 @@ export class CanvasView extends Emitter {
     const noGrid = !state.settings.grid || z < 0.2;
     if (noGrid !== this._noGrid) { this._noGrid = noGrid; this.bg.classList.toggle('no-grid', noGrid); }
     // enter card mode immediately (cheaper), leave it only when the gesture ends
-    const lod = z < (state.settings.lodZoom || 0.3);
-    if (lod && this.lod !== true) this.setLod(true);
-    else if (!lod && this.lod !== false && (!this._moving || this.lod == null)) this.setLod(false);
-    if (this.lod == null) this.setLod(lod);
+    const want = this.lodWant(z);
+    const keep = this._moving && this.lod != null && this.lodFar != null;
+    const lod = want.lod || (keep && this.lod === true), far = want.far || (keep && this.lodFar === true);
+    if (lod !== this.lod || far !== this.lodFar) this.setLod(lod, far);
     if (!this._moving) this.root.style.setProperty('--z', z);
     const zl = `${Math.round(z * 100)}%`;
     if (this.zoomLabel.textContent !== zl) this.zoomLabel.textContent = zl;
@@ -207,12 +207,26 @@ export class CanvasView extends Emitter {
     this.bg.style.transform = `translate3d(${tx}px, ${ty}px, 0) scale(${sc})`;
   }
 
-  setLod(lod) {
-    this.lod = lod;
-    this.root.classList.toggle('lod', lod);
-    this.root.style.setProperty('--z', this.vp.z);
-    for (const v of this.views.values()) v.inst?.onLod?.(lod);
+  // Card mode: below a zoom level windows become compact cards. AI chat windows (farLod) have
+  // their own, lower threshold, so they stay readable further out than terminals and notes.
+  lodWant(z = this.vp.z) {
+    const s = state.settings;
+    return { lod: z < (s.lodZoom || 0.3), far: z < (s.chatLodZoom || 0.2) };
   }
+  setLod(lod, far = this.lodFar ?? lod) {
+    const was = this.lod, wasFar = this.lodFar;
+    this.lod = lod; this.lodFar = far;
+    this.root.classList.toggle('lod', lod);
+    this.root.classList.toggle('lod-far', far);
+    this.root.style.setProperty('--z', this.vp.z);
+    for (const v of this.views.values()) {
+      const card = v.def.farLod ? far : lod;
+      if (card !== (v.def.farLod ? wasFar : was)) v.inst?.onLod?.(card);
+    }
+  }
+  // is this window shown as a card right now?
+  isCard(n) { return !!(NODE_TYPES[n?.type]?.farLod ? this.lodFar : this.lod); }
+  resetLod() { this.lod = null; this.lodFar = null; this.applyViewport(); }
 
   // while the view moves: composite-only, no hover/pointer work, paused animations
   markMoving() {
@@ -228,8 +242,8 @@ export class CanvasView extends Emitter {
       if (sx !== this.vp.x || sy !== this.vp.y) { this.vp.x = sx; this.vp.y = sy; this.saveViewport(); }
       this.applyLayoutZoom();
       this.root.style.setProperty('--z', this.vp.z);
-      const lod = this.vp.z < (state.settings.lodZoom || 0.3);
-      if (lod !== this.lod) this.setLod(lod);
+      const want = this.lodWant();
+      if (want.lod !== this.lod || want.far !== this.lodFar) this.setLod(want.lod, want.far);
       this.cull();
       this.updateGridTile();
       this.positionBg();
@@ -345,7 +359,7 @@ export class CanvasView extends Emitter {
     this.selectedEdge = null;
     this.undoStack = []; this.redoStack = [];
     this.forks.clear(); this.forkTrash.clear();
-    this.lod = null;
+    this.lod = null; this.lodFar = null;
     if (migrateGalleries(this.doc)) state.touch();
     this.comments?.close(true);
     this.renderAll();
@@ -379,7 +393,7 @@ export class CanvasView extends Emitter {
   createView(n) {
     const def = NODE_TYPES[n.type];
     if (!def) return;
-    const el = h('div', { class: `node node-${n.type} ${def.chrome === 'window' ? 'window' : 'bare'}`, 'data-id': n.id });
+    const el = h('div', { class: `node node-${n.type} ${def.chrome === 'window' ? 'window' : 'bare'}${def.farLod ? ' far-lod' : ''}`, 'data-id': n.id });
     const v = { id: n.id, el, def, inst: null };
     // pinned objects show a small lock instead of the selection frame; a click on it unpins
     const lockBtn = (cls, size) => {
@@ -413,7 +427,7 @@ export class CanvasView extends Emitter {
     try { v.inst = def.mount({ node: n, view: this, v, body: v.body, el }); }
     catch (err) { console.error('mount failed', n.type, err); v.body.append(h('div', { class: 'muted', style: { padding: '12px' } }, `Ошибка: ${err.message}`)); }
     this.syncView(n);
-    if (this.lod) v.inst?.onLod?.(true);
+    if (this.isCard(n)) v.inst?.onLod?.(true);
     return v;
   }
 
@@ -438,7 +452,7 @@ export class CanvasView extends Emitter {
     const title = def.title(n);
     const status = def.status ? def.status(n, v.inst) : null;
     if (v.title.textContent !== title) v.title.textContent = title;
-    if (this.lod === false && v.culled && v.skey) return;
+    if ((def.farLod ? this.lodFar : this.lod) === false && v.culled && v.skey) return;
     const bkey = `${n.data.agentId || ''}|${n.data.provider || ''}|${n.data.kind || ''}`;
     if (v.bkey !== bkey) {
       v.bkey = bkey;
@@ -678,7 +692,7 @@ export class CanvasView extends Emitter {
     if (!single) this.selBox.dataset.count = `Выбрано: ${nodes.length}`;
     this.root.classList.toggle('multi-sel', !single);
     this.selBox.classList.toggle('window-sel', !!single && NODE_TYPES[single.type]?.chrome === 'window');
-    this.selBox.classList.toggle('no-handles', !single || !!single.locked || this.lod && NODE_TYPES[single.type]?.chrome === 'window' && false);
+    this.selBox.classList.toggle('no-handles', !single || !!single.locked);
     if (single && !single.locked && !this.dragging) {
       this.connDots.style.display = 'block';
       this.placeBox(this.connDots, p.x, p.y, w, hh);
@@ -1097,7 +1111,7 @@ export class CanvasView extends Emitter {
       if (this.grabId === n.id) this.setGrab(null);
       const v = this.views.get(n.id);
       const inHead = !!e.target.closest('.node-head');
-      if (v.def.chrome === 'window' && !inHead && !this.lod) { if (this.selection.size) this.clearSelection(); this.bringToFront(n); return; }
+      if (v.def.chrome === 'window' && !inHead && !this.isCard(n)) { if (this.selection.size) this.clearSelection(); this.bringToFront(n); return; }
       if (e.target.closest('.node-head button')) return;
       this.clearSelection();
       if (document.activeElement && isEditable(document.activeElement)) document.activeElement.blur();
@@ -1118,13 +1132,14 @@ export class CanvasView extends Emitter {
       const inBtn = !!e.target.closest('button:not(.drag-ok), input, select, textarea, a, .no-drag');
       const isWindow = v.def.chrome === 'window';
       const editing = e.target.closest('[contenteditable="true"]');
+      const card = this.isCard(n);
       if (n.type === 'frame' && !e.target.closest('.frame-title')) {
         // empty frame area behaves like the canvas (marquee)
         if (!e.shiftKey) this.clearSelection();
         this.startMarquee(e);
         return;
       }
-      const grp = !e.ctrlKey && !e.metaKey && !inBtn && !editing && (inHead || !isWindow || this.lod) ? this.groupRoot(n) : null;
+      const grp = !e.ctrlKey && !e.metaKey && !inBtn && !editing && (inHead || !isWindow || card) ? this.groupRoot(n) : null;
       if (grp) {
         e.preventDefault();
         if (e.shiftKey) { this.toggleSelect(grp.id); return; }
@@ -1132,12 +1147,12 @@ export class CanvasView extends Emitter {
         if (!grp.locked) this.startMove(e);
         return;
       }
-      if (e.shiftKey && (inHead || !isWindow || this.lod)) { this.toggleSelect(n.id); e.preventDefault(); return; }
+      if (e.shiftKey && (inHead || !isWindow || card)) { this.toggleSelect(n.id); e.preventDefault(); return; }
       const wasOnlySelected = this.selection.size === 1 && this.selection.has(n.id);
       if (!this.selection.has(n.id)) this.select([n.id]);
-      if (inBtn && !this.lod) return;
+      if (inBtn && !card) return;
       if (editing) return;
-      if (isWindow && !inHead && !this.lod) { this.bringToFront(n); return; } // let content handle it
+      if (isWindow && !inHead && !card) { this.bringToFront(n); return; } // let content handle it
       if (n.locked) return;
       e.preventDefault();
       // like Figma / Miro: clicking text that is already selected (without dragging) edits it
@@ -1682,7 +1697,7 @@ export class CanvasView extends Emitter {
       }
       return; // a double-click on empty canvas does nothing (stickies: S or the toolbar)
     }
-    if (this.lod && NODE_TYPES[n.type].chrome === 'window') { this.focusNode(n.id); return; }
+    if (this.isCard(n) && NODE_TYPES[n.type].chrome === 'window') { this.focusNode(n.id); return; }
     if (n.locked) return;
     const v = this.views.get(n.id);
     if (this.tool === 'select') {
@@ -1708,8 +1723,8 @@ export class CanvasView extends Emitter {
   onWheel(e) {
     if (e.target.closest('.nav-box')) return;
     const n = this.hitNode(e.target);
-    const inWindowBody = n && !this.lod && NODE_TYPES[n.type]?.chrome === 'window' && e.target.closest('.node-body');
-    const sc = n && !this.lod && e.target.closest('.scrollable');
+    const inWindowBody = n && !this.isCard(n) && NODE_TYPES[n.type]?.chrome === 'window' && e.target.closest('.node-body');
+    const sc = n && !this.isCard(n) && e.target.closest('.scrollable');
     const inScrollable = sc && sc.scrollHeight > sc.clientHeight + 2;
     if ((inWindowBody || inScrollable) && !e.ctrlKey && !e.metaKey) return; // let the content scroll
     e.preventDefault();

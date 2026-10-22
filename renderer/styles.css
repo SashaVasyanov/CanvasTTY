@@ -322,10 +322,13 @@ svg.guides line { stroke: #ff5ca8; stroke-width: 1; }
 .card-status { font-size: clamp(10px, calc(10px / var(--z)), 50px); color: var(--muted); }
 .card-status.busy { color: var(--green); }
 .card-status.na { color: #e9938f; }
-.canvas-root.lod .node.window .node-body { visibility: hidden; content-visibility: hidden; }
-.canvas-root.lod .node.window .node-card { display: flex; }
-.canvas-root.lod .node-head { cursor: grab; }
-.canvas-root.lod .node.window { cursor: grab; }
+/* AI chat windows (.far-lod) turn into cards at their own, lower zoom (.lod-far) */
+.canvas-root.lod .node.window:not(.far-lod) .node-body,
+.canvas-root.lod-far .node.window.far-lod .node-body { visibility: hidden; content-visibility: hidden; }
+.canvas-root.lod .node.window:not(.far-lod) .node-card,
+.canvas-root.lod-far .node.window.far-lod .node-card { display: flex; }
+.canvas-root.lod .node:not(.far-lod) .node-head, .canvas-root.lod .node.window:not(.far-lod),
+.canvas-root.lod-far .node.far-lod .node-head, .canvas-root.lod-far .node.window.far-lod { cursor: grab; }
 .node.locked .node-head { cursor: default; }
 
 /* terminal */
@@ -666,6 +669,8 @@ button.ly-twisty:hover { background: rgba(var(--fg-rgb), 0.08); color: var(--tex
 .set-pane { flex: 1; padding: 4px 22px 22px; overflow-y: auto; max-height: 72vh; }
 .set-pane h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); margin: 18px 0 6px; }
 .set-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.range-row { gap: 10px; flex-shrink: 0; }
+.range-row .range-val { min-width: 38px; text-align: right; font-variant-numeric: tabular-nums; }
 .set-label { font-weight: 550; }
 .agent-row { display: flex; align-items: center; gap: 6px; padding: 8px 0; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
 .color-in { width: 30px; height: 26px; border: 0; background: none; padding: 0; cursor: pointer; }
