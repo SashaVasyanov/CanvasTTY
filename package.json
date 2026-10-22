@@ -15,12 +15,17 @@
     "dev": "electron . --devtools",
     "web": "npx --yes http-server renderer -p 5577 -c-1",
     "check": "node scripts/check.mjs",
+    "test": "node scripts/check.mjs && npm run test:unit && npm run test:browser",
+    "test:unit": "node --test \"tests/unit/*.test.mjs\"",
+    "test:browser": "playwright test --project=browser",
+    "test:electron": "playwright test --project=electron",
     "dist": "electron-builder --publish never",
     "dist:win": "electron-builder --win --publish never",
     "dist:mac": "electron-builder --mac --publish never",
     "dist:linux": "electron-builder --linux --publish never"
   },
   "devDependencies": {
+    "@playwright/test": "1.56.1",
     "electron": "38.2.0",
     "electron-builder": "^26.0.12"
   },

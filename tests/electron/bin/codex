@@ -1,0 +1,3 @@
+#!/usr/bin/env node
+// Fake Codex CLI for the Electron tests (see fake-cli.cjs). Windows runs codex.cmd instead.
+require('./fake-cli.cjs').main('codex');

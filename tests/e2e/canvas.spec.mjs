@@ -25,7 +25,7 @@ test.describe('горячие клавиши и области', () => {
     const frames = await app.nodes('frame');
     expect(frames, 'новая область не создаётся, если в выделении уже есть область').toHaveLength(1);
     const inside = (await app.nodes('sticky')).filter((n) => n.parent === frames[0].id).map((n) => n.data.text).sort();
-    expect(inside).toEqual(['ф1', 'ф2', 'снаружи']);
+    expect(inside).toEqual(['ф1', 'ф2', 'снаружи'].sort());
     expect(frames[0].w, 'область растягивается под добавленный стикер').toBeGreaterThan(500);
     await key(page, 'я', 'KeyZ', { ctrlKey: true });
     expect((await app.nodes('frame'))[0].w).toBe(500);

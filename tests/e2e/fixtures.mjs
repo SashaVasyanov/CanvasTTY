@@ -20,7 +20,11 @@ export class App {
       c.vp.x = x; c.vp.y = y; c.vp.z = z; c.applyViewport();
       c.selection.clear(); c.afterSelect();
     }, { x, y, z });
+    await this.idle();
   }
+
+  // right after the view moves the canvas ignores the pointer for a moment (class vp-moving)
+  idle() { return expect(this.page.locator('.canvas-root')).not.toHaveClass(/vp-moving/); }
 
   theme(t) { return this.page.evaluate((t) => document.documentElement.setAttribute('data-theme', t), t); }
 

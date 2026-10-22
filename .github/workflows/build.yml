@@ -22,9 +22,47 @@ jobs:
           node-version: 22
       - run: npm run check
 
+  # unit tests, the interface in a browser and the real app in Electron — on Windows and Linux
+  test:
+    name: test (${{ matrix.os }})
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install
+        run: npm install --no-audit --no-fund
+      - name: Browser for the tests (Windows uses the preinstalled Edge)
+        if: runner.os == 'Linux'
+        run: npx playwright install --with-deps chromium
+      - name: Unit tests
+        run: npm run test:unit
+      - name: Interface in a browser
+        run: npm run test:browser
+      - name: Real app in Electron
+        if: runner.os == 'Windows'
+        run: npm run test:electron
+      - name: Real app in Electron
+        if: runner.os == 'Linux'
+        run: xvfb-run -a npm run test:electron
+      - name: Test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ runner.os }}
+          path: test-results
+          if-no-files-found: ignore
+
   build:
     name: build (${{ matrix.os }})
-    needs: check
+    needs: [check, test]
     strategy:
       fail-fast: false
       matrix:
