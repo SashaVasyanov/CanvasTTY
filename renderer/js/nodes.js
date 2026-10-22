@@ -657,7 +657,7 @@ class ChatInstance {
   }
 
   update(n) { this.node = n; if (!this.streaming) { this.providerSel.value = n.data.provider || 'openai'; this.modelInput.value = n.data.model || ''; this.renderAll(); } }
-  edit() { this.input.focus(); }
+  edit() { this.input.focus({ preventScroll: true }); }
   destroy() { this.offEdges?.(); }
   dispose() { this.stop(); }
 }
@@ -1050,7 +1050,7 @@ class AgentChatInstance {
     return { label: this.messages.length ? 'Ожидает' : 'Готов', kind: 'idle' };
   }
   update(n) { this.node = n; if (!this.running) { this.modeSel.value = n.data.mode || this.modeSel.value; this.fillModelOptions(); this.renderCwd(); this.renderAll(); } }
-  edit() { this.input.focus(); }
+  edit() { this.input.focus({ preventScroll: true }); }
   destroy() { this.offEdges?.(); }
   dispose() { this.stop(); }
 }
@@ -1287,7 +1287,7 @@ export const NODE_TYPES = {
         url,
         h('button', { class: 'icon-btn sm', html: icon('external', 13), title: 'Открыть в браузере', onclick: () => native.shell.open(url.value) })),
         frame);
-      return { edit: () => url.focus(), update: (n) => { if (n.data.url !== url.value) { url.value = n.data.url; frame.src = n.data.url; } } };
+      return { edit: () => url.focus({ preventScroll: true }), update: (n) => { if (n.data.url !== url.value) { url.value = n.data.url; frame.src = n.data.url; } } };
     },
   },
 

@@ -416,7 +416,7 @@ export function mountHub({ node, view, body }) {
 
   let tileSprite = null, agentState = 'idle';
   const offAS = bus.on('agentstate', (info) => { agentState = info.state; if (tileSprite && !tileSprite.once) tileSprite.play(info.state); else if (tileSprite) tileSprite.then = info.state; });
-  const offCP = bus.on('codexPets:changed', () => { statusSig = ''; renderStatus(); });
+  const offCP = bus.on('codexPets:changed', () => { statusSig = null; renderStatus(); });
   const agentNodes = () => view.doc.nodes.filter((n) => ['terminal', 'chat', 'agentchat'].includes(n.type));
   let statusSig = '';
   const renderStatus = () => {
@@ -517,8 +517,9 @@ export function mountHub({ node, view, body }) {
   renderLimits(); renderClock(); renderDock(); setTimeout(renderStatus, 0);
   const offL = limits.on('change', renderLimits);
   const offA = bus.on('agents', renderStatus);
-  const offP = bus.on('pet:changed', () => { paintPetBg(); pet.dataset.mood = ''; statusSig = ''; renderStatus(); });
-  const offS = state.on('settings', (k) => { renderDock(); renderLimits(); if (k === 'petKind' || k === 'petImage' || k === 'all') { paintPetBg(); pet.dataset.mood = ''; renderStatus(); } });
+  // null, not '': with no agents on the canvas the signature itself is '' and nothing would repaint
+  const offP = bus.on('pet:changed', () => { paintPetBg(); pet.dataset.mood = ''; statusSig = null; renderStatus(); });
+  const offS = state.on('settings', (k) => { renderDock(); renderLimits(); if (k === 'petKind' || k === 'petImage' || k === 'all') { paintPetBg(); pet.dataset.mood = ''; statusSig = null; renderStatus(); } });
   const t1 = setInterval(renderClock, 10 * 1000);
   const t2 = setInterval(() => { if (!view.root.classList.contains('vp-moving')) renderStatus(); }, 1500);
   return {

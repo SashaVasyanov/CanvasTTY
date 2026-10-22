@@ -82,6 +82,15 @@ export class CanvasView extends Emitter {
   // ---------------- DOM ----------------
   buildDom() {
     this.root = h('div', { class: 'canvas-root', tabindex: '-1' });
+    // The canvas never scrolls like a page. A field focused while it is off-screen (the input of a
+    // tall window, a terminal, a window still flying into view) makes the browser scroll the
+    // overflow:hidden containers to show it — the whole canvas then sits hundreds of pixels off
+    // and every pointer position is wrong. Undo any such scroll of the canvas or its containers.
+    document.addEventListener('scroll', (e) => {
+      const t = e.target;
+      if (t === document) { if (window.scrollX || window.scrollY) window.scrollTo(0, 0); return; }
+      if (t instanceof Element && (t === this.root || t.contains(this.root)) && (t.scrollTop || t.scrollLeft)) { t.scrollTop = 0; t.scrollLeft = 0; }
+    }, true);
     this.bg = h('div', { class: 'canvas-bg' });
     this.world = h('div', { class: 'canvas-world' });
     this.edgeSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -1080,7 +1089,9 @@ export class CanvasView extends Emitter {
 
     // resize handles
     const handle = e.target.closest('.handle');
-    if (handle) { e.stopPropagation(); this.startResize(e, handle.dataset.dir); return; }
+    // no default: the drag would also select the text of the objects under it (and on Windows the
+    // next drag over that selection turns into a native text drop → a new sticky)
+    if (handle) { e.stopPropagation(); e.preventDefault(); window.getSelection()?.removeAllRanges(); this.startResize(e, handle.dataset.dir); return; }
     // connection dots
     const dot = e.target.closest('.conn-dot');
     if (dot) { e.stopPropagation(); e.preventDefault(); window.getSelection()?.removeAllRanges(); const n = this.selectedNodes()[0]; if (n) this.startConnect(e, n, dot.dataset.side); return; }

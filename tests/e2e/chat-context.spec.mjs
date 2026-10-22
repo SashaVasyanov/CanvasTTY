@@ -118,7 +118,7 @@ test.describe('стрелка к чату', () => {
   });
 });
 
-// App bug: patchNodeData() (called on 'session' and when an answer ends) replaces the window's
+// Regression (fixed): patchNodeData() (called on 'session' and when an answer ends) replaces the window's
 // inst.node with a copy, while later view.setData() calls (ctxHash, messages) only update the canvas
 // node. After the area changed once, the window compares against a stale ctxHash, so every following
 // message sends the unchanged area and its pictures again.
@@ -227,7 +227,7 @@ test.describe('упоминание через @', () => {
     expect(r0.prompt).toContain(`### Заметка «Описание рельефа и континентов»\n${NOTE}`);
   });
 
-  // App bug: pick() closes the list and then dispatches 'input' on the textarea; the text before the
+  // Regression (fixed): pick() closes the list and then dispatches 'input' on the textarea; the text before the
   // caret now ends with «@Название » (the query may contain spaces), so the list opens again at once
   // and stays over the chat showing «Ничего не найдено» until the user types more or presses Esc.
   test('после выбора объекта (Enter или Tab) список @ закрывается', async ({ app, page }) => {

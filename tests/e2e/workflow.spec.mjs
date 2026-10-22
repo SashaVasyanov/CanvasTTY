@@ -15,8 +15,7 @@ test('чистый запуск: загрузка без ошибок, на хо
 });
 
 test.describe('пульт агентов', () => {
-  let hub;
-  test.beforeEach(async ({ app }) => { hub = await app.add('hub', { x: 0, y: 0 }); });
+  test.beforeEach(async ({ app }) => { await app.add('hub', { x: 0, y: 0 }); });
 
   test('из дока: терминал отвечает на команду, чат агента и API-чат получают ответ', async ({ app, page }) => {
     // zoomed out around the hub, so the new windows appear on screen (a window focused while still
@@ -63,11 +62,11 @@ test.describe('пульт агентов', () => {
     await expect(modal).toHaveCount(0);
   };
 
-  // App bug: with no agent windows on the canvas the hub keeps showing the previous pet (and its
+  // Regression (fixed): with no agent windows on the canvas the hub keeps showing the previous pet (and its
   // data-mood becomes empty) until an agent appears. On 'pet:changed' the hub resets statusSig to ''
   // and calls renderStatus(), but with no agents the new signature is also '' and the status box is
   // not empty, so renderStatus() returns before repainting the pet (renderer/js/hub.js, renderStatus).
-  test.fixme('питомец на пульте меняется сразу, даже когда агентов на холсте нет', async ({ page }) => {
+  test('питомец на пульте меняется сразу, даже когда агентов на холсте нет', async ({ page }) => {
     const pet = page.locator('.hub-pet');
     await expect(pet).toHaveAttribute('data-mood', 'sleep');
     await choosePet(page, 'Лисёнок');

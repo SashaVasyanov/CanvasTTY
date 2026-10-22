@@ -46,7 +46,7 @@ test.describe('масштаб 70 %', () => {
     expect(Math.abs(n.h - 250), 'высота +50 в мире').toBeLessThanOrEqual(8);
   });
 
-  // App bug: the resize handle's pointerdown does not prevent the default action, so dragging it
+  // Regression (fixed): the resize handle's pointerdown does not prevent the default action, so dragging it
   // also makes a native text selection across the objects (here "\nA\nB\n", highlighted on screen).
   // On Windows / Edge (CI) the next drag that starts over that selection becomes a native drag and
   // drop: the canvas drop handler turns the dragged text into a new sticky, so a selection-frame drag

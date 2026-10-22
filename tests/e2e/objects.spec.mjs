@@ -334,13 +334,13 @@ test.describe('перетаскивание за любое место (двой
   });
 });
 
-// App bug: focusing a text field of a window whose lower part is below the visible canvas makes the
+// Regression (fixed): focusing a text field of a window whose lower part is below the visible canvas makes the
 // browser scroll .canvas-root (overflow: hidden) to reveal the field, so the whole canvas, minimap
 // included, jumps up and stays shifted (pointer → world coordinates are wrong from then on). Seen after
 // Enter on a selected window, and when a window launched from the dock / menus gets its focus while the
 // camera is still flying to it. Cause: inst.edit() → input.focus() without { preventScroll: true }
 // (renderer/js/nodes.js), and nothing resets the canvas root's scroll position.
-test.fixme('Enter по окну, чей низ за краем экрана, открывает поле ввода и не сдвигает холст', async ({ app, page }) => {
+test('Enter по окну, чей низ за краем экрана, открывает поле ввода и не сдвигает холст', async ({ app, page }) => {
   const chat = await app.add('agentchat', { x: 0, y: 400, w: 500, h: 620, data: { agentId: 'claude', kind: 'claude', messages: [] } });
   const head = await app.box(chat, '.head-title');
   await page.mouse.click(head.x + 10, head.cy);

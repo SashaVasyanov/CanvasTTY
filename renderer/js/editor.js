@@ -644,7 +644,7 @@ export class RichEditor extends Emitter {
     if (md !== this.lastSaved) this.setMarkdown(md);
   }
 
-  focus() { this.content.focus(); }
+  focus() { this.content.focus({ preventScroll: true }); }
   destroy() {
     this.save.flush(); this.offStyles?.(); LIVE_EDITORS.delete(this); this.closeAc(); this.ro?.disconnect();
     if (this.bubble) { this.bubble.remove(); document.removeEventListener('selectionchange', this.onSel); window.removeEventListener('wheel', this.onWheel, { capture: true }); }

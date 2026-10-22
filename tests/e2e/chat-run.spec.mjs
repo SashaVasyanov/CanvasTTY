@@ -174,7 +174,7 @@ test.describe('статус и остановка', () => {
     await expect(c.lastAnswer.locator('.msg-text strong')).toHaveText('агент');
   });
 
-  // App bug: patchNodeData() replaces the window's inst.node with a copy when an answer ends (and on
+  // Regression (fixed): patchNodeData() replaces the window's inst.node with a copy when an answer ends (and on
   // 'session'). The next send() stores the new messages on the canvas node but renders this.messages
   // from that stale copy: the new question is missing and the streaming answer is painted into the
   // previous answer until the run ends. Agent chats and API chats alike (both use patchNodeData).
@@ -273,7 +273,7 @@ test.describe('Codex', () => {
     await expect(page.locator('.toast', { hasText: 'Картинка на холсте' })).toBeVisible();
   });
 
-  // App bug: imageToCanvas() passes the point 60 px right of the chat's top-right corner, meant as the
+  // Regression (fixed): imageToCanvas() passes the point 60 px right of the chat's top-right corner, meant as the
   // picture's top-left corner (like «В заметку» does with center: false), but imageNodeFromFile() adds
   // the node centred on that point, so the picture covers the right part of the chat window
   // (a 300×200 picture by 90 px, a big generated one — up to 520 px wide — by 200 px).
