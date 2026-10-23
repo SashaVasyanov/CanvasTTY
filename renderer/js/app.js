@@ -2,7 +2,7 @@ import { h, icon, badge, bus, menu, prompt, confirmBox, toast, modal, isEditable
 import { renderChatMarkdown } from './md.js';
 import { state, native, PROVIDER_META, DEFAULT_AGENTS, providerName } from './state.js';
 import { CanvasView } from './canvas.js';
-import { NODE_TYPES, imageNodeFromFile } from './nodes.js';
+import { NODE_TYPES, imageNodeFromFile, applyChatText, CHAT_FONT } from './nodes.js';
 import { clipboardFiles } from './attach.js';
 import { PenBar, cssColor, colorRow, openColorPicker, toHex, swatch, OBJECT_COLORS } from './pentools.js';
 import { WIDGETS, openWidgetPicker } from './widgets.js';
@@ -39,6 +39,9 @@ class App {
     this.bindSync();
     native.app?.onFlush?.(async () => { try { await state.flushAll(); } finally { native.app.flushed(); } });
     state.on('canvas', () => { this.canvas.load(); this.renderTabs(); });
+    // the text of the chat windows: its size and «readable when zoomed out» (Настройки → Общие)
+    applyChatText(this.canvas);
+    state.on('settings', (k) => { if (k === 'all' || k === 'chatFontSize' || k === 'chatReadable') applyChatText(this.canvas); });
     state.on('projects', () => this.renderTabs());
     this.canvas.load();
     this.renderTabs();
@@ -822,6 +825,17 @@ class App {
       return h('div', { class: 'row range-row' }, i, out);
     };
     const lod = zoomSlider('lodZoom', 0.2, 0.3), chatLod = zoomSlider('chatLodZoom', 0.1, 0.2);
+    // text size of the chat windows (renderer/js/nodes.js applyChatText)
+    const chatFont = (() => {
+      const out = h('span', { class: 'muted small range-val' });
+      const i = h('input', { type: 'range', class: 'chat-font-range', min: String(CHAT_FONT.min), max: '22', step: '1', value: String(s.chatFontSize || CHAT_FONT.def) });
+      const show = () => { out.textContent = `${i.value} px`; };
+      i.oninput = () => { state.setSetting('chatFontSize', +i.value); show(); };
+      show();
+      return h('div', { class: 'row range-row' }, i, out);
+    })();
+    const readable = h('input', { type: 'checkbox', class: 'switch chat-readable' }); readable.checked = s.chatReadable !== false;
+    readable.onchange = () => state.setSetting('chatReadable', readable.checked);
     const vault = h('div', { class: 'row' }, h('code', { class: 'path' }, vaultIndex.root || s.vaultPath || ''), h('button', { class: 'btn', onclick: async () => { await this.chooseVault(); vault.querySelector('code').textContent = vaultIndex.root; } }, 'Изменить…'));
     const theme = h('select', { class: 'select' }, h('option', { value: 'dark' }, 'Тёмная'), h('option', { value: 'light' }, 'Светлая'), h('option', { value: 'system' }, 'Как в системе'));
     theme.value = s.theme || 'dark'; theme.onchange = () => { state.setSetting('theme', theme.value); this.applyTheme(); };
@@ -838,6 +852,8 @@ class App {
       row('Привязка к сетке', toggle('snap'), 'Умные направляющие работают всегда. Alt — временно без привязки'),
       row('Карточки при отдалении', lod, 'Ниже какого масштаба окна (заметки, терминалы, браузер) заменяются компактными карточками. Левее — окна видны дальше, правее — быстрее при большом количестве окон'),
       row('Чаты нейросетей при отдалении', chatLod, 'Чаты с агентами и API-чаты остаются полными окнами до этого масштаба, даже когда остальные окна уже карточки'),
+      row('Размер текста в чатах', chatFont, 'Переписка и поле ввода в окнах чатов с агентами и API-чатов. Размер отдельного окна — меню окна → «Размер текста» или Ctrl + / Ctrl − в поле ввода'),
+      row('Читаемый текст при отдалении', readable, 'Когда холст отдалён, текст в чатах укрупняется, чтобы на экране он был не мельче 12 px (не больше чем втрое). Срабатывает, когда масштаб перестаёт меняться'),
       h('h3', { 'data-anchor': 'clock' }, 'Часы в пульте'),
       this.clockSettings(s),
       row('Питомец', petBtn, 'Готовые питомцы или своя картинка. Также: ПКМ по питомцу в пульте'),
@@ -1023,7 +1039,7 @@ class App {
       ['S, T, R, O, F, A', 'Стикер, текст, прямоугольник, эллипс, область, стрелка'], ['W', 'Виджеты'],
       ['Shift + клик, рамка', 'Множественное выделение'], ['Shift при перемещении', 'Только по оси'], ['Alt при перемещении', 'Без привязки'],
       ['Ctrl+Z / Ctrl+Shift+Z', 'Отменить / повторить'], ['Ctrl+C / X / V / D', 'Копировать / вырезать / вставить / дублировать'],
-      ['Ctrl+G', 'Сгруппировать в область'], ['Ctrl+L', 'Закрепить'], ['[ / ]', 'Назад / вперёд по слоям'], ['Стрелки (+Shift)', 'Сдвиг на 1 (10) px'],
+      ['Ctrl+G', 'Сгруппировать в область'], ['Ctrl + / − / 0', 'Текст в окне чата (в поле ввода)'], ['Ctrl+L', 'Закрепить'], ['[ / ]', 'Назад / вперёд по слоям'], ['Стрелки (+Shift)', 'Сдвиг на 1 (10) px'],
       ['Shift+1 / Shift+2 / Shift+0', 'Показать всё / выделенное / 100%'], ['Ctrl+P (в терминале Ctrl+Shift+P)', 'Палитра команд'], ['Ctrl+O / Ctrl+Shift+O', 'Открыть заметку'], ['Ctrl+N / Ctrl+Shift+N', 'Новая заметка'],
       ['Ctrl+`', 'Новый терминал'], ['Ctrl+\\', 'Боковая панель'], ['M', 'Скрыть / показать миникарту'], ['Ctrl+Shift+F', 'Счётчик FPS'], ['F1', 'Инструкция'], ['Ctrl+K (в заметке)', 'Ссылка'], ['[[ (в заметке)', 'Ссылка на заметку с автодополнением'],
       ['Ctrl+Shift+L (в заметке)', 'Чек-лист'], ['# , - , 1. , [] , > (в заметке)', 'Markdown-сокращения'],

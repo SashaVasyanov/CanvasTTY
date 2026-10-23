@@ -71,8 +71,10 @@ function bindFollow(inst) {
     if (!l.clientHeight) return; // hidden (zoomed out, off screen, not laid out yet): done when it shows
     ours = performance.now(); l.scrollTop = l.scrollHeight; paintJump();
   };
-  // a list that just became visible or changed size keeps showing the newest message
-  new ResizeObserver(() => { if (inst.follow && l.clientHeight) { ours = performance.now(); l.scrollTop = l.scrollHeight; } }).observe(l);
+  // a list that just became visible or changed size keeps showing the newest message; refollow():
+  // the same after the text got bigger or smaller (text size, zoom)
+  inst.refollow = () => { if (inst.follow && l.clientHeight) { ours = performance.now(); l.scrollTop = l.scrollHeight; } };
+  new ResizeObserver(() => inst.refollow()).observe(l);
   l.addEventListener('scroll', () => {
     if (performance.now() - ours < 120 || !l.clientHeight) return; // our own jump to the bottom / hidden
     inst.follow = l.scrollHeight - l.scrollTop - l.clientHeight < 40;
@@ -82,6 +84,49 @@ function bindFollow(inst) {
   // pictures that finish loading make the list taller
   l.addEventListener('load', (e) => { if (e.target.tagName === 'IMG') inst.toEnd(); }, true);
   inst.listWrap = h('div', { class: 'chat-list-wrap' }, l, inst.jumpBtn);
+}
+
+// ---------------- text size of the chat windows ----------------
+// Settings → Агенты: the size for all chat windows and «readable when zoomed out» (styles.css: the
+// text is then never smaller than 12 px on screen); a window can have its own size (menu, Ctrl + / −).
+export const CHAT_FONT = { min: 10, max: 28, def: 14 };
+const clampFont = (f) => Math.max(CHAT_FONT.min, Math.min(CHAT_FONT.max, Math.round(Number(f) || CHAT_FONT.def)));
+export function applyChatText(view) {
+  const st = state.settings || {};
+  view.root.style.setProperty('--chat-fs', `${clampFont(st.chatFontSize || CHAT_FONT.def)}px`);
+  view.root.style.setProperty('--chat-min', st.chatReadable === false ? '0px' : '12px');
+  requestAnimationFrame(() => { for (const v of view.views.values()) v.inst?.refollow?.(); });
+}
+function applyWindowFont(inst) {
+  const f = inst.node.data.fontSize;
+  if (f) inst.root.style.setProperty('--chat-fs', `${clampFont(f)}px`); else inst.root.style.removeProperty('--chat-fs');
+  requestAnimationFrame(() => inst.refollow?.());
+}
+const windowFont = (inst) => clampFont(inst.node.data.fontSize || state.settings.chatFontSize || CHAT_FONT.def);
+// null: back to the size from the settings
+function setWindowFont(inst, f) {
+  const v = f == null ? null : clampFont(f);
+  inst.view.setData(inst.node.id, { fontSize: v && v !== clampFont(state.settings.chatFontSize || CHAT_FONT.def) ? v : null });
+  inst.node = inst.view.node(inst.node.id) || inst.node;
+  applyWindowFont(inst);
+}
+function fontItems(inst) {
+  return [
+    { label: 'Крупнее', icon: 'plus', kbd: 'Ctrl +', onClick: () => setWindowFont(inst, windowFont(inst) + 1) },
+    { label: 'Мельче', icon: 'minus', kbd: 'Ctrl −', onClick: () => setWindowFont(inst, windowFont(inst) - 1) },
+    { label: 'Как в настройках', icon: 'refresh', kbd: 'Ctrl 0', disabled: !inst.node.data.fontSize, onClick: () => setWindowFont(inst, null) },
+  ];
+}
+// Ctrl + / Ctrl − / Ctrl 0 in the input of a chat window (any keyboard layout)
+function fontKeys(inst, e) {
+  if (!(e.ctrlKey || e.metaKey) || e.altKey) return false;
+  const k = e.code;
+  if (k === 'Equal' || k === 'NumpadAdd') setWindowFont(inst, windowFont(inst) + 1);
+  else if (k === 'Minus' || k === 'NumpadSubtract') setWindowFont(inst, windowFont(inst) - 1);
+  else if (k === 'Digit0' || k === 'Numpad0') setWindowFont(inst, null);
+  else return false;
+  e.preventDefault();
+  return true;
 }
 
 // ---------------- canvas context shared by chat windows (see context.js) ----------------
@@ -652,10 +697,11 @@ class ChatInstance {
     this.modelInput.addEventListener('change', () => this.view.setData(node.id, { model: this.modelInput.value.trim() }));
     this.input.addEventListener('keydown', (e) => {
       e.stopPropagation();
+      if (fontKeys(this, e)) return;
       if (this.mentions?.handleKey(e)) return;
       if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); this.send(); }
     });
-    this.input.addEventListener('input', () => { this.input.style.height = 'auto'; this.input.style.height = `${Math.min(160, this.input.scrollHeight)}px`; });
+    this.input.addEventListener('input', () => { this.input.style.height = 'auto'; this.input.style.height = `${this.input.scrollHeight + 2}px`; }); // CSS max-height (in lines) stops it
     this.list.addEventListener('click', (e) => {
       const btn = e.target.closest('[data-copy]');
       if (btn) { const code = btn.closest('.code-block').querySelector('code').textContent; native.clipboard.write(code); btn.textContent = 'Скопировано'; setTimeout(() => { btn.textContent = 'Копировать'; }, 1200); }
@@ -669,6 +715,7 @@ class ChatInstance {
     this.renderCtx();
     this.syncRunUi();
     applyDraft(this);
+    applyWindowFont(this);
   }
 
   async fillProviders() {
@@ -939,8 +986,8 @@ class AgentChatInstance {
     this.effortSel.addEventListener('change', () => { this.view.setData(this.node.id, { effort: this.effortSel.value }); this.renderInfo(); });
     this.modeSel.value = node.data.mode || (AGENT_MODES[this.kind] || [[]])[0][0];
     this.modeSel.addEventListener('change', () => this.view.setData(this.node.id, { mode: this.modeSel.value }));
-    this.input.addEventListener('keydown', (e) => { e.stopPropagation(); if (this.mentions?.handleKey(e)) return; if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); this.send(); } });
-    this.input.addEventListener('input', () => { this.input.style.height = 'auto'; this.input.style.height = `${Math.min(160, this.input.scrollHeight)}px`; });
+    this.input.addEventListener('keydown', (e) => { e.stopPropagation(); if (fontKeys(this, e)) return; if (this.mentions?.handleKey(e)) return; if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); this.send(); } });
+    this.input.addEventListener('input', () => { this.input.style.height = 'auto'; this.input.style.height = `${this.input.scrollHeight + 2}px`; }); // CSS max-height (in lines) stops it
     this.list.addEventListener('click', (e) => {
       const btn = e.target.closest('[data-copy]');
       if (btn) { native.clipboard.write(btn.closest('.code-block').querySelector('code').textContent); btn.textContent = 'Скопировано'; setTimeout(() => { btn.textContent = 'Копировать'; }, 1200); }
@@ -957,6 +1004,7 @@ class AgentChatInstance {
     this.reattach();
     if (this.node.data.worktree) this.refreshWorktree();
     applyDraft(this);
+    applyWindowFont(this);
   }
 
   // An answer saved as "running" while no run of this app owns it: the app was closed or reloaded
@@ -1546,6 +1594,7 @@ export const NODE_TYPES = {
       } },
       { label: 'История чатов', icon: 'sidebar', onClick: () => inst?.hist.open() },
       { label: 'Новый чат', icon: 'plus', onClick: () => inst?.hist.newChat() },
+      ...(inst ? [{ label: 'Размер текста', icon: 'text', children: fontItems(inst) }] : []),
       { label: 'Переименовать', icon: 'pen', onClick: () => NODE_TYPES.chat.rename(n, view) },
     ],
   },
@@ -1582,6 +1631,7 @@ export const NODE_TYPES = {
         const p = await native.vault.create('Чаты', NODE_TYPES.agentchat.title(n), md);
         await vaultIndex.refresh(); toast(`Сохранено: ${p}`);
       } },
+      ...(inst ? [{ label: 'Размер текста', icon: 'text', children: fontItems(inst) }] : []),
       { label: 'Переименовать', icon: 'pen', onClick: () => NODE_TYPES.agentchat.rename(n, view) },
     ],
   },

@@ -251,6 +251,8 @@ export class CanvasView extends Emitter {
       if (sx !== this.vp.x || sy !== this.vp.y) { this.vp.x = sx; this.vp.y = sy; this.saveViewport(); }
       this.applyLayoutZoom();
       this.root.style.setProperty('--z', this.vp.z);
+      // the chat text may have a new size now (readable when zoomed out): keep chats at their last message
+      if (this._restZ !== this.vp.z) { this._restZ = this.vp.z; for (const v of this.views.values()) v.inst?.refollow?.(); }
       const want = this.lodWant();
       if (want.lod !== this.lod || want.far !== this.lodFar) this.setLod(want.lod, want.far);
       this.cull();
