@@ -1,5 +1,5 @@
 // Infinite canvas engine: viewport, nodes, edges, selection, snapping, history.
-import { h, icon, uid, clamp, Emitter, isEditable, menu, deepClone, throttle, toast, keyName } from './util.js';
+import { h, icon, uid, clamp, Emitter, isEditable, menu, prompt, deepClone, throttle, toast, keyName } from './util.js';
 import { state, native } from './state.js';
 import { NODE_TYPES, strokePath } from './nodes.js';
 import { PEN_TOOLS, penSettings, currentTool, cssColor, resolveColor, normColor, colorRow, openColorPicker, colorName, OBJECT_COLORS } from './pentools.js';
@@ -669,17 +669,26 @@ export class CanvasView extends Emitter {
       const { d, mid } = this.curve(this.anchor(a, sa), this.anchor(b, sb));
       const sel = this.selectedEdge === e.id || (this.selection.has(e.from) && this.selection.has(e.to));
       const grp = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-      grp.setAttribute('class', `edge${sel ? ' selected' : ''}`);
+      grp.setAttribute('class', `edge${sel ? ' selected' : ''}${e.relay ? ' relay' : ''}`);
       grp.dataset.id = e.id;
       grp.innerHTML = `<path class="edge-hit" d="${d}"/><path class="edge-line" d="${d}" style="${e.color ? `stroke:${cssColor(e.color, 'gray')}` : ''}" ${e.arrow !== false ? 'marker-end="url(#arrow)"' : ''}/>`;
-      if (e.label) {
+      const label = e.label || (e.relay ? 'передаёт ответ' : '');
+      if (label) {
         const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-        t.setAttribute('x', mid.x); t.setAttribute('y', mid.y - 6); t.setAttribute('class', 'edge-label'); t.textContent = e.label;
+        t.setAttribute('x', mid.x); t.setAttribute('y', mid.y - 6); t.setAttribute('class', 'edge-label'); t.textContent = label;
         grp.append(t);
       }
       g.append(grp);
       this._edgeEls.set(e.id, { hit: grp.firstChild, line: grp.children[1], label: grp.querySelector('text') });
     }
+  }
+
+  // an answer goes along this arrow right now
+  flashEdge(id) {
+    const g = this.edgeGroup.querySelector(`.edge[data-id="${CSS.escape(id)}"]`);
+    if (!g) return;
+    g.classList.remove('relaying'); void g.getBBox?.(); g.classList.add('relaying');
+    clearTimeout(g._flashT); g._flashT = setTimeout(() => g.classList.remove('relaying'), 1800);
   }
 
   // ---------------- overlay (selection box, handles, toolbar) ----------------
@@ -1785,7 +1794,19 @@ export class CanvasView extends Emitter {
         let first = true;
         openColorPicker(anchor, cur || 'blue', (v) => { setColor(v, first); first = false; }, { above: false, onClose: () => anchor.remove() });
       } }];
+    // between two chat windows: pass the source's answers to the target
+    const chats = ['agentchat', 'chat'];
+    const relayItems = chats.includes(this.node(e.from)?.type) && chats.includes(this.node(e.to)?.type) ? [
+      { label: 'Передавать ответ', icon: 'arrow', checked: !!e.relay, hint: 'ответ → следующему', onClick: () => { this.checkpoint(); e.relay = e.relay ? undefined : { note: '' }; if (!e.relay) delete e.relay; this.renderEdges(); this.changed(); this.emit('edges'); } },
+      ...(e.relay ? [{ label: 'Приписка к ответу…', icon: 'text', onClick: async () => {
+        const v = await prompt('Что написать перед передаваемым ответом', e.relay.note || '', 'например: Проверь этот код и найди ошибки');
+        if (v == null) return;
+        this.checkpoint(); e.relay = { ...e.relay, note: v.trim() }; this.changed();
+      } }] : []),
+      '-',
+    ] : [];
     menu([
+      ...relayItems,
       { label: 'Подпись…', icon: 'text', onClick: () => this.emit('editEdge', id) },
       { label: e.arrow !== false ? 'Убрать стрелку' : 'Добавить стрелку', icon: 'arrow', onClick: () => { this.checkpoint(); e.arrow = e.arrow === false; this.renderEdges(); this.changed(); } },
       { label: 'Развернуть направление', icon: 'refresh', onClick: () => { this.checkpoint(); [e.from, e.to] = [e.to, e.from]; this.renderEdges(); this.changed(); this.emit('edges'); } },

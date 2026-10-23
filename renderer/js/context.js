@@ -52,7 +52,9 @@ export function findMentions(view, selfId, text) {
   return [...found.values()].map((c) => c.node);
 }
 
-export const linkedNodes = (view, selfId) => view.connected(selfId).filter((n) => CONTEXT_TYPES.includes(n.type));
+// (an arrow that passes answers between chats is not context: the answer arrives as a message)
+export const linkedNodes = (view, selfId) => view.doc.edges.filter((e) => (e.from === selfId || e.to === selfId) && !e.relay)
+  .map((e) => view.node(e.from === selfId ? e.to : e.from)).filter((n) => n && CONTEXT_TYPES.includes(n.type));
 
 // "Карты · 4 картинки, 1 заметка" for the chips
 function areaSummary(view, f) {

@@ -421,6 +421,80 @@ function errAction(inst, act) {
   }
 }
 
+// ---------------- passing answers along arrows (agent → agent) ----------------
+// An arrow between two chat windows in «Передавать ответ» mode: when the source finishes an answer,
+// the target gets it as its next message (with the arrow's note before it). Each passed message
+// counts the steps since the user last wrote; after RELAY_MAX steps the chain stops. «Стоп» in any
+// window of a chain stops the whole chain.
+export const RELAY_MAX = 5;
+export const RELAY_TYPES = ['agentchat', 'chat'];
+const relayLabel = (title) => `Ответ от «${title}»:`;
+function relayAnswer(inst, user, answer) {
+  const view = inst.view;
+  if (!answer) return;
+  const depth = (user?.relay?.depth || 0) + 1;
+  const chain = user?.relay?.chain || uid('chain');
+  // the source's canvas is not open (the user went to another one): the targets get the answer
+  // in their canvas file and send it when that canvas opens
+  if (view.doc?.id !== inst.docId) { relayInFile(inst, answer, depth, chain); return; }
+  const src = view.node(inst.node.id);
+  if (!src) return;
+  const edges = view.doc.edges.filter((e) => e.relay && e.from === src.id && e.to !== src.id);
+  if (!edges.length) return;
+  const title = NODE_TYPES[src.type].title(src);
+  if (depth > RELAY_MAX) { toast(`Цепочка передач остановлена после ${RELAY_MAX} шагов без вас — продолжите сами`, 'warn'); return; }
+  for (const e of edges) {
+    const target = view.node(e.to);
+    if (!target || !RELAY_TYPES.includes(target.type)) continue;
+    const msg = { text: `${e.relay.note || relayLabel(title)}\n\n${answer}`, attachments: [], relay: { from: src.id, title, depth, chain } };
+    view.flashEdge?.(e.id);
+    const t = view.views.get(target.id)?.inst;
+    if (!t) continue;
+    if (t.isBusy()) (t.relayQueue ||= []).push(msg); // after its current answer
+    else t.send(msg);
+  }
+}
+async function relayInFile(inst, answer, depth, chain) {
+  if (depth > RELAY_MAX) return;
+  try {
+    const doc = await native.canvas.load(inst.docId);
+    const src = doc?.nodes?.find((n) => n.id === inst.node.id);
+    if (!src) return;
+    const title = NODE_TYPES[src.type].title(src);
+    let changed = false;
+    for (const e of doc.edges || []) {
+      if (!e.relay || e.from !== src.id || e.to === src.id) continue;
+      const t = doc.nodes.find((n) => n.id === e.to);
+      if (!t || !RELAY_TYPES.includes(t.type)) continue;
+      t.data = { ...t.data, pendingRelay: [...(t.data.pendingRelay || []), { text: `${e.relay.note || relayLabel(title)}\n\n${answer}`, attachments: [], relay: { from: src.id, title, depth, chain } }] };
+      changed = true;
+    }
+    if (changed) await native.canvas.save(inst.docId, doc);
+  } catch (e) { console.error('relay', e); }
+}
+// passes that arrived while this window's canvas was closed
+function takePendingRelay(inst) {
+  const q = inst.node.data.pendingRelay;
+  if (!q?.length) return;
+  inst.view.setData(inst.node.id, { pendingRelay: null });
+  inst.node = inst.view.node(inst.node.id) || inst.node;
+  inst.relayQueue = [...(inst.relayQueue || []), ...q];
+  nextRelay(inst);
+}
+// the next passed answer waiting for this window
+function nextRelay(inst) {
+  const m = inst.relayQueue?.shift();
+  if (m) setTimeout(() => { if (!inst.isBusy()) inst.send(m); else (inst.relayQueue ||= []).unshift(m); }, 0);
+}
+// «Стоп» in one window of a chain: the others stop too, waiting passes are dropped
+function bindRelayStop(inst) {
+  return bus.on('relay:stop', (chain) => {
+    if (inst.relayQueue) inst.relayQueue = inst.relayQueue.filter((m) => m.relay?.chain !== chain);
+    if (inst.chain === chain && inst.isBusy()) inst.stop(true);
+  });
+}
+const renderRelayNote = (m) => (m.relay ? h('div', { class: 'msg-relay', title: `Передано по стрелке, шаг ${m.relay.depth} из ${RELAY_MAX}` }, h('span', { html: icon('arrow', 11) }), `от «${m.relay.title}»`) : null);
+
 // ---------------- what the agent changed (main/changes.js) ----------------
 // files the agent's tools wrote, for folders without git (no diff, no rollback there)
 function touchedFiles(parts) {
@@ -579,6 +653,8 @@ class ChatInstance {
       if (act) this.msgAction(act.dataset.act, +act.dataset.i);
     });
     this.offEdges = bindContext(this);
+    this.offRelay = bindRelayStop(this);
+    setTimeout(() => takePendingRelay(this), 0); // after the window (and a picked-up run) is set up
     this.renderAll();
     this.renderCtx();
     this.syncRunUi();
@@ -618,7 +694,7 @@ class ChatInstance {
 
   renderMsg(m, i) {
     const el = h('div', { class: `msg ${m.role}${m.error ? ' error' : ''}${i === this.messages.length - 1 ? ' is-last' : ''}` });
-    if (m.role === 'user') { const atts = renderAttachments(m.attachments); if (atts) el.append(atts); if (m.content) el.append(h('div', { class: 'msg-text' }, m.content)); const ctx = renderContextNote(m.context); if (ctx) el.append(ctx); }
+    if (m.role === 'user') { const rl = renderRelayNote(m); if (rl) el.append(rl); const atts = renderAttachments(m.attachments); if (atts) el.append(atts); if (m.content) el.append(h('div', { class: 'msg-text' }, m.content)); const ctx = renderContextNote(m.context); if (ctx) el.append(ctx); }
     else {
       if (m.reasoning) el.append(h('details', { class: 'msg-reason' }, h('summary', {}, 'Размышления'), h('div', { class: 'reason-text' }, m.reasoning)));
       if (m.error) el.append(renderError(m.errorText || m.content, { source: 'api', provider: this.providers?.[this.node.data.provider]?.name || providerName(this.node.data.provider || 'openai'), model: this.node.data.model }));
@@ -675,7 +751,8 @@ class ChatInstance {
     this.mentions?.close();
     // the message and "answering" show at once, the canvas context is collected after that
     inbox.remove(this.node.id); // a new question: the previous answer has been seen
-    const user = { role: 'user', content: text, ts: Date.now(), ...(attachments.length ? { attachments } : {}) };
+    const user = { role: 'user', content: text, ts: Date.now(), ...(attachments.length ? { attachments } : {}), ...(again?.relay ? { relay: again.relay } : {}) };
+    this.chain = again?.relay?.chain || null;
     const msgs = [...this.messages, user];
     const asst = { role: 'assistant', content: '', running: true, host: state.info.host, ts: Date.now() };
     const all = [...msgs, asst];
@@ -723,6 +800,10 @@ class ChatInstance {
     this.sendBtn.innerHTML = icon('send', 16); this.sendBtn.classList.remove('stop');
     activeRuns.delete(this.node.id);
     await patchNodeData(this, { messages: [...all] });
+    // after the answer is saved (a closed canvas' file is written by both)
+    if (!ev.aborted && !ev.error) relayAnswer(this, all[all.length - 2], last?.content);
+    this.chain = null;
+    nextRelay(this);
     saveConversation(this);
     this.renderAll();
     const tot = all.reduce((t, m) => t + (m.usage ? m.usage.input + m.usage.output : 0), 0);
@@ -731,7 +812,8 @@ class ChatInstance {
     bus.emit('limits:refresh');
   }
 
-  stop() {
+  stop(fromChain = false) {
+    if (this.chain && !fromChain) bus.emit('relay:stop', this.chain);
     if (this.preparing && this.streaming === this.preparing) { const { all, asst } = this._prep; asst.content = '_(остановлено)_'; this.preparing = null; this.finish(this.streaming, all, { aborted: true }); return; }
     const r = this.streaming || runOf(this)?.streaming; if (r) native.chat.abort(r);
   }
@@ -770,7 +852,7 @@ class ChatInstance {
 
   update(n) { this.node = n; if (!this.streaming) { this.providerSel.value = n.data.provider || 'openai'; this.modelInput.value = n.data.model || ''; this.renderAll(); } }
   edit() { this.input.focus({ preventScroll: true }); }
-  destroy() { this.offEdges?.(); }
+  destroy() { this.offEdges?.(); this.offRelay?.(); }
   dispose() { this.stop(); }
 }
 
@@ -855,6 +937,8 @@ class AgentChatInstance {
       if (act) this.msgAction(act.dataset.act, +act.dataset.i);
     });
     this.offEdges = bindContext(this);
+    this.offRelay = bindRelayStop(this);
+    setTimeout(() => takePendingRelay(this), 0); // after the window (and a picked-up run) is set up
     this.renderCwd();
     this.renderAll();
     this.renderCtx();
@@ -1106,7 +1190,7 @@ class AgentChatInstance {
 
   renderMsg(m, i) {
     const el = h('div', { class: `msg ${m.role}${i === this.messages.length - 1 ? ' is-last' : ''}` });
-    if (m.role === 'user') { const atts = renderAttachments(m.attachments); if (atts) el.append(atts); if (m.content) el.append(h('div', { class: 'msg-text' }, m.content)); const ctx = renderContextNote(m.context); if (ctx) el.append(ctx); }
+    if (m.role === 'user') { const rl = renderRelayNote(m); if (rl) el.append(rl); const atts = renderAttachments(m.attachments); if (atts) el.append(atts); if (m.content) el.append(h('div', { class: 'msg-text' }, m.content)); const ctx = renderContextNote(m.context); if (ctx) el.append(ctx); }
     else { const body = h('div', { class: 'msg-body' }); this.renderParts(m, body); el.append(body); const ch = renderChanges(m, i); if (ch) el.append(ch); const cta = renderResume(this, m, i); if (cta) el.append(cta); }
     if (!m.running) el.append(h('div', { class: 'msg-actions' },
       h('button', { 'data-act': 'copy', 'data-i': i, title: 'Копировать', html: icon('copy', 12) }),
@@ -1157,7 +1241,8 @@ class AgentChatInstance {
     // the message and "working" show at once; collecting the canvas context (pictures of a big
     // area) may take a moment and happens after that
     inbox.remove(this.node.id); // a new question: the previous answer has been seen
-    const user = { role: 'user', content: text, ts: Date.now(), ...(attachments.length ? { attachments } : {}) };
+    const user = { role: 'user', content: text, ts: Date.now(), ...(attachments.length ? { attachments } : {}), ...(again?.relay ? { relay: again.relay } : {}) };
+    this.chain = again?.relay?.chain || null;
     const asst = { role: 'assistant', content: '', parts: [], running: true, host: state.info.host, ts: Date.now() };
     const all = [...this.messages, user, asst];
     this.view.setData(this.node.id, { messages: all });
@@ -1249,6 +1334,10 @@ class AgentChatInstance {
     reportEnd(this, ev.aborted ? null : ev.interrupted ? 'interrupted' : err ? 'error' : asst.needsInput ? 'wait' : 'done', err ? err.text : asst.content);
     activeRuns.delete(this.node.id);
     await patchNodeData(this, { messages: [...all], ...(ev.sessionId ? { sessionId: ev.sessionId } : {}) });
+    // after the answer is saved (a closed canvas' file is written by both)
+    if (!ev.aborted && !ev.interrupted && !err && !asst.needsInput) relayAnswer(this, all[all.length - 2], asst.content);
+    this.chain = null;
+    nextRelay(this);
     native.agentChat.release?.(reqId); // the answer is saved: main may delete the run's journal
     if (this.node.data.worktree) this.refreshWorktree();
     this.sendBtn.innerHTML = icon('send', 16); this.sendBtn.classList.remove('stop');
@@ -1263,7 +1352,8 @@ class AgentChatInstance {
     bus.emit('limits:refresh');
   }
 
-  stop() {
+  stop(fromChain = false) {
+    if (this.chain && !fromChain) bus.emit('relay:stop', this.chain);
     // stopped before the agent even started (still collecting the context): nothing to abort
     if (this.preparing && this.running === this.preparing) { const { all, asst } = this._prep; this.preparing = null; this.finish(this.running, all, asst, { aborted: true }); return; }
     const r = this.running || runOf(this)?.running; if (r) native.agentChat.abort(r);
@@ -1280,7 +1370,7 @@ class AgentChatInstance {
   }
   update(n) { this.node = n; if (!this.running) { this.modeSel.value = n.data.mode || this.modeSel.value; this.fillModelOptions(); this.renderCwd(); this.renderAll(); } }
   edit() { this.input.focus({ preventScroll: true }); }
-  destroy() { this.offEdges?.(); }
+  destroy() { this.offEdges?.(); this.offRelay?.(); }
   dispose() { this.stop(); }
 }
 

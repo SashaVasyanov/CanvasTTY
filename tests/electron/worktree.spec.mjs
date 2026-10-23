@@ -17,6 +17,10 @@ test('агент в отдельной копии: правки только в 
 
   const chat = await app.openAgentChat('codex');
   await app.page.evaluate(([id, cwd]) => window.__app.canvas.setData(id, { cwd, title: 'Обновить README' }), [chat, repo]);
+  // the camera may still be flying to the new window, and the CI Windows screen is small
+  await app.idle();
+  await app.reveal(chat);
+  await app.idle();
   const head = await app.box(chat, '.node-head');
   await app.page.mouse.click(head.x + 60, head.cy, { button: 'right' });
   await app.page.locator('.menu .menu-item', { hasText: 'Работать в отдельной копии' }).click();
