@@ -40,6 +40,8 @@ contextBridge.exposeInMainWorld('native', {
   dialog: { folder: inv('dialog:folder') },
   shell: { open: inv('shell:open'), openPath: inv('shell:openPath') },
   wt: { isRepo: inv('wt:isRepo'), create: inv('wt:create'), status: inv('wt:status'), preview: inv('wt:preview'), merge: inv('wt:merge'), remove: inv('wt:remove') },
+  // the agents' canvas tools: requests from main/canvas-bridge.js, answered by renderer/js/canvasTools.js
+  canvasTools: { onRequest: on('canvastools:request'), ready: () => ipcRenderer.send('canvastools:ready'), reply: (id, r) => ipcRenderer.send('canvastools:reply', { ...r, id }) },
   changes: { snapshot: inv('changes:snapshot'), since: inv('changes:since'), patch: inv('changes:patch'), restore: inv('changes:restore'), reveal: inv('changes:reveal') },
   clipboard: { write: inv('clipboard:write') },
 });

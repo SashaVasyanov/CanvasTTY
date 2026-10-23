@@ -9,6 +9,7 @@ const { Vault } = require('./vault');
 const { ChatManager, PROVIDERS } = require('./chat');
 const { getLimits } = require('./limits');
 const { AgentChatManager, agentDefaults } = require('./agentchat');
+const { CanvasBridge } = require('./canvas-bridge');
 const { HistoryStore, listSessions, readSession } = require('./history');
 const { Attachments } = require('./attachments');
 // automated tests run the app against a throw-away profile: settings, canvases, chats and the
@@ -102,6 +103,9 @@ function safeExternal(url) {
   return true;
 }
 let win = null;
+let canvasBridge = null;
+let canvasToolsReady = false; // the page answers canvas-tool requests (renderer/js/canvasTools.js)
+const canvasReadyWaiters = [];
 let userData, wsFile, canvasDir, usageFile, sync = null;
 let usageLog = {};
 
@@ -215,6 +219,7 @@ function createWindow() {
   ]) : null);
   win.loadURL('app://vibetabula/index.html');
   win.once('ready-to-show', () => win.show());
+  win.webContents.on('did-start-loading', () => { canvasToolsReady = false; }); // a reload: wait for the page again
   // let the page write pending edits (debounced saves) before the window goes away
   let allowClose = false;
   win.on('close', (e) => {
@@ -425,9 +430,48 @@ app.whenReady().then(() => {
   ipcMain.handle('shell:openPath', (e, p) => { try { if (fs.statSync(String(p)).isDirectory()) return shell.openPath(String(p)); } catch {} return 'Можно открыть только папку'; });
   ipcMain.handle('clipboard:write', (e, text) => clipboard.writeText(text));
 
+  // canvas tools of the agents: the MCP server of a run asks here, the window (renderer/js/canvasTools.js) answers
+  const pendingCanvas = new Map();
+  let canvasSeq = 0;
+  ipcMain.on('canvastools:ready', (e) => {
+    if (!win || e.sender !== win.webContents) return;
+    canvasToolsReady = true;
+    for (const f of canvasReadyWaiters.splice(0)) f();
+  });
+  // a request that comes while the page is still loading (the app was just started) waits for it
+  const pageReady = (ms) => (canvasToolsReady ? Promise.resolve(true) : new Promise((resolve) => {
+    const done = () => { clearTimeout(t); resolve(true); };
+    const t = setTimeout(() => { const i = canvasReadyWaiters.indexOf(done); if (i >= 0) canvasReadyWaiters.splice(i, 1); resolve(false); }, ms);
+    canvasReadyWaiters.push(done);
+  }));
+  ipcMain.on('canvastools:reply', (e, r) => {
+    if (!win || e.sender !== win.webContents || !r) return;
+    const p = pendingCanvas.get(r.id);
+    if (!p) return;
+    pendingCanvas.delete(r.id); clearTimeout(p.timer);
+    if (r.error) p.reject(new Error(String(r.error))); else p.resolve(r.result);
+  });
+  canvasBridge = new CanvasBridge({
+    userData,
+    resolve: (token) => agentChat.canvasTarget(token),
+    request: async (target, op, args) => {
+      if (!(await pageReady(15000))) throw new Error('Окно VibeTabula ещё не готово — попробуйте ещё раз');
+      return askPage(target, op, args);
+    },
+  }).start((pipe) => { agentChat.canvasPipe = pipe; });
+  function askPage(target, op, args) {
+    return new Promise((resolve, reject) => {
+      if (!win || win.isDestroyed()) { reject(new Error('Окно VibeTabula закрыто')); return; }
+      const id = ++canvasSeq;
+      const timer = setTimeout(() => { pendingCanvas.delete(id); reject(new Error('Окно VibeTabula не ответило (возможно, оно ещё загружается) — попробуйте ещё раз')); }, 15000);
+      pendingCanvas.set(id, { resolve, reject, timer });
+      send('canvastools:request', { id, ...target, op, args });
+    });
+  }
+
   createWindow();
 });
 
 // agent chats keep answering in the background (agent-runner.js) unless that is turned off
-app.on('window-all-closed', () => { ptys.killAll(); agentChat.onQuit(); app.quit(); });
+app.on('window-all-closed', () => { ptys.killAll(); agentChat.onQuit(); canvasBridge?.stop(); app.quit(); });
 app.on('before-quit', () => ptys.killAll());

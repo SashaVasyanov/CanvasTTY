@@ -3,7 +3,7 @@ import { h, icon, badge, esc, bus, toast, prompt, confirmBox, menu, modal, debou
 import { cssColor, wantsWhiteText, BAR_COLORS, OBJECT_COLORS, STICKY_COLORS } from './pentools.js';
 import { sanitizeHtml, htmlText } from './sanitize.js';
 import { WIDGETS, mountWidget } from './widgets.js';
-import { state, native, PROVIDER_META, providerName } from './state.js';
+import { state, native, PROVIDER_META, providerName, editCanvasFile } from './state.js';
 import { renderChatMarkdown } from './md.js';
 import { RichEditor } from './editor.js';
 import { vaultIndex } from './vaultIndex.js';
@@ -325,11 +325,11 @@ async function patchNodeData(inst, patch) {
     return;
   }
   try {
-    const doc = await native.canvas.load(inst.docId);
-    const n = doc?.nodes?.find((x) => x.id === inst.node.id);
-    if (!n) return;
-    n.data = { ...n.data, ...patch };
-    await native.canvas.save(inst.docId, doc);
+    await editCanvasFile(inst.docId, (doc) => {
+      const n = doc.nodes?.find((x) => x.id === inst.node.id);
+      if (!n) return false;
+      n.data = { ...n.data, ...patch };
+    });
   } catch (e) { console.error('patchNodeData', e); }
 }
 const INTERRUPTED = 'Ответ прервался: приложение или компьютер закрылись, пока агент работал.';
@@ -457,19 +457,20 @@ function relayAnswer(inst, user, answer) {
 async function relayInFile(inst, answer, depth, chain) {
   if (depth > RELAY_MAX) return;
   try {
-    const doc = await native.canvas.load(inst.docId);
-    const src = doc?.nodes?.find((n) => n.id === inst.node.id);
-    if (!src) return;
-    const title = NODE_TYPES[src.type].title(src);
-    let changed = false;
-    for (const e of doc.edges || []) {
-      if (!e.relay || e.from !== src.id || e.to === src.id) continue;
-      const t = doc.nodes.find((n) => n.id === e.to);
-      if (!t || !RELAY_TYPES.includes(t.type)) continue;
-      t.data = { ...t.data, pendingRelay: [...(t.data.pendingRelay || []), { text: `${e.relay.note || relayLabel(title)}\n\n${answer}`, attachments: [], relay: { from: src.id, title, depth, chain } }] };
-      changed = true;
-    }
-    if (changed) await native.canvas.save(inst.docId, doc);
+    await editCanvasFile(inst.docId, (doc) => {
+      const src = doc.nodes?.find((n) => n.id === inst.node.id);
+      if (!src) return false;
+      const title = NODE_TYPES[src.type].title(src);
+      let changed = false;
+      for (const e of doc.edges || []) {
+        if (!e.relay || e.from !== src.id || e.to === src.id) continue;
+        const t = doc.nodes.find((n) => n.id === e.to);
+        if (!t || !RELAY_TYPES.includes(t.type)) continue;
+        t.data = { ...t.data, pendingRelay: [...(t.data.pendingRelay || []), { text: `${e.relay.note || relayLabel(title)}\n\n${answer}`, attachments: [], relay: { from: src.id, title, depth, chain } }] };
+        changed = true;
+      }
+      return changed;
+    });
   } catch (e) { console.error('relay', e); }
 }
 // passes that arrived while this window's canvas was closed
@@ -1286,7 +1287,7 @@ class AgentChatInstance {
     if (this.running !== reqId) return;
     if (snap) { asst.snap = snap; this.view.setData(this.node.id, { messages: [...all] }); } // kept for a run picked up after a restart
     this.listen(reqId, all, asst);
-    await native.agentChat.run({ reqId, kind: this.kind, cmd: this.agent.cmd || this.kind, prompt, sessionId: this.node.data.sessionId, mode: this.modeSel.value, model: this.node.data.model || '', effort: this.node.data.effort || '', cwd: this.cwd, attachments: [...attachments, ...ctxAtts], nodeId: this.node.id, docId: this.docId, keepRunning: state.settings.agentsKeepRunning !== false });
+    await native.agentChat.run({ reqId, kind: this.kind, cmd: this.agent.cmd || this.kind, prompt, sessionId: this.node.data.sessionId, mode: this.modeSel.value, model: this.node.data.model || '', effort: this.node.data.effort || '', cwd: this.cwd, attachments: [...attachments, ...ctxAtts], nodeId: this.node.id, docId: this.docId, keepRunning: state.settings.agentsKeepRunning !== false, canvasTools: state.settings.canvasTools !== false });
   }
 
   // events of a run → the answer; also replays a run picked up after a restart (reattach)

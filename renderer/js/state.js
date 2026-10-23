@@ -5,6 +5,25 @@ import { mergeDocs } from './merge.js';
 
 export const native = window.native || mockNative;
 
+// A canvas that is not on screen is edited in its file (an agent that keeps working after the user
+// went to another canvas): one load → change → save at a time per canvas, so two writers (the
+// answer being saved, the agent's canvas tools, a passed answer) never overwrite each other.
+// fn(doc) changes doc in place; returning false skips the save. → what fn returned
+const fileQueue = new Map();
+export function editCanvasFile(id, fn) {
+  const run = (fileQueue.get(id) || Promise.resolve()).then(async () => {
+    const doc = await native.canvas.load(id);
+    if (!doc) throw new Error('Холст не найден');
+    const r = await fn(doc);
+    if (r !== false) await native.canvas.save(id, doc);
+    return r;
+  });
+  const tail = run.catch(() => {});
+  fileQueue.set(id, tail);
+  tail.then(() => { if (fileQueue.get(id) === tail) fileQueue.delete(id); });
+  return run;
+}
+
 export const DEFAULT_AGENTS = [
   { id: 'codex', name: 'Codex', cmd: 'codex', args: '', resumeArgs: 'resume --last', chat: 'codex', mono: 'Cx', color: '#5b7cfa', limitKey: 'codex', install: 'npm i -g @openai/codex' },
   { id: 'claude', name: 'Claude Code', cmd: 'claude', args: '', resumeArgs: '--continue', chat: 'claude', mono: 'Cl', color: '#d9825b', limitKey: 'claude', install: 'npm i -g @anthropic-ai/claude-code' },

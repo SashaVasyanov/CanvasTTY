@@ -83,6 +83,7 @@ async function describe(view, n, images, depth = 0) {
       case 'shape': return n.data.text ? `${hh} Фигура\n${n.data.text}` : '';
       case 'text': { const s = htmlText(n.data.html); return s.trim() ? `${hh} Текст\n${s}` : ''; }
       case 'image': {
+        if (!images) return `${hh} Картинка «${t}»`;
         if (images.length >= MAX_IMAGES) return `${hh} Картинка «${t}» (не приложена: больше ${MAX_IMAGES} картинок)`;
         images.push(n);
         return `${hh} Картинка «${t}» — приложена к сообщению`;
@@ -115,6 +116,9 @@ async function describe(view, n, images, depth = 0) {
     }
   } catch { return ''; }
 }
+
+// one object as text for the agents' canvas tools (renderer/js/canvasTools.js); pictures are not sent
+export const describeObject = (view, n) => describe(view, n, null, 0);
 
 // text + pictures of a set of objects (objects inside an area that is also in the set come once)
 export async function collect(view, nodes) {

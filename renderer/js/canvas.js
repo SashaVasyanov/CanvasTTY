@@ -580,10 +580,10 @@ export class CanvasView extends Emitter {
     this.changed();
   }
 
-  addEdge(from, to, extra = {}) {
+  addEdge(from, to, extra = {}, { checkpoint = true } = {}) {
     if (from === to) return;
     if (this.doc.edges.some((e) => e.from === from && e.to === to)) return;
-    this.checkpoint();
+    if (checkpoint) this.checkpoint();
     const e = { id: uid('e'), from, to, arrow: true, ...extra };
     this.doc.edges.push(e);
     this.renderEdges();

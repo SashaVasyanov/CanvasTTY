@@ -1,11 +1,14 @@
 #!/usr/bin/env node
 // MCP server (stdio) that lets the agents in VibeTabula chat windows search and read the
 // user's previous conversations: VibeTabula chat history plus Claude Code and Codex sessions.
+// With VT_CANVAS_PIPE / VT_CANVAS_TOKEN (setting «Инструменты холста для агентов») it also has
+// canvas tools: they go to the running app (main/canvas-bridge.js), the token picks the canvas.
 // Started by VibeTabula itself (Electron binary with ELECTRON_RUN_AS_NODE=1).
 const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
 const { HistoryStore, listSessions, readSession, sessionFiles } = require('./history');
+const { call: canvasCall } = require('./canvas-bridge');
 
 const store = new HistoryStore(path.join(process.env.CANVASTTY_USERDATA || '.', 'chats'), { readOnly: true });
 const SOURCES = ['vibetabula', 'claude', 'codex'];
@@ -110,6 +113,60 @@ const TOOLS = [
 ];
 const HANDLERS = { search_chats: search, read_chat: read, list_chats: list };
 
+// ---------------- canvas ----------------
+const CANVAS_PIPE = process.env.VT_CANVAS_PIPE, CANVAS_TOKEN = process.env.VT_CANVAS_TOKEN;
+const COLORS = ['yellow', 'green', 'blue', 'orange', 'red', 'pink', 'purple', 'gray'];
+const PLACE = {
+  near: { type: 'string', description: 'Id of an object to put it next to. Default: next to your own chat window.' },
+  area: { type: 'string', description: 'Id of an area to put it inside (the area grows if needed).' },
+};
+const CANVAS_TOOLS = [
+  {
+    name: 'canvas_list_objects',
+    description: "List the objects on the user's VibeTabula canvas — the infinite whiteboard your chat window is on: id, type, title, position and size, the area each one is in, arrows. Nearest to your window first; your own window is shown first. Call it before adding things so you can place and connect them sensibly.",
+    inputSchema: { type: 'object', properties: { type: { type: 'string', description: 'Only this type: sticky, note, text, frame (area), shape, image, agentchat, chat, terminal, web, widget' }, limit: { type: 'number', default: 80 } } },
+  },
+  {
+    name: 'canvas_read_object',
+    description: 'Read the content of one canvas object: the text of a sticky, text or shape, the markdown of a note, the last answer of a chat window, what is inside an area.',
+    inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
+  },
+  {
+    name: 'canvas_create_sticky',
+    description: 'Add a sticky note (short text, a few lines) to the canvas. Good for ideas, steps of a plan, tasks, questions. Returns its id.',
+    inputSchema: { type: 'object', properties: { text: { type: 'string' }, color: { type: 'string', enum: COLORS, default: 'yellow' }, ...PLACE }, required: ['text'] },
+  },
+  {
+    name: 'canvas_create_note',
+    description: "Add a note — a Markdown document saved in the user's notes folder and shown as a window on the canvas. Use it for longer texts: a plan, a spec, a summary. Returns its id.",
+    inputSchema: { type: 'object', properties: { title: { type: 'string' }, markdown: { type: 'string' }, ...PLACE }, required: ['title', 'markdown'] },
+  },
+  {
+    name: 'canvas_create_text',
+    description: 'Add a free text label to the canvas (a heading or a caption, no background). Returns its id.',
+    inputSchema: { type: 'object', properties: { text: { type: 'string' }, size: { type: 'number', description: 'Font size in px, 12–96', default: 20 }, ...PLACE }, required: ['text'] },
+  },
+  {
+    name: 'canvas_create_area',
+    description: 'Add an area (a titled frame that groups objects). With objects: the area is drawn around those objects. Without: an empty area next to your window — then add objects into it with their area parameter. Returns its id.',
+    inputSchema: { type: 'object', properties: { title: { type: 'string' }, objects: { type: 'array', items: { type: 'string' }, description: 'Ids of objects to put inside' }, color: { type: 'string', enum: COLORS, default: 'blue' }, width: { type: 'number' }, height: { type: 'number' }, near: PLACE.near }, required: ['title'] },
+  },
+  {
+    name: 'canvas_connect',
+    description: 'Draw an arrow from one canvas object to another, optionally with a short label. An arrow into a chat window makes the object part of that chat\'s context.',
+    inputSchema: { type: 'object', properties: { from: { type: 'string' }, to: { type: 'string' }, label: { type: 'string' } }, required: ['from', 'to'] },
+  },
+  {
+    name: 'canvas_update_text',
+    description: 'Replace the text of an object you added yourself from this chat window (sticky, text, shape, area title, or the whole markdown of a note). Objects of the user or of other chats cannot be changed.',
+    inputSchema: { type: 'object', properties: { id: { type: 'string' }, text: { type: 'string' } }, required: ['id', 'text'] },
+  },
+];
+if (CANVAS_PIPE && CANVAS_TOKEN) {
+  TOOLS.push(...CANVAS_TOOLS);
+  for (const t of CANVAS_TOOLS) HANDLERS[t.name] = async (args) => String(await canvasCall(CANVAS_PIPE, CANVAS_TOKEN, t.name.replace(/^canvas_/, ''), args));
+}
+
 const send = (msg) => process.stdout.write(JSON.stringify(msg) + '\n');
 const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
 rl.on('line', async (line) => {
@@ -122,7 +179,7 @@ rl.on('line', async (line) => {
     if (method === 'initialize') reply({ protocolVersion: params?.protocolVersion || '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'vibetabula-history', version: '1.0.0' } });
     else if (method === 'tools/list') reply({ tools: TOOLS });
     else if (method === 'tools/call') {
-      const fn = HANDLERS[params?.name];
+      const fn = Object.hasOwn(HANDLERS, params?.name || '') ? HANDLERS[params.name] : null;
       if (!fn) { reply({ content: [{ type: 'text', text: `Нет инструмента ${params?.name}` }], isError: true }); return; }
       try { reply({ content: [{ type: 'text', text: await fn(params.arguments || {}) }] }); }
       catch (e) { reply({ content: [{ type: 'text', text: `Ошибка: ${e.message || e}` }], isError: true }); }

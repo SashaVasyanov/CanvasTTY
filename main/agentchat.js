@@ -11,6 +11,7 @@ const os = require('os');
 // a folder from another computer (synced canvas) may not exist here
 const safeCwd = (d) => { try { if (d && require('fs').statSync(d).isDirectory()) return d; } catch {} return os.homedir(); };
 const fs = require('fs');
+const crypto = require('crypto');
 
 const isWin = process.platform === 'win32';
 
@@ -58,6 +59,10 @@ function toolSummary(name, input) {
 // list_chats), so "find it in my old chats" works from a chat window.
 const HISTORY_TOOLS = ['mcp__vibetabula__search_chats', 'mcp__vibetabula__read_chat', 'mcp__vibetabula__list_chats'];
 const HISTORY_HINT = 'You run inside VibeTabula. Tools mcp__vibetabula__search_chats, read_chat and list_chats search and read the user\'s previous conversations (VibeTabula chats and Claude Code / Codex sessions on this computer). Use them whenever the user refers to an earlier chat.';
+// With the setting «Инструменты холста для агентов» the same server also gets canvas tools for
+// this run (main/canvas-bridge.js, renderer/js/canvasTools.js); the run's token picks the canvas.
+const CANVAS_TOOLS = ['canvas_list_objects', 'canvas_read_object', 'canvas_create_sticky', 'canvas_create_note', 'canvas_create_text', 'canvas_create_area', 'canvas_connect', 'canvas_update_text'].map((t) => `mcp__vibetabula__${t}`);
+const CANVAS_HINT = ' Your chat window sits on the user\'s VibeTabula canvas (an infinite whiteboard). Tools mcp__vibetabula__canvas_* list and read its objects and add stickies, notes, text, areas and arrows next to your window. Use them when the user asks to put something on the canvas (a plan, ideas, a breakdown, a diagram) or talks about objects on it; read before you add. You can edit only objects you added and cannot delete anything.';
 
 class AgentChatManager {
   constructor({ send, ptys, userData, attachments }) {
@@ -67,6 +72,8 @@ class AgentChatManager {
     this.userData = userData;
     this.runs = new Map(); // reqId → run (also finished ones, until the renderer releases them)
     this.runsDir = userData ? path.join(userData, 'agent-runs') : null;
+    this.canvasPipe = null; // set by main.js once the canvas bridge listens
+    this.tokenDirs = new Map(); // canvas token → journal folder of a run the app does not follow
     this.ticker = null;
     // journal folder → state of runs no window follows (see background()); taken now, so a run that
     // finishes in the first seconds after the start is reported too
@@ -85,23 +92,60 @@ class AgentChatManager {
     return `${prompt || 'Посмотри приложенные файлы.'}\n\n${hint}\n${files.map((f) => `- ${f.abs}  (${f.name})`).join('\n')}`;
   }
 
-  historyServer() {
+  canvasOn(opts) { return !!(opts && opts.canvasToken && this.canvasPipe); }
+  historyServer(opts = {}) {
     const env = { ELECTRON_RUN_AS_NODE: '1', CANVASTTY_USERDATA: this.userData || '', HOME: os.homedir(), USERPROFILE: os.homedir() };
     if (process.env.CLAUDE_CONFIG_DIR) env.CLAUDE_CONFIG_DIR = process.env.CLAUDE_CONFIG_DIR;
     if (process.env.CODEX_HOME) env.CODEX_HOME = process.env.CODEX_HOME;
+    if (this.canvasOn(opts)) { env.VT_CANVAS_PIPE = this.canvasPipe; env.VT_CANVAS_TOKEN = opts.canvasToken; }
     return { command: process.execPath, args: [path.join(__dirname, 'mcp-history.js')], env };
   }
-  claudeMcpConfig() {
+  // a run with canvas tools gets its own config (its token); journal: a replayed run already has it
+  claudeMcpConfig(opts = {}, journal = null) {
     if (!this.userData) return null;
-    const file = path.join(this.userData, 'mcp-vibetabula.json');
-    try { fs.writeFileSync(file, JSON.stringify({ mcpServers: { vibetabula: { type: 'stdio', ...this.historyServer() } } }, null, 1)); return file; } catch { return null; }
+    const own = this.canvasOn(opts);
+    const file = own ? path.join(this.userData, 'mcp-runs', `${opts.canvasToken}.json`) : path.join(this.userData, 'mcp-vibetabula.json');
+    if (journal) return file;
+    try {
+      if (own) fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, JSON.stringify({ mcpServers: { vibetabula: { type: 'stdio', ...this.historyServer(opts) } } }, null, 1));
+      return file;
+    } catch { return null; }
   }
-  codexMcpArgs(approve = true) {
-    const srv = this.historyServer();
+  // the run is over: its token stops working, its config goes
+  dropCanvasToken(opts) {
+    const t = opts && opts.canvasToken;
+    if (!t || !this.userData) return;
+    this.tokenDirs.delete(t);
+    try { fs.unlinkSync(path.join(this.userData, 'mcp-runs', `${t}.json`)); } catch {}
+  }
+  // the canvas behind a token: the chat window (node) and its canvas (doc) of a run still going
+  canvasTarget(token) {
+    if (typeof token !== 'string' || !/^[a-f0-9]{32}$/.test(token)) return null;
+    const target = (m) => ({ nodeId: m.nodeId, docId: m.docId, run: token.slice(0, 12) });
+    for (const run of this.runs.values()) if (!run.closed && run.meta.opts && run.meta.opts.canvasToken === token) return target(run.meta);
+    // a run the app does not follow (started before a restart, its window not shown yet)
+    let dir = this.tokenDirs.get(token);
+    if (!dir && this.runsDir) {
+      for (const name of this.journalNames()) {
+        const d = path.join(this.runsDir, name);
+        const m = readJson(path.join(d, 'meta.json'));
+        if (m && m.opts && m.opts.canvasToken === token) { dir = d; this.tokenDirs.set(token, d); break; }
+      }
+    }
+    if (!dir) return null;
+    const m = readJson(path.join(dir, 'meta.json'));
+    if (!m || !m.nodeId || !m.docId || fs.existsSync(path.join(dir, 'exit.json')) || !pidAlive(m.pid)) return null;
+    if ([...this.runs.values()].some((r) => r.dir === dir && r.closed)) return null;
+    return target(m);
+  }
+  codexMcpArgs(approve = true, opts = {}) {
+    const srv = this.historyServer(opts);
     const lit = (v) => `'${String(v).replace(/'/g, '')}'`; // TOML literal string
     const env = Object.entries(srv.env).map(([k, v]) => `${k}=${lit(v)}`).join(',');
     // codex exec runs with approval policy "never": a tool that needs approval is cancelled at once.
-    // The history tools only read saved chats, so they are approved up front.
+    // The history tools only read saved chats and the canvas tools only add objects to the canvas
+    // (one Ctrl+Z removes them, nothing is deleted), so they are approved up front.
     return ['-c', `mcp_servers.vibetabula.command=${lit(srv.command)}`, '-c', `mcp_servers.vibetabula.args=[${srv.args.map(lit).join(',')}]`, '-c', `mcp_servers.vibetabula.env={${env}}`, ...(approve ? ['-c', `mcp_servers.vibetabula.default_tools_approval_mode='approve'`] : [])];
   }
 
@@ -200,6 +244,7 @@ class AgentChatManager {
   close(run, code, extra = {}) {
     if (run.closed) return;
     run.closed = true;
+    this.dropCanvasToken(run.meta.opts); // a retry (onClose below) writes a new config for its run
     if (run.meta.quit && !run.aborted) extra = { lost: true }; // stopped by quitting the app: broke off
     for (const t of run.timers) clearInterval(t);
     const rest = (run.buf + run.decoder.end()).trim(); run.buf = '';
@@ -267,6 +312,11 @@ class AgentChatManager {
       const age = now - (ended || mtimeOf(dir) || now);
       if (age > JOURNAL_DAYS * 86400e3) this.removeJournal(dir);
     }
+    // configs of runs that ended while the app was closed
+    const cfgDir = this.userData && path.join(this.userData, 'mcp-runs');
+    let cfgs = [];
+    try { cfgs = fs.readdirSync(cfgDir); } catch {}
+    for (const name of cfgs) { const f = path.join(cfgDir, name); if (now - (mtimeOf(f) || now) > JOURNAL_DAYS * 86400e3) { try { fs.unlinkSync(f); } catch {} } }
   }
   // Runs no chat window follows right now: their canvas is not open (the app was restarted, or the
   // run was started before a reload). «Ждут вас» shows the finished ones; state is 'running',
@@ -322,6 +372,8 @@ class AgentChatManager {
       emit('error', { message: 'Запуск отменён: программа агента не разрешена.' }); emit('done', {}); return;
     }
     opts = { ...opts, kind, cmd };
+    delete opts.canvasToken;
+    if (opts.canvasTools && opts.nodeId && opts.docId && this.canvasPipe) opts.canvasToken = crypto.randomBytes(16).toString('hex');
     const resolved = this.ptys.which(cmd);
     if (!resolved) {
       emit('error', { message: `Команда «${cmd || kind}» не найдена. Установите ${kind === 'claude' ? 'Claude Code: npm i -g @anthropic-ai/claude-code' : 'Codex: npm i -g @openai/codex'} и войдите в аккаунт (запустите её один раз в терминале).` });
@@ -344,8 +396,9 @@ class AgentChatManager {
     const files = this.attachedFiles(opts);
     if (files.length) args.push('--add-dir', this.attachments.dir);
     const fullPrompt = this.withFiles(prompt, files, 'Пользователь приложил файлы. Открой их инструментом Read (он читает и картинки, и PDF):');
-    const mcpFile = !opts.noMcp && this.claudeMcpConfig();
-    if (mcpFile) args.push('--mcp-config', mcpFile, '--allowedTools', HISTORY_TOOLS.join(','), '--append-system-prompt', HISTORY_HINT);
+    const mcpFile = !opts.noMcp && this.claudeMcpConfig(opts, journal);
+    const canvas = this.canvasOn(opts);
+    if (mcpFile) args.push('--mcp-config', mcpFile, '--allowedTools', [...HISTORY_TOOLS, ...(canvas ? CANVAS_TOOLS : [])].join(','), '--append-system-prompt', HISTORY_HINT + (canvas ? CANVAS_HINT : ''));
     let gotOutput = false, streamedThisMsg = false, sid = sessionId || null, finished = false;
     const handle = (j) => {
       gotOutput = true;
@@ -409,7 +462,7 @@ class AgentChatManager {
     else args.push('-s', mode === 'read' ? 'read-only' : 'workspace-write');
     if (model) args.push('-m', model);
     if (opts.effort) args.push('-c', `model_reasoning_effort=${opts.effort}`);
-    if (!opts.noMcp && this.userData) args.push(...this.codexMcpArgs(!opts.noMcpApprove));
+    if (!opts.noMcp && this.userData) args.push(...this.codexMcpArgs(!opts.noMcpApprove, opts));
     const files = this.attachedFiles(opts);
     const resuming = !!(sessionId && withResume);
     // new sessions get images directly; a resumed session looks at them with view_image

@@ -117,6 +117,13 @@ export const mockNative = {
     restore: async (o) => { (window.__mockChanges ||= {}).restores = [...(window.__mockChanges.restores || []), o]; return window.__mockChanges.restoreResult?.(o) || { done: o.files, skipped: [] }; },
     reveal: async (o) => { (window.__mockChanges ||= {}).revealed = o; return true; },
   },
+  // the agents' canvas tools: tests call window.__canvasCall({ nodeId, docId, run }, op, args) → { result } | { error }
+  canvasTools: (() => {
+    const waiting = new Map();
+    let n = 0;
+    window.__canvasCall = (target, op, args = {}) => new Promise((resolve) => { const id = ++n; waiting.set(id, resolve); emit('canvastools:request', { id, ...target, op, args }); });
+    return { onRequest: on('canvastools:request'), reply: (id, r) => { waiting.get(id)?.(r); waiting.delete(id); } };
+  })(),
   // separate copies for agents: tests set window.__mockWt = { status, preview, merge, remove(opts) }
   wt: (() => {
     const log = (k, v) => { (window.__wtCalls ||= []).push([k, v]); };

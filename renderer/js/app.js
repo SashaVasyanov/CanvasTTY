@@ -11,6 +11,7 @@ import { Sidebar, NotePanel, openGraph } from './notes.js';
 import { setFpsMeter, toggleFpsMeter, runPerfTest } from './perf.js';
 import { AgentWatch, Companion, loadCodexPets, codexPetFor } from './companion.js';
 import { inbox, INBOX_KINDS, badgeOf, ago, projectOf } from './inbox.js';
+import { bindCanvasTools } from './canvasTools.js';
 import { limits, limitsPanel, petSvg, LIMIT_SOURCES, PETS, openPetPicker, openPetCatalog, CLOCK_PRESETS, CLOCK_DEFAULT, clockColors, paintClock, clockMarkup } from './hub.js';
 
 const VERSION = '1.4.0';
@@ -44,6 +45,7 @@ class App {
     setInterval(() => this.canvas.refreshStatuses(), 1000);
     if (localStorage.getItem('sidebar') === '1') this.toggleSidebar(true);
     this.bindInbox();
+    bindCanvasTools(this.canvas);
     document.getElementById('boot')?.remove();
   }
 
@@ -956,11 +958,16 @@ class App {
       keep.onchange = () => state.setSetting('agentsKeepRunning', keep.checked);
       const notify = h('input', { type: 'checkbox', class: 'switch' }); notify.checked = s.notifyAgents !== false;
       notify.onchange = () => state.setSetting('notifyAgents', notify.checked);
+      // the agents see and add to the canvas of their window (renderer/js/canvasTools.js)
+      const tools = h('input', { type: 'checkbox', class: 'switch' }); tools.checked = s.canvasTools !== false;
+      tools.onchange = () => state.setSetting('canvasTools', tools.checked);
       wrap.append(h('h3', {}, 'Окна чатов с агентами'),
         h('div', { class: 'set-row' }, h('div', {}, h('div', { class: 'set-label' }, 'Уведомлять, когда агент закончил'),
           h('div', { class: 'muted small' }, 'Системное уведомление и мигающая кнопка на панели задач, если VibeTabula не в фокусе. Список таких чатов — колокольчик «Ждут вас» вверху.')), notify),
         h('div', { class: 'set-row' }, h('div', {}, h('div', { class: 'set-label' }, 'Агент продолжает работать после закрытия приложения'),
-          h('div', { class: 'muted small' }, 'Ответ дописывается в фоне и появляется в окне чата при следующем запуске. Если выключить, закрытие приложения останавливает агента, а в чате появляется кнопка «Продолжить».')), keep));
+          h('div', { class: 'muted small' }, 'Ответ дописывается в фоне и появляется в окне чата при следующем запуске. Если выключить, закрытие приложения останавливает агента, а в чате появляется кнопка «Продолжить».')), keep),
+        h('div', { class: 'set-row' }, h('div', {}, h('div', { class: 'set-label' }, 'Инструменты холста для агентов'),
+          h('div', { class: 'muted small' }, 'Агент видит объекты холста своего окна и может добавить рядом стикеры, заметки, текст, области и стрелки — например разложить план по шагам. Менять он может только то, что добавил сам, удалять — ничего; всё добавленное за один ответ убирается одним Ctrl+Z. Действует со следующего сообщения.')), tools));
     };
     render();
     return wrap;

@@ -9,10 +9,13 @@
 //   gate      waiting scenarios (reconnect, slow) go on once <state>/release-<cli> exists (app.release())
 // <state> is FAKE_CLI_STATE (set by tests/electron/fixtures.mjs), else the OS temp folder.
 //
-// codex:  basic | images | edit | reconnect | fail | crash | slow | stale | old-mcp | mcp
-// claude: basic | denied | crash | slow | stale | old | mcp
+// codex:  basic | images | edit | reconnect | fail | crash | slow | stale | old-mcp | mcp | canvas | canvas-wait
+// claude: basic | denied | crash | slow | stale | old | mcp | canvas
 // "mcp" starts the chat-history MCP server the app passes (claude: --mcp-config file, codex: -c
 // mcp_servers.vibetabula.*) and calls search_chats with the user's words, like the agents do.
+// "canvas" uses the canvas tools of that server: lists the canvas, adds two stickies (the first
+// with the user's words), joins them with an arrow and answers with what the tools said;
+// "canvas-wait" does that once the test releases it (app.release('codex')).
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -104,6 +107,66 @@ function mcpCall(server, tool, args) {
   });
 }
 
+// one MCP session with several calls: → { call(tool, args) → { text, isError }, close() }
+function mcpSession(server) {
+  const p = spawn(server.command, server.args || [], { env: { ...process.env, ...(server.env || {}) }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+  const pending = new Map();
+  let buf = '';
+  let err = '';
+  let seq = 0;
+  p.stderr.on('data', (d) => { err += d; });
+  p.stdout.setEncoding('utf8');
+  p.stdout.on('data', (d) => {
+    buf += d;
+    let i;
+    while ((i = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, i);
+      buf = buf.slice(i + 1);
+      let m;
+      try { m = JSON.parse(line); } catch (e) { continue; }
+      const w = pending.get(m.id);
+      if (w) { pending.delete(m.id); clearTimeout(w.timer); w.resolve(m); }
+    }
+  });
+  const send = (m) => p.stdin.write(JSON.stringify({ jsonrpc: '2.0', ...m }) + '\n');
+  const rpc = (method, params) => new Promise((resolve, reject) => {
+    const id = ++seq;
+    const timer = setTimeout(() => { pending.delete(id); reject(new Error(`MCP-сервер не ответил на ${method}: ${err}`)); }, 25000);
+    pending.set(id, { resolve, timer });
+    send({ id, method, params });
+  });
+  const ready = rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'fake-cli', version: '1.0.0' } }).then(() => send({ method: 'notifications/initialized' }));
+  return {
+    async tools() { await ready; return (await rpc('tools/list', {})).result.tools.map((t) => t.name); },
+    async call(tool, args) {
+      await ready;
+      const m = await rpc('tools/call', { name: tool, arguments: args });
+      if (m.error) return { text: m.error.message, isError: true };
+      return { text: (m.result.content || []).map((c) => c.text).join('\n'), isError: !!m.result.isError };
+    },
+    close() { try { p.stdin.end(); p.kill(); } catch (e) { /* gone */ } },
+  };
+}
+
+// what a real agent does with the canvas tools for "разложи план": look, add two steps, join them
+async function canvasPlan(server, said, onTool) {
+  const s = mcpSession(server);
+  const lines = [];
+  try {
+    const tools = await s.tools();
+    if (!tools.includes('canvas_create_sticky')) return { ok: false, text: `нет инструментов холста: ${tools.join(', ')}` };
+    const step = async (tool, args) => { const r = await s.call(tool, args); onTool(tool, r); lines.push(`${tool}: ${r.isError ? 'ОШИБКА ' : ''}${r.text}`); return r; };
+    await step('canvas_list_objects', {});
+    const a = await step('canvas_create_sticky', { text: `Шаг 1: ${said}`, color: 'green' });
+    const b = await step('canvas_create_sticky', { text: 'Шаг 2: проверить' });
+    const id = (r) => (/\[([a-z]{2}_[a-z0-9]+)\]/.exec(r.text) || [])[1];
+    if (id(a) && id(b)) await step('canvas_connect', { from: id(a), to: id(b), label: 'затем' });
+    return { ok: true, text: lines.join('\n') };
+  } catch (e) {
+    return { ok: false, text: String(e.message || e) };
+  } finally { s.close(); }
+}
+
 // codex -c mcp_servers.vibetabula.command='…' -c …args=['…'] -c …env={K='v',…} (TOML literal strings)
 function codexMcpServer(argv) {
   const conf = {};
@@ -178,6 +241,23 @@ async function codex(argv, prompt, scenario) {
     out({ type: 'item.completed', item: { id: 'mcp_1', type: 'mcp_tool_call', server: 'vibetabula', tool: 'search_chats', status: 'completed' } });
     return finish(`Нашёл в истории:\n${found}`);
   }
+  if (scenario === 'canvas' || scenario === 'canvas-wait') {
+    const server = codexMcpServer(argv);
+    if (!server) return fail('fake codex: no mcp_servers.vibetabula in -c', 5);
+    // canvas-wait: thinks until the test lets it go on (the app may be restarted meanwhile)
+    if (scenario === 'canvas-wait') {
+      out({ type: 'item.completed', item: { id: 'r_1', type: 'reasoning', text: 'Продумываю план' } });
+      if (!(await gate('codex'))) return fail('fake codex: gate timeout', 4);
+    }
+    let k = 0;
+    const r = await canvasPlan(server, said, (tool, res) => {
+      const id = `mcp_c${++k}`;
+      out({ type: 'item.started', item: { id, type: 'mcp_tool_call', server: 'vibetabula', tool, status: 'in_progress' } });
+      out({ type: 'item.completed', item: { id, type: 'mcp_tool_call', server: 'vibetabula', tool, status: res.isError ? 'failed' : 'completed' } });
+    });
+    if (!r.ok) { out({ type: 'turn.failed', error: { message: r.text } }); process.exitCode = 1; return; }
+    return finish(`Разложил план на холсте.\n${r.text}`);
+  }
   if (scenario === 'images') {
     // Codex saves pictures to ${CODEX_HOME:-~/.codex}/generated_images/<thread>/
     const dir = path.join(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), 'generated_images', tid);
@@ -235,6 +315,25 @@ async function claude(argv, prompt, scenario) {
     out({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'tu_mcp', content: found, is_error: false }] }, ...base });
     out({ type: 'assistant', message: { content: [{ type: 'text', text: 'Нашёл в истории.' }] }, ...base });
     out({ type: 'result', subtype: 'success', is_error: false, result: 'Нашёл в истории.', ...base });
+    return;
+  }
+  if (scenario === 'canvas') {
+    const allowed = String(argAfter(argv, '--allowedTools') || '').split(',');
+    if (!allowed.includes('mcp__vibetabula__canvas_create_sticky')) {
+      out({ type: 'result', subtype: 'success', is_error: false, result: 'Нет прав на инструменты холста.', permission_denials: [{ tool_name: 'mcp__vibetabula__canvas_create_sticky' }], ...base });
+      return;
+    }
+    let k = 0;
+    const server = JSON.parse(fs.readFileSync(argAfter(argv, '--mcp-config'), 'utf8')).mcpServers.vibetabula;
+    const r = await canvasPlan(server, said, (tool, res) => {
+      const id = `tu_c${++k}`;
+      out({ type: 'assistant', message: { content: [{ type: 'tool_use', id, name: `mcp__vibetabula__${tool}`, input: {} }] }, ...base });
+      out({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id, content: res.text, is_error: res.isError }] }, ...base });
+    });
+    if (!r.ok) { out({ type: 'result', subtype: 'error_during_execution', is_error: true, result: r.text, ...base }); return; }
+    const text = `Разложил план на холсте.\n${r.text}`;
+    out({ type: 'assistant', message: { content: [{ type: 'text', text }] }, ...base });
+    out({ type: 'result', subtype: 'success', is_error: false, result: text, ...base });
     return;
   }
   streamText('Смотрю файлы.');
