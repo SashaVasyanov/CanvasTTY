@@ -105,6 +105,13 @@ async function until(fn, ms = 15000) {
   throw new Error('timeout');
 }
 const runJson = (m, reqId) => JSON.parse(fs.readFileSync(path.join(m.runs.get(reqId).dir, 'run.json'), 'utf8'));
+// the CLI's arguments; on Windows the .cmd shim runs as cmd.exe /d /s /c "<whole line>"
+function cliArgs(m, reqId) {
+  const run = runJson(m, reqId);
+  if (!run.verbatim) return run.args;
+  const line = run.args[3].replace(/^"|"$/g, '');
+  return [...line.matchAll(/"((?:[^"]|"")*)"|(\S+)/g)].map((x) => (x[1] !== undefined ? x[1].replace(/""/g, '"') : x[2])).slice(1);
+}
 const doneOf = (m, reqId) => m.events.find((e) => e.reqId === reqId && e.type === 'done');
 
 test('Codex: у запуска свой токен, он ведёт к окну и холсту, пока агент работает, и после перезапуска приложения', async () => {
@@ -113,7 +120,7 @@ test('Codex: у запуска свой токен, он ведёт к окну 
   await m.run({ reqId: 'r1', kind: 'codex', cmd: 'codex', prompt: 'разложи план', cwd: tmp, nodeId: 'win-1', docId: 'doc-1', canvasTools: true, canvasToken: 'подставной' });
   const token = m.runs.get('r1').meta.opts.canvasToken;
   assert.match(token, /^[a-f0-9]{32}$/, 'токен выдаёт приложение, а не окно');
-  const env = runJson(m, 'r1').args.find((a) => a.startsWith('mcp_servers.vibetabula.env='));
+  const env = cliArgs(m, 'r1').find((a) => a.startsWith('mcp_servers.vibetabula.env='));
   assert.match(env, new RegExp(`VT_CANVAS_PIPE='test-pipe'.*VT_CANVAS_TOKEN='${token}'`));
   assert.deepEqual(m.canvasTarget(token), { nodeId: 'win-1', docId: 'doc-1', run: token.slice(0, 12) });
   assert.equal(m.canvasTarget('c'.repeat(32)), null);
@@ -131,14 +138,14 @@ test('Codex: у запуска свой токен, он ведёт к окну 
   process.env.FAKE_STEPS = '1'; process.env.FAKE_GAP = '20';
   await second.run({ reqId: 'r3', kind: 'codex', cmd: 'codex', prompt: 'привет', cwd: tmp, nodeId: 'win-1', docId: 'doc-1' });
   assert.equal(second.runs.get('r3').meta.opts.canvasToken, undefined);
-  assert.doesNotMatch(runJson(second, 'r3').args.join(' '), /VT_CANVAS/);
+  assert.doesNotMatch(cliArgs(second, 'r3').join(' '), /VT_CANVAS/);
 });
 
 test('Claude Code: свой конфиг MCP с токеном и разрешёнными инструментами холста, удаляется после ответа', async () => {
   const m = manager();
   await m.run({ reqId: 'c1', kind: 'claude', cmd: 'claude', prompt: 'привет', cwd: tmp, nodeId: 'win-2', docId: 'doc-2', canvasTools: true });
   const token = m.runs.get('c1').meta.opts.canvasToken;
-  const args = runJson(m, 'c1').args;
+  const args = cliArgs(m, 'c1');
   const cfg = args[args.indexOf('--mcp-config') + 1];
   assert.equal(path.basename(cfg), `${token}.json`);
   const server = JSON.parse(fs.readFileSync(cfg, 'utf8')).mcpServers.vibetabula;
