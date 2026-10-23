@@ -1,5 +1,5 @@
 // Node type definitions for the canvas.
-import { h, icon, badge, esc, bus, toast, prompt, confirmBox, debounce, throttle, uid, readFileAsDataURL, keyName } from './util.js';
+import { h, icon, badge, esc, bus, toast, prompt, confirmBox, menu, modal, debounce, throttle, uid, readFileAsDataURL, keyName } from './util.js';
 import { cssColor, wantsWhiteText, BAR_COLORS, OBJECT_COLORS, STICKY_COLORS } from './pentools.js';
 import { sanitizeHtml, htmlText } from './sanitize.js';
 import { WIDGETS, mountWidget } from './widgets.js';
@@ -820,7 +820,8 @@ class AgentChatInstance {
     const field = (label, ctrl) => h('label', { class: 'bar-field' }, h('span', { class: 'bar-label' }, label), ctrl);
     this.bar = h('div', { class: 'chat-bar agent-bar' },
       field('Модель', this.modelSel), field('Размышление', this.effortSel), field('Доступ', this.modeSel), this.newBtn);
-    this.infoBar = h('div', { class: 'agent-info' }, this.cwdBtn, this.modelInfo);
+    this.wtChip = h('button', { class: 'wt-chip no-drag', hidden: true, onclick: (e) => { e.stopPropagation(); this.worktreeMenu(e.currentTarget); } });
+    this.infoBar = h('div', { class: 'agent-info' }, this.wtChip, this.cwdBtn, this.modelInfo);
     this.list = h('div', { class: 'chat-list scrollable' });
     this.ctxRow = h('div', { class: 'chat-ctx' });
     this.input = h('textarea', { class: 'chat-input', rows: 2, placeholder: 'Задача для агента… (Enter — отправить, Shift+Enter — новая строка)' });
@@ -859,6 +860,7 @@ class AgentChatInstance {
     this.renderCtx();
     this.syncRunUi();
     this.reattach();
+    if (this.node.data.worktree) this.refreshWorktree();
   }
 
   // An answer saved as "running" while no run of this app owns it: the app was closed or reloaded
@@ -889,7 +891,99 @@ class AgentChatInstance {
   get agent() { return state.agent(this.node.data.agentId); }
   get kind() { return this.node.data.kind || this.agent.chat || 'claude'; }
   get messages() { return this.node.data.messages || []; }
-  get cwd() { return this.node.data.cwd || state.project.cwd || state.info.home; }
+  // in a separate copy (git worktree) the agent works in the copy's folder
+  get cwd() { const w = this.node.data.worktree; return (w?.cwd && this.wtStatus?.exists !== false && w.cwd) || this.node.data.cwd || state.project.cwd || state.info.home; }
+
+  // ---------------- separate copy of the project (main/worktrees.js) ----------------
+  async refreshWorktree() {
+    const w = this.node.data.worktree;
+    if (!w || !native.wt) { this.wtStatus = null; this.wtChip.hidden = true; this.renderCwd(); return; }
+    try { this.wtStatus = await native.wt.status(w); } catch { this.wtStatus = { exists: false }; }
+    const st = this.wtStatus;
+    const bits = !st.exists ? ['копии нет на этом компьютере'] : st.merged && !st.dirty ? ['влито'] : [
+      st.ahead ? `${st.ahead} ${st.ahead % 10 === 1 && st.ahead % 100 !== 11 ? 'коммит' : st.ahead % 10 >= 2 && st.ahead % 10 <= 4 && (st.ahead % 100 < 10 || st.ahead % 100 >= 20) ? 'коммита' : 'коммитов'}` : '',
+      st.dirty ? `${st.dirty} ${filesWord(st.dirty)} без коммита` : '',
+    ].filter(Boolean);
+    this.wtChip.replaceChildren(h('span', { html: icon('branch', 12) }), h('span', { class: 'wt-branch' }, w.branch.replace(/^vibetabula\//, '')), bits.length ? h('span', { class: 'wt-bits' }, bits.join(' · ')) : null);
+    this.wtChip.title = `Агент работает в отдельной копии проекта\nВетка: ${w.branch}\nПапка: ${w.path}${st.into ? `\nВливается в: ${st.into}` : ''}\n\nНажмите для действий`;
+    this.wtChip.classList.toggle('missing', !st.exists);
+    this.wtChip.hidden = false;
+    this.renderCwd();
+  }
+  worktreeMenu(anchor) {
+    const r = anchor.getBoundingClientRect();
+    menu(this.worktreeItems(), r.left, r.bottom + 4);
+  }
+  worktreeItems() {
+    const w = this.node.data.worktree, st = this.wtStatus || {};
+    if (!w) return [{ label: 'Работать в отдельной копии (git worktree)…', icon: 'branch', onClick: () => this.enableWorktree() }];
+    if (!st.exists) return [{ label: 'Убрать копию из окна', icon: 'x', onClick: () => this.removeWorktree() }];
+    return [
+      { label: 'Изменения копии', icon: 'diff', onClick: () => this.showWorktreeChanges() },
+      { label: `Влить в «${st.into || 'основную ветку'}»…`, icon: 'check', onClick: () => this.mergeWorktree() },
+      { label: 'Открыть папку копии', icon: 'folder', onClick: () => native.shell.openPath(w.path) },
+      { label: 'Удалить копию…', icon: 'trash', onClick: () => this.removeWorktree() },
+    ];
+  }
+  async enableWorktree() {
+    if (this.isBusy()) { toast('Дождитесь, пока агент закончит', 'warn'); return; }
+    const ok = await confirmBox('Работать в отдельной копии проекта?', `Агент получит свою ветку vibetabula/… и свою папку рядом с проектом (git worktree). Ваша папка не меняется, пока вы не нажмёте «Влить». В копию попадает последний коммит — незакоммиченные правки остаются у вас.${this.messages.length ? ' Агент начнёт в копии новую сессию.' : ''}`, 'Создать копию');
+    if (!ok) return;
+    let w;
+    try { w = await native.wt.create({ cwd: this.cwd, name: this.node.data.title || NODE_TYPES.agentchat.title(this.node) }); }
+    catch (e) { toast(String(e.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, ''), 'error'); return; }
+    this.view.setData(this.node.id, { worktree: w, sessionId: null });
+    this.node = this.view.node(this.node.id) || this.node;
+    await this.refreshWorktree();
+    toast(`Копия создана: ветка ${w.branch}`, 'ok');
+  }
+  async showWorktreeChanges(p) {
+    const w = this.node.data.worktree;
+    if (!w) return;
+    if (!p) { try { p = await native.wt.preview(w); } catch (e) { toast(String(e.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, ''), 'error'); return; } }
+    const ex = this.view.doc.nodes.find((n) => n.type === 'diff' && n.data.worktreeOf === this.node.id);
+    if (ex) { this.view.setData(ex.id, { changes: p, title: `Копия: ${w.branch}` }); this.view.focusNode(ex.id); return; }
+    const me = this.view.node(this.node.id);
+    this.view.addNode('diff', { x: me.x + me.w + 60, y: me.y, data: { title: `Копия: ${w.branch}`, changes: p, noRevert: true, worktreeOf: this.node.id } }, { center: false });
+  }
+  async mergeWorktree() {
+    const w = this.node.data.worktree;
+    if (!w) return;
+    if (this.isBusy()) { toast('Дождитесь, пока агент закончит', 'warn'); return; }
+    let p;
+    try { p = await native.wt.preview(w); } catch (e) { toast(String(e.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, ''), 'error'); return; }
+    await this.refreshWorktree();
+    if (!p.files.length) { toast('В копии нет изменений, которых нет у вас'); return; }
+    await this.showWorktreeChanges(p);
+    const into = this.wtStatus?.into || 'основную ветку';
+    const ok = await confirmBox(`Влить изменения агента в «${into}»?`, `${p.files.length} ${filesWord(p.files.length)} — они видны в карточке «Копия». То, что агент не закоммитил, сначала станет коммитом на его ветке. Если изменения конфликтуют с вашими или мешают ваши незакоммиченные правки, ничего не изменится.`, 'Влить');
+    if (!ok) return;
+    let r;
+    try { r = await native.wt.merge(w); } catch (e) { toast(String(e.message || e), 'error'); return; }
+    await this.refreshWorktree();
+    if (r.ok) { toast(r.commits ? `Влито в «${r.into}». Копию можно удалить в её меню.` : 'Нечего вливать', 'ok'); return; }
+    modal({ title: 'Не влито', width: 460, body: h('div', {}, h('p', {}, r.reason), r.files?.length ? h('ul', { class: 'wt-files' }, ...r.files.slice(0, 20).map((f) => h('li', {}, h('code', {}, f)))) : null), actions: [{ label: 'Понятно', primary: true }] });
+  }
+  async removeWorktree() {
+    const w = this.node.data.worktree;
+    if (!w) return;
+    if (this.isBusy()) { toast('Дождитесь, пока агент закончит', 'warn'); return; }
+    const st = this.wtStatus || {};
+    const done = () => { this.view.setData(this.node.id, { worktree: null, sessionId: null }); this.node = this.view.node(this.node.id) || this.node; this.refreshWorktree(); };
+    if (st.exists === false) { done(); return; }
+    const clean = st.merged || (!st.ahead && !st.dirty);
+    const ok = await confirmBox('Удалить копию?', clean ? 'Папка копии и её ветка будут удалены: изменений, которых нет у вас, в ней нет.' : 'Изменения агента не влиты. Папка копии будет удалена, а ветка с коммитами агента останется — её можно влить позже средствами git.', 'Удалить');
+    if (!ok) return;
+    let r = await native.wt.remove(w);
+    if (!r.ok && r.dirty) {
+      const ok2 = await confirmBox('В копии есть несохранённые изменения агента', 'Они не влиты и пропадут вместе с папкой копии. Удалить всё равно?', 'Удалить');
+      if (!ok2) return;
+      r = await native.wt.remove(w, { force: true });
+    }
+    if (!r.ok) { toast(r.reason || 'Не удалось удалить копию', 'error'); return; }
+    done();
+    toast(r.branchKept ? `Копия удалена, ветка ${w.branch} осталась` : 'Копия удалена', 'ok');
+  }
 
   async fillModelOptions() {
     const d = (await agentDefaults())[this.kind] || {};
@@ -921,6 +1015,7 @@ class AgentChatInstance {
   }
   renderCwd() {
     const c = this.cwd || '';
+    this.cwdBtn.classList.toggle('in-copy', !!(this.node.data.worktree && this.wtStatus?.exists !== false));
     this.cwdBtn.replaceChildren(h('span', { html: icon('folder', 12) }), h('span', { class: 'cwd-text' }, !c ? 'выберите папку' : c.length > 46 ? '…' + c.slice(-45) : c));
     this.cwdBtn.title = `Рабочая папка агента:\n${c}\n\nНажмите, чтобы сменить`;
   }
@@ -1054,6 +1149,8 @@ class AgentChatInstance {
     const text = again ? again.text : this.input.value.trim();
     if ((!text && !(again ? again.attachments.length : this.attach.items.length)) || this.isBusy()) return;
     if (!again && this.attach.busy) { toast('Файлы ещё загружаются…'); return; }
+    // the copy is gone (another computer, deleted by hand): never let the agent fall back to another folder
+    if (this.node.data.worktree && this.wtStatus?.exists === false) { toast('Отдельной копии нет на этом компьютере — уберите её в меню окна или создайте заново', 'warn'); return; }
     const attachments = again ? again.attachments : this.attach.take();
     if (!again) { this.input.value = ''; this.input.style.height = 'auto'; }
     this.mentions?.close();
@@ -1153,6 +1250,7 @@ class AgentChatInstance {
     activeRuns.delete(this.node.id);
     await patchNodeData(this, { messages: [...all], ...(ev.sessionId ? { sessionId: ev.sessionId } : {}) });
     native.agentChat.release?.(reqId); // the answer is saved: main may delete the run's journal
+    if (this.node.data.worktree) this.refreshWorktree();
     this.sendBtn.innerHTML = icon('send', 16); this.sendBtn.classList.remove('stop');
     const bits = [];
     if (ev.usage) bits.push(`${(ev.usage.input + ev.usage.output).toLocaleString('ru-RU')} ток.`);
@@ -1352,6 +1450,7 @@ export const NODE_TYPES = {
       { label: 'История чатов', icon: 'sidebar', onClick: () => inst?.hist.open() },
       { label: 'Новый чат', icon: 'plus', onClick: () => inst?.newSession() },
       { label: 'Сменить рабочую папку…', icon: 'folder', onClick: () => inst?.pickCwd() },
+      ...(n.data.worktree ? [{ label: 'Отдельная копия', icon: 'branch', children: inst?.worktreeItems() || [] }] : [{ label: 'Работать в отдельной копии (git worktree)…', icon: 'branch', onClick: () => inst?.enableWorktree() }]),
       ...(n.data.kind === 'codex' ? [{ label: 'Папка с картинками Codex', icon: 'image', onClick: async () => {
         const dir = await native.agentChat.imagesDir?.(n.data.sessionId);
         if (!dir) { toast('Codex ещё не сохранял картинки на этом компьютере', 'warn'); return; }
@@ -1447,7 +1546,7 @@ export const NODE_TYPES = {
           rev ? h('span', { class: 'diff-rev' }, 'откачено') : null,
           h('span', { class: 'mc-sp' }),
           h('span', { class: 'diff-root muted', title: c.root }, c.root.split(/[\\/]/).pop()),
-          h('button', { class: 'btn sm no-drag', onclick: async (e) => { e.stopPropagation(); await revertChanges(view, cur.data.chatId, cur.data.ts, rev, { changes: changesOf(), save }); render(); } }, rev ? 'Вернуть' : 'Откатить'));
+          cur.data.noRevert ? null : h('button', { class: 'btn sm no-drag', onclick: async (e) => { e.stopPropagation(); await revertChanges(view, cur.data.chatId, cur.data.ts, rev, { changes: changesOf(), save }); render(); } }, rev ? 'Вернуть' : 'Откатить'));
         const reverted = new Set(c.reverted?.files || []);
         c.files.forEach((f, k) => {
           const code = h('div', { class: 'diff-code' });
@@ -1473,7 +1572,7 @@ export const NODE_TYPES = {
       };
       render();
       const off = bus.on('changes:updated', (e) => { if (e.chatId === cur.data.chatId && e.ts === cur.data.ts) render(); });
-      return { update: (n) => { cur = n; }, destroy: () => off() };
+      return { update: (n) => { const changed = n.data.changes !== cur.data.changes; cur = n; if (changed) render(); }, destroy: () => off() };
     },
   },
 

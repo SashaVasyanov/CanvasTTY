@@ -117,6 +117,17 @@ export const mockNative = {
     restore: async (o) => { (window.__mockChanges ||= {}).restores = [...(window.__mockChanges.restores || []), o]; return window.__mockChanges.restoreResult?.(o) || { done: o.files, skipped: [] }; },
     reveal: async (o) => { (window.__mockChanges ||= {}).revealed = o; return true; },
   },
+  // separate copies for agents: tests set window.__mockWt = { status, preview, merge, remove(opts) }
+  wt: (() => {
+    const log = (k, v) => { (window.__wtCalls ||= []).push([k, v]); };
+    return {
+      create: async (o) => { log('create', o); if (window.__mockWt?.createError) throw new Error(window.__mockWt.createError); return { repo: '/demo/repo', path: '/demo/repo.worktrees/zadacha-ab12', cwd: '/demo/repo.worktrees/zadacha-ab12', branch: 'vibetabula/zadacha-ab12', baseBranch: 'main', baseCommit: 'c0ffee' }; },
+      status: async (w) => window.__mockWt?.status || { exists: true, ahead: 0, dirty: 0, into: 'main', merged: false },
+      preview: async (w) => { log('preview', w); return window.__mockWt?.preview || { root: w.path, before: 't0', after: 't1', files: [] }; },
+      merge: async (w) => { log('merge', w); return window.__mockWt?.merge || { ok: true, into: 'main', commits: 1 }; },
+      remove: async (w, o) => { log('remove', o || {}); return window.__mockWt?.remove?.(o || {}) || { ok: true, branchKept: false }; },
+    };
+  })(),
   setBg: async () => {},
   attach: {
     saveBytes: async ({ name, bytes }) => { const ext = (name.split('.').pop() || '').toLowerCase(); const img = /^(png|jpe?g|gif|webp)$/.test(ext); const url = URL.createObjectURL(new Blob([bytes], { type: img ? `image/${ext === 'jpg' ? 'jpeg' : ext}` : 'application/octet-stream' })); return { id: String(Math.random()).slice(2, 8), file: name, name, size: bytes.length, mime: '', kind: img ? 'image' : 'file', ext, url }; },

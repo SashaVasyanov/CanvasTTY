@@ -846,6 +846,15 @@ button.ly-twisty:hover { background: rgba(var(--fg-rgb), 0.08); color: var(--tex
 .agent-info { display: flex; align-items: center; gap: 10px; padding: 5px 10px; border-bottom: 1px solid var(--line); font-size: 11.5px; color: var(--text-2); min-width: 0; }
 .cwd-path { display: inline-flex; align-items: center; gap: 5px; min-width: 0; flex: 1 1 auto; padding: 2px 6px; border-radius: 6px; color: var(--text-2); font: 11.5px var(--mono); }
 .cwd-path:hover { background: rgba(var(--fg-rgb), 0.07); color: var(--text); }
+.cwd-path.in-copy { color: var(--accent); }
+/* the agent works in a separate copy (git worktree) */
+.wt-chip { display: inline-flex; align-items: center; gap: 5px; flex-shrink: 0; max-width: 55%; padding: 2px 7px; border-radius: 6px; font-size: 11.5px; color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.wt-chip:hover { background: color-mix(in srgb, var(--accent) 20%, transparent); }
+.wt-chip[hidden] { display: none; }
+.wt-chip .wt-branch { font: 600 11.5px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wt-chip .wt-bits { color: var(--text-2); white-space: nowrap; }
+.wt-chip.missing { color: var(--amber); background: color-mix(in srgb, var(--amber) 12%, transparent); }
+.wt-files { margin: 6px 0 0; padding-left: 18px; max-height: 200px; overflow: auto; }
 .cwd-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .model-info { flex: 0 1 auto; max-width: 62%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
 

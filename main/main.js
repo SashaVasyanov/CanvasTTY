@@ -25,6 +25,7 @@ function useTestHome() {
 useTestHome();
 const { SyncManager } = require('./sync');
 const changes = require('./changes');
+const worktrees = require('./worktrees');
 const codexPets = require('./codexpets');
 
 const isMac = process.platform === 'darwin';
@@ -406,6 +407,12 @@ app.whenReady().then(() => {
     // a file the agent created goes to the recycle bin; where there is none (some Linux setups) it is
     // removed — «Вернуть» brings it back from git anyway
     trash: async (abs) => { try { await shell.trashItem(abs); } catch { fs.unlinkSync(abs); } } }));
+  // a separate copy of the project for an agent chat (main/worktrees.js)
+  ipcMain.handle('wt:create', (e, o) => worktrees.create({ cwd: String(o?.cwd || ''), name: String(o?.name || '') }));
+  ipcMain.handle('wt:status', (e, w) => worktrees.status(w));
+  ipcMain.handle('wt:preview', (e, w) => worktrees.preview(w));
+  ipcMain.handle('wt:merge', (e, w) => worktrees.merge(w));
+  ipcMain.handle('wt:remove', (e, w, o) => worktrees.remove(w, { force: !!o?.force, dropBranch: !!o?.dropBranch }));
   // only shows the file in Explorer (opening it could start a program: .bat, .js, .exe…)
   ipcMain.handle('changes:reveal', (e, o) => {
     const root = path.resolve(String(o.root)), abs = path.resolve(root, String(o.file));

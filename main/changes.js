@@ -18,7 +18,7 @@ const MAX_PATCH = 400 * 1024;
 function git(cwd, args, { env, maxBuffer = 64 * 1024 * 1024, input } = {}) {
   return new Promise((resolve, reject) => {
     const p = execFile('git', ['-c', 'core.quotepath=off', ...args], { cwd, env: env ? { ...process.env, ...env } : process.env, maxBuffer, windowsHide: true, encoding: 'buffer' }, (err, stdout, stderr) => {
-      if (err) { err.stderr = String(stderr || ''); return reject(err); }
+      if (err) { err.stderr = String(stderr || ''); err.stdout = String(stdout || ''); return reject(err); }
       resolve(stdout);
     });
     if (input != null) { p.stdin.end(input); }
@@ -127,4 +127,4 @@ async function restore({ root, from, expect, files, trash }) {
   return { done, skipped };
 }
 
-module.exports = { snapshot, changesSince, diff, patch, restore, rootOf };
+module.exports = { snapshot, changesSince, diff, patch, restore, rootOf, git, text };
