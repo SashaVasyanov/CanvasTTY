@@ -72,6 +72,8 @@ test('карточка изменений рядом с чатом: файлы, 
 test('«Откатить» после подтверждения, «Вернуть» — обратно; карточка видит то же', async ({ app, page }) => {
   const { id, c } = await answerWithChanges(app, page);
   await line(c).locator('button', { hasText: 'Показать' }).click();
+  await expect(card(page)).toHaveCount(1);
+  await app.idle();
   await line(c).locator('button', { hasText: 'Откатить' }).click();
   await expect(page.locator('.modal')).toContainText('Откатить изменения агента в 3 файлах?');
   await page.locator('.modal button', { hasText: 'Откатить' }).click();
@@ -83,7 +85,9 @@ test('«Откатить» после подтверждения, «Вернут
   expect(restores).toEqual([{ root: '/demo/repo', from: 'tree-before', expect: 'tree-after', files: ['src/app.js', 'src/new.js', 'old.txt'] }]);
   expect((await app.node(id)).data.messages.at(-1).changes.reverted.files).toHaveLength(3);
 
-  // taking it back from the card
+  // taking it back from the card (once the camera that flew to the card has stopped: while the
+  // view moves, clicks go to the canvas)
+  await app.idle();
   await card(page).locator('.diff-head button', { hasText: 'Вернуть' }).click();
   await expect(line(c).locator('.mc-text')).toHaveText('Изменено 3 файла');
   restores = await page.evaluate(() => window.__mockChanges.restores);

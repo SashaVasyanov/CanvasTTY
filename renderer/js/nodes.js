@@ -589,7 +589,8 @@ function showChanges(view, chatId, m) {
   const chatNode = view.node(chatId);
   const title = `Изменения: ${NODE_TYPES[chatNode.type].title(chatNode)}`.slice(0, 80);
   // no arrow: an arrow into a chat window would make the card context for the agent
-  view.addNode('diff', { x: chatNode.x + chatNode.w + 60, y: chatNode.y, data: { chatId, ts: m.ts, title, changes: m.changes } }, { center: false });
+  const card = view.addNode('diff', { x: chatNode.x + chatNode.w + 60, y: chatNode.y, data: { chatId, ts: m.ts, title, changes: m.changes } }, { center: false });
+  view.fit?.([chatId, card.id]); // the card and its buttons on screen, next to the chat
 }
 
 // "Продолжить" / "Повторить" under an answer that broke off
