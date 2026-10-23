@@ -411,6 +411,12 @@ function reportEnd(inst, kind, text) {
   inbox.add({ nodeId: n.id, docId: inst.docId, kind, title: NODE_TYPES[n.type].title(n), text, type: n.type, agentId: n.data.agentId, provider: n.data.provider });
 }
 
+// the message under the mouse (its element carries data-i); -1 outside messages
+function msgIndexAt(inst, target) {
+  const el = target?.closest?.('.msg[data-i]');
+  return el && inst.list.contains(el) ? Number(el.dataset.i) : -1;
+}
+
 // a starter prompt from a layout template (data.draft): waits in the input until the first message
 function applyDraft(inst) {
   const d = inst.node.data.draft;
@@ -751,7 +757,7 @@ class ChatInstance {
   }
 
   renderMsg(m, i) {
-    const el = h('div', { class: `msg ${m.role}${m.error ? ' error' : ''}${i === this.messages.length - 1 ? ' is-last' : ''}` });
+    const el = h('div', { class: `msg ${m.role}${m.error ? ' error' : ''}${i === this.messages.length - 1 ? ' is-last' : ''}`, 'data-i': i });
     if (m.role === 'user') { const rl = renderRelayNote(m); if (rl) el.append(rl); const atts = renderAttachments(m.attachments); if (atts) el.append(atts); if (m.content) el.append(h('div', { class: 'msg-text' }, m.content)); const ctx = renderContextNote(m.context); if (ctx) el.append(ctx); }
     else {
       if (m.reasoning) el.append(h('details', { class: 'msg-reason' }, h('summary', {}, 'Размышления'), h('div', { class: 'reason-text' }, m.reasoning)));
@@ -759,13 +765,20 @@ class ChatInstance {
       else el.append(h('div', { class: 'msg-text md', html: renderChatMarkdown(m.content) }));
       const cta = renderResume(this, m, i); if (cta) el.append(cta);
     }
-    el.append(h('div', { class: 'msg-actions' },
-      h('button', { 'data-act': 'copy', 'data-i': i, title: 'Копировать', html: icon('copy', 12) }),
-      m.role === 'assistant' ? h('button', { 'data-act': 'note', 'data-i': i, title: 'В заметку', html: icon('note', 12) }) : null,
-      m.role === 'assistant' ? h('button', { 'data-act': 'term', 'data-i': i, title: 'Отправить в связанный терминал', html: icon('terminal', 12) }) : null,
-      h('button', { 'data-act': 'del', 'data-i': i, title: 'Удалить', html: icon('trash', 12) }),
-    ));
     return el;
+  }
+  // what to do with a message: right click on it (renderer/js/canvas.js nodeMenu)
+  contextItems(target) {
+    const i = msgIndexAt(this, target), m = this.messages[i];
+    if (!m || m.running) return [];
+    return [
+      { label: m.role === 'user' ? 'Копировать сообщение' : 'Копировать ответ', icon: 'copy', onClick: () => this.msgAction('copy', i) },
+      ...(m.role === 'assistant' ? [
+        { label: 'Ответ в заметку', icon: 'note', onClick: () => this.msgAction('note', i) },
+        { label: 'Ответ в связанный терминал', icon: 'terminal', onClick: () => this.msgAction('term', i) },
+      ] : []),
+      { label: 'Удалить сообщение', icon: 'trash', danger: true, onClick: () => this.msgAction('del', i) },
+    ];
   }
 
   async msgAction(act, i) {
@@ -1249,7 +1262,7 @@ class AgentChatInstance {
   }
 
   renderMsg(m, i) {
-    const el = h('div', { class: `msg ${m.role}${i === this.messages.length - 1 ? ' is-last' : ''}` });
+    const el = h('div', { class: `msg ${m.role}${i === this.messages.length - 1 ? ' is-last' : ''}`, 'data-i': i });
     if (m.role === 'user') { const rl = renderRelayNote(m); if (rl) el.append(rl); const atts = renderAttachments(m.attachments); if (atts) el.append(atts); if (m.content) el.append(h('div', { class: 'msg-text' }, m.content)); const ctx = renderContextNote(m.context); if (ctx) el.append(ctx); }
     else {
       const body = h('div', { class: 'msg-body' }); this.renderParts(m, body); el.append(body);
@@ -1258,10 +1271,15 @@ class AgentChatInstance {
       // a window of «Спросить нескольких»: keep this answer, close the others
       if (this.node.data.compare && !m.running && !m.interrupted && i === this.messages.length - 1) el.append(h('div', { class: 'msg-cta' }, h('button', { class: 'btn sm primary no-drag', 'data-act': 'choose', 'data-i': i }, 'Выбрать этот ответ')));
     }
-    if (!m.running) el.append(h('div', { class: 'msg-actions' },
-      h('button', { 'data-act': 'copy', 'data-i': i, title: 'Копировать', html: icon('copy', 12) }),
-      m.role === 'assistant' ? h('button', { 'data-act': 'note', 'data-i': i, title: 'В заметку', html: icon('note', 12) }) : null));
     return el;
+  }
+  contextItems(target) {
+    const i = msgIndexAt(this, target), m = this.messages[i];
+    if (!m || m.running) return [];
+    return [
+      { label: m.role === 'user' ? 'Копировать сообщение' : 'Копировать ответ', icon: 'copy', onClick: () => this.msgAction('copy', i) },
+      ...(m.role === 'assistant' && m.content ? [{ label: 'Ответ в заметку', icon: 'note', onClick: () => this.msgAction('note', i) }] : []),
+    ];
   }
 
   // a generated picture → an image object next to this window (saved in the notes vault)

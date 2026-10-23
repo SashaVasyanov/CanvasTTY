@@ -1781,7 +1781,7 @@ export class CanvasView extends Emitter {
       const sel = getSelection(), text = sel && !sel.isCollapsed ? sel.toString() : '';
       const inside = text.trim() && this.views.get(n.id)?.el.contains(sel.anchorNode);
       if (!this.selection.has(n.id)) this.select([n.id]);
-      this.nodeMenu(n, e.clientX, e.clientY, inside ? text : '');
+      this.nodeMenu(n, e.clientX, e.clientY, inside ? text : '', e.target);
       return;
     }
     this.emit('bgMenu', { x: e.clientX, y: e.clientY, world: this.toWorld(e.clientX, e.clientY) });
@@ -1825,12 +1825,16 @@ export class CanvasView extends Emitter {
     ], x, y);
   }
 
-  nodeMenu(n, x, y, selectedText = '') {
+  // target: what was right-clicked inside the object (a message of a chat window offers its own actions)
+  nodeMenu(n, x, y, selectedText = '', target = null) {
     const def = NODE_TYPES[n.type];
-    const custom = def.menu ? def.menu(n, this, this.views.get(n.id)?.inst) : [];
+    const inst = this.views.get(n.id)?.inst;
+    const custom = def.menu ? def.menu(n, this, inst) : [];
+    const here = (target && inst?.contextItems?.(target)) || [];
     const multi = this.selection.size > 1;
     menu([
-      ...(selectedText ? [{ label: 'Копировать выделенный текст', icon: 'copy', kbd: 'Ctrl+C', onClick: () => { navigator.clipboard.writeText(selectedText).then(() => toast('Текст скопирован'), () => toast('Не удалось скопировать', 'error')); } }, '-'] : []),
+      ...(selectedText ? [{ label: 'Копировать выделенный текст', icon: 'copy', kbd: 'Ctrl+C', onClick: () => { navigator.clipboard.writeText(selectedText).then(() => toast('Текст скопирован'), () => toast('Не удалось скопировать', 'error')); } }, ...(here.length ? [] : ['-'])] : []),
+      ...here, here.length ? '-' : null,
       ...custom, custom.length ? '-' : null,
       { label: 'Приблизить', icon: 'maximize', onClick: () => multi ? this.fit([...this.selection]) : this.focusNode(n.id) },
       { label: 'Дублировать', icon: 'copy', kbd: 'Ctrl+D', onClick: () => this.duplicate() },
