@@ -24,6 +24,7 @@ function useTestHome() {
 }
 useTestHome();
 const { SyncManager } = require('./sync');
+const changes = require('./changes');
 const codexPets = require('./codexpets');
 
 const isMac = process.platform === 'darwin';
@@ -397,6 +398,21 @@ app.whenReady().then(() => {
     return r.canceled ? null : r.filePaths[0];
   });
   ipcMain.handle('shell:open', (e, url) => safeExternal(url));
+  // what an agent changed in its git folder during one answer (main/changes.js)
+  ipcMain.handle('changes:snapshot', (e, dir) => changes.snapshot(String(dir || '')));
+  ipcMain.handle('changes:since', (e, snap) => changes.changesSince(snap));
+  ipcMain.handle('changes:patch', (e, o) => changes.patch(path.resolve(String(o.root)), String(o.before), String(o.after), String(o.file)));
+  ipcMain.handle('changes:restore', (e, o) => changes.restore({ root: String(o.root), from: String(o.from), expect: String(o.expect), files: (o.files || []).map(String),
+    // a file the agent created goes to the recycle bin; where there is none (some Linux setups) it is
+    // removed — «Вернуть» brings it back from git anyway
+    trash: async (abs) => { try { await shell.trashItem(abs); } catch { fs.unlinkSync(abs); } } }));
+  // only shows the file in Explorer (opening it could start a program: .bat, .js, .exe…)
+  ipcMain.handle('changes:reveal', (e, o) => {
+    const root = path.resolve(String(o.root)), abs = path.resolve(root, String(o.file));
+    if (!abs.startsWith(root + path.sep)) return false;
+    if (fs.existsSync(abs)) shell.showItemInFolder(abs); else if (fs.existsSync(path.dirname(abs))) shell.openPath(path.dirname(abs));
+    return true;
+  });
   // folders only (opening a file could run it)
   ipcMain.handle('shell:openPath', (e, p) => { try { if (fs.statSync(String(p)).isDirectory()) return shell.openPath(String(p)); } catch {} return 'Можно открыть только папку'; });
   ipcMain.handle('clipboard:write', (e, text) => clipboard.writeText(text));

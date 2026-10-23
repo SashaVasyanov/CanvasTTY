@@ -39,5 +39,6 @@ contextBridge.exposeInMainWorld('native', {
   },
   dialog: { folder: inv('dialog:folder') },
   shell: { open: inv('shell:open'), openPath: inv('shell:openPath') },
+  changes: { snapshot: inv('changes:snapshot'), since: inv('changes:since'), patch: inv('changes:patch'), restore: inv('changes:restore'), reveal: inv('changes:reveal') },
   clipboard: { write: inv('clipboard:write') },
 });

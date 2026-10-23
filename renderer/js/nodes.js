@@ -1,5 +1,5 @@
 // Node type definitions for the canvas.
-import { h, icon, badge, esc, bus, toast, prompt, debounce, throttle, uid, readFileAsDataURL, keyName } from './util.js';
+import { h, icon, badge, esc, bus, toast, prompt, confirmBox, debounce, throttle, uid, readFileAsDataURL, keyName } from './util.js';
 import { cssColor, wantsWhiteText, BAR_COLORS, OBJECT_COLORS, STICKY_COLORS } from './pentools.js';
 import { sanitizeHtml, htmlText } from './sanitize.js';
 import { WIDGETS, mountWidget } from './widgets.js';
@@ -419,6 +419,94 @@ function errAction(inst, act) {
     }
     default: break;
   }
+}
+
+// ---------------- what the agent changed (main/changes.js) ----------------
+// files the agent's tools wrote, for folders without git (no diff, no rollback there)
+function touchedFiles(parts) {
+  const out = new Set();
+  for (const p of parts || []) {
+    if (p.type !== 'tool' || !p.input) continue;
+    if (p.name === 'Файлы') for (const l of p.input.split('\n')) { const f = l.trim().split(/\s+/).slice(1).join(' '); if (f) out.add(f); }
+    else if (/^(Edit|Write|MultiEdit|NotebookEdit)$/.test(p.name)) out.add(p.input.split('\n')[0]);
+  }
+  return [...out].slice(0, 50);
+}
+const changeTotals = (c) => c.files.reduce((t, f) => ({ add: t.add + (f.add || 0), del: t.del + (f.del || 0) }), { add: 0, del: 0 });
+const filesWord = (n) => (n % 10 === 1 && n % 100 !== 11 ? 'файл' : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? 'файла' : 'файлов');
+// the line under an answer: "Изменено 3 файла +42 −7 · Показать · Откатить"
+function renderChanges(m, i) {
+  const c = m.changes;
+  if (c?.files?.length) {
+    const t = changeTotals(c), rev = !!c.reverted;
+    return h('div', { class: `msg-changes${rev ? ' reverted' : ''}` },
+      h('span', { class: 'mc-ic', html: icon('diff', 13) }),
+      h('span', { class: 'mc-text' }, rev ? `Изменения откачены (${c.reverted.files.length} ${filesWord(c.reverted.files.length)})` : `Изменено ${c.files.length} ${filesWord(c.files.length)}`),
+      rev ? null : h('span', { class: 'mc-add' }, `+${t.add}`), rev ? null : h('span', { class: 'mc-del' }, `−${t.del}`),
+      h('span', { class: 'mc-sp' }),
+      h('button', { class: 'btn sm no-drag', 'data-act': 'changes-show', 'data-i': i }, 'Показать'),
+      h('button', { class: 'btn sm no-drag', 'data-act': rev ? 'changes-reapply' : 'changes-revert', 'data-i': i }, rev ? 'Вернуть' : 'Откатить'));
+  }
+  if (m.touched?.length) {
+    return h('div', { class: 'msg-changes plain', title: m.touched.join('\n') },
+      h('span', { class: 'mc-ic', html: icon('diff', 13) }),
+      h('span', { class: 'mc-text' }, `Агент менял ${m.touched.length} ${filesWord(m.touched.length)}: ${m.touched.slice(0, 3).map((f) => f.split(/[\\/]/).pop()).join(', ')}${m.touched.length > 3 ? '…' : ''}`),
+      h('span', { class: 'mc-note muted' }, 'папка не под git — без diff и отката'));
+  }
+  return null;
+}
+// the message (by its time) in a chat window's data
+// (an answer and its question are created in the same millisecond: match the answer only)
+const msgByTs = (view, chatId, ts) => (view.node(chatId)?.data.messages || []).find((x) => x.ts === ts && x.role === 'assistant') || null;
+function setMsgChanges(view, chatId, ts, changes) {
+  const n = view.node(chatId);
+  if (!n) return;
+  view.setData(chatId, { messages: n.data.messages.map((x) => (x.ts === ts && x.role === 'assistant' ? { ...x, changes } : x)) });
+  view.views.get(chatId)?.inst?.renderAll?.();
+}
+// Rollback (or taking it back): only files still as the other side left them; after confirmation.
+async function revertChanges(view, chatId, ts, reapply = false, fallback = null) {
+  const m = msgByTs(view, chatId, ts);
+  const c = m?.changes || fallback?.changes;
+  if (!c) return null;
+  const files = reapply ? (c.reverted?.files || []) : c.files.map((f) => f.path);
+  if (!files.length) return null;
+  if (!reapply) {
+    const inFiles = files.length % 10 === 1 && files.length % 100 !== 11 ? 'файле' : 'файлах';
+    const ok = await confirmBox(`Откатить изменения агента в ${files.length} ${inFiles}?`, 'Файлы вернутся к состоянию до этого ответа. Файлы, которые после ответа правили вы или другой агент, не тронутся. Созданные агентом файлы уйдут в корзину. Откат можно вернуть кнопкой «Вернуть».', 'Откатить');
+    if (!ok) return null;
+  }
+  let r;
+  try { r = await native.changes.restore({ root: c.root, from: reapply ? c.after : c.before, expect: reapply ? c.before : c.after, files }); } catch (e) { toast(`Не удалось: ${e.message || e}`, 'error'); return null; }
+  const next = { ...c };
+  if (reapply) { const left = (c.reverted?.files || []).filter((f) => !r.done.includes(f)); if (left.length) next.reverted = { ...c.reverted, files: left }; else delete next.reverted; }
+  else if (r.done.length) next.reverted = { files: r.done, at: Date.now() };
+  if (m) setMsgChanges(view, chatId, ts, next);
+  if (fallback) fallback.save(next);
+  bus.emit('changes:updated', { chatId, ts, changes: next });
+  const skipped = r.skipped.length ? ` Не тронуты: ${r.skipped.map((x) => `${x.path} (${x.reason})`).join(', ')}.` : '';
+  toast(`${reapply ? 'Возвращено' : 'Откачено'}: ${r.done.length} ${filesWord(r.done.length)}.${skipped}`, r.skipped.length ? 'warn' : 'ok');
+  return next;
+}
+// a unified diff as lines: + added, − removed, @@ a new piece; the git header lines are left out
+function diffLines(patch) {
+  const out = [];
+  for (const line of String(patch || '').split('\n')) {
+    if (/^(diff --git|index |--- |\+\+\+ |new file mode|deleted file mode|similarity|rename )/.test(line)) continue;
+    const cls = line.startsWith('@@') ? 'hunk' : line.startsWith('+') ? 'add' : line.startsWith('-') ? 'del' : line.startsWith('\\') ? 'meta' : '';
+    out.push(h('div', { class: `dl ${cls}` }, line || ' '));
+  }
+  if (!out.length) out.push(h('div', { class: 'dl meta' }, 'Нет текстовых изменений'));
+  return out;
+}
+// the card with the diff next to the chat (or the existing one for this answer)
+function showChanges(view, chatId, m) {
+  const ex = view.doc.nodes.find((n) => n.type === 'diff' && n.data.chatId === chatId && n.data.ts === m.ts);
+  if (ex) { view.focusNode(ex.id); return; }
+  const chatNode = view.node(chatId);
+  const title = `Изменения: ${NODE_TYPES[chatNode.type].title(chatNode)}`.slice(0, 80);
+  // no arrow: an arrow into a chat window would make the card context for the agent
+  view.addNode('diff', { x: chatNode.x + chatNode.w + 60, y: chatNode.y, data: { chatId, ts: m.ts, title, changes: m.changes } }, { center: false });
 }
 
 // "Продолжить" / "Повторить" under an answer that broke off
@@ -924,7 +1012,7 @@ class AgentChatInstance {
   renderMsg(m, i) {
     const el = h('div', { class: `msg ${m.role}${i === this.messages.length - 1 ? ' is-last' : ''}` });
     if (m.role === 'user') { const atts = renderAttachments(m.attachments); if (atts) el.append(atts); if (m.content) el.append(h('div', { class: 'msg-text' }, m.content)); const ctx = renderContextNote(m.context); if (ctx) el.append(ctx); }
-    else { const body = h('div', { class: 'msg-body' }); this.renderParts(m, body); el.append(body); const cta = renderResume(this, m, i); if (cta) el.append(cta); }
+    else { const body = h('div', { class: 'msg-body' }); this.renderParts(m, body); el.append(body); const ch = renderChanges(m, i); if (ch) el.append(ch); const cta = renderResume(this, m, i); if (cta) el.append(cta); }
     if (!m.running) el.append(h('div', { class: 'msg-actions' },
       h('button', { 'data-act': 'copy', 'data-i': i, title: 'Копировать', html: icon('copy', 12) }),
       m.role === 'assistant' ? h('button', { 'data-act': 'note', 'data-i': i, title: 'В заметку', html: icon('note', 12) }) : null));
@@ -947,6 +1035,8 @@ class AgentChatInstance {
     const m = this.messages[i];
     if (!m) return;
     if (act === 'retry') { retryLast(this); return; }
+    if (act === 'changes-show') { showChanges(this.view, this.node.id, m); return; }
+    if (act === 'changes-revert' || act === 'changes-reapply') { await revertChanges(this.view, this.node.id, m.ts, act === 'changes-reapply'); return; }
     if (act === 'continue') { this.send({ text: CONTINUE_PROMPT, attachments: [] }); return; }
     if (act === 'copy') { native.clipboard.write(m.content || ''); toast('Скопировано'); }
     if (act === 'note') {
@@ -985,6 +1075,9 @@ class AgentChatInstance {
     // the agent keeps its session: linked objects go again only when they changed (a new chat
     // starts without ctxHash), objects named with @ always go with their message
     let prompt = text, ctxAtts = [], sig;
+    // the working folder before the agent starts (git): what it changed is shown under the answer
+    const readOnly = ['read', 'plan', 'default'].includes(this.modeSel.value); // these modes do not edit files
+    const snapP = native.changes?.snapshot && !readOnly ? native.changes.snapshot(this.cwd).catch(() => null) : Promise.resolve(null);
     try {
       const ctx = await chatContext(this.view, this.node.id, text, this.node.data.ctxHash);
       if (ctx.images.length) ctxAtts = await imagesToAttachments(ctx.images);
@@ -997,6 +1090,9 @@ class AgentChatInstance {
     if (this.running !== reqId) return; // stopped while the context was being collected: nothing was sent
     // remembered only once the context really goes to the agent
     if (sig !== undefined && sig !== (this.node.data.ctxHash || null)) this.view.setData(this.node.id, { ctxHash: sig });
+    const snap = await snapP;
+    if (this.running !== reqId) return;
+    if (snap) { asst.snap = snap; this.view.setData(this.node.id, { messages: [...all] }); } // kept for a run picked up after a restart
     this.listen(reqId, all, asst);
     await native.agentChat.run({ reqId, kind: this.kind, cmd: this.agent.cmd || this.kind, prompt, sessionId: this.node.data.sessionId, mode: this.modeSel.value, model: this.node.data.model || '', effort: this.node.data.effort || '', cwd: this.cwd, attachments: [...attachments, ...ctxAtts], nodeId: this.node.id, docId: this.docId, keepRunning: state.settings.agentsKeepRunning !== false });
   }
@@ -1038,6 +1134,14 @@ class AgentChatInstance {
 
   async finish(reqId, all, asst, ev) {
     chatRoutes.delete(reqId);
+    // what the agent changed in its folder (while the window still says «Работает»)
+    if (asst.snap) {
+      try { const c = await native.changes.since(asst.snap); if (c?.files?.length) asst.changes = c; } catch (e) { console.warn('changes', e); }
+      delete asst.snap;
+    } else {
+      const touched = touchedFiles(asst.parts);
+      if (touched.length) asst.touched = touched;
+    }
     this.running = null;
     asst.running = false;
     for (const p of asst.parts) if (p.type === 'tool' && p.status === 'run') p.status = ev.aborted ? 'err' : 'ok';
@@ -1315,6 +1419,61 @@ export const NODE_TYPES = {
         h('button', { class: 'icon-btn sm', html: icon('external', 13), title: 'Открыть в браузере', onclick: () => native.shell.open(url.value) })),
         frame);
       return { edit: () => url.focus({ preventScroll: true }), update: (n) => { if (n.data.url !== url.value) { url.value = n.data.url; frame.src = n.data.url; } } };
+    },
+  },
+
+  // what an agent changed during one answer: files with their diff, rollback (see showChanges)
+  diff: {
+    chrome: 'window', defaultSize: { w: 640, h: 560 }, minSize: { w: 360, h: 220 },
+    defaultData: () => ({ changes: null }),
+    title: (n) => n.data.title || 'Изменения',
+    badge: (n, size) => h('span', { class: 'note-badge diff', style: { width: `${size}px`, height: `${size}px` }, html: icon('diff', Math.round(size * 0.8)) }),
+    mount: ({ node, view, body }) => {
+      let cur = node;
+      const head = h('div', { class: 'diff-head' });
+      const list = h('div', { class: 'diff-files scrollable' });
+      body.append(h('div', { class: 'diff-view' }, head, list));
+      // the chat message is the source of truth (rollback state); the card's own copy if it is gone
+      const changesOf = () => msgByTs(view, cur.data.chatId, cur.data.ts)?.changes || cur.data.changes;
+      const save = (c) => view.setData(cur.id, { changes: c });
+      const render = () => {
+        const c = changesOf();
+        head.replaceChildren(); list.replaceChildren();
+        if (!c?.files?.length) { list.append(h('div', { class: 'muted diff-empty' }, 'Изменений нет')); return; }
+        const t = changeTotals(c), rev = !!c.reverted;
+        head.append(
+          h('span', { class: 'diff-sum' }, `${c.files.length} ${filesWord(c.files.length)}`),
+          h('span', { class: 'mc-add' }, `+${t.add}`), h('span', { class: 'mc-del' }, `−${t.del}`),
+          rev ? h('span', { class: 'diff-rev' }, 'откачено') : null,
+          h('span', { class: 'mc-sp' }),
+          h('span', { class: 'diff-root muted', title: c.root }, c.root.split(/[\\/]/).pop()),
+          h('button', { class: 'btn sm no-drag', onclick: async (e) => { e.stopPropagation(); await revertChanges(view, cur.data.chatId, cur.data.ts, rev, { changes: changesOf(), save }); render(); } }, rev ? 'Вернуть' : 'Откатить'));
+        const reverted = new Set(c.reverted?.files || []);
+        c.files.forEach((f, k) => {
+          const code = h('div', { class: 'diff-code' });
+          const d = h('details', { class: `diff-file no-drag${reverted.has(f.path) ? ' rev' : ''}` },
+            h('summary', {},
+              h('span', { class: `diff-st st-${f.status}` }, f.status === 'A' ? 'новый' : f.status === 'D' ? 'удалён' : 'изменён'),
+              h('span', { class: 'diff-path', title: f.path }, f.path),
+              ...(f.binary ? [h('span', { class: 'muted small' }, 'двоичный')] : [h('span', { class: 'mc-add' }, `+${f.add}`), h('span', { class: 'mc-del' }, `−${f.del}`)]),
+              reverted.has(f.path) ? h('span', { class: 'diff-rev' }, 'откачен') : null,
+              h('button', { class: 'icon-btn sm', title: 'Показать в папке', html: icon('folder', 12), onclick: (e) => { e.preventDefault(); e.stopPropagation(); native.changes.reveal({ root: c.root, file: f.path }); } })),
+            code);
+          let loaded = false;
+          d.addEventListener('toggle', async () => {
+            if (!d.open || loaded) return;
+            loaded = true;
+            code.textContent = 'Загрузка…';
+            try { code.replaceChildren(...diffLines(await native.changes.patch({ root: c.root, before: c.before, after: c.after, file: f.path }))); }
+            catch { code.textContent = 'Не удалось показать: папка или версия недоступна на этом компьютере.'; }
+          });
+          list.append(d);
+          if (k === 0) d.open = true;
+        });
+      };
+      render();
+      const off = bus.on('changes:updated', (e) => { if (e.chatId === cur.data.chatId && e.ts === cur.data.ts) render(); });
+      return { update: (n) => { cur = n; }, destroy: () => off() };
     },
   },
 

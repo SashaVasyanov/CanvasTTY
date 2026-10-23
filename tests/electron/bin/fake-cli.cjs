@@ -9,7 +9,7 @@
 //   gate      waiting scenarios (reconnect, slow) go on once <state>/release-<cli> exists (app.release())
 // <state> is FAKE_CLI_STATE (set by tests/electron/fixtures.mjs), else the OS temp folder.
 //
-// codex:  basic | images | reconnect | fail | crash | slow | stale | old-mcp | mcp
+// codex:  basic | images | edit | reconnect | fail | crash | slow | stale | old-mcp | mcp
 // claude: basic | denied | crash | slow | stale | old | mcp
 // "mcp" starts the chat-history MCP server the app passes (claude: --mcp-config file, codex: -c
 // mcp_servers.vibetabula.*) and calls search_chats with the user's words, like the agents do.
@@ -142,6 +142,15 @@ async function codex(argv, prompt, scenario) {
   };
   const retry = (n, of = 5) => out({ type: 'error', message: `Reconnecting... ${n}/${of} (stream disconnected before completion: websocket closed by server before response.completed)` });
 
+  if (scenario === 'edit') {
+    // edits files in its working folder like a real agent: one changed, one new, one deleted
+    const cwd = process.cwd();
+    fs.writeFileSync(path.join(cwd, 'README.md'), 'Привет, мир\nСтрока от агента\n');
+    fs.writeFileSync(path.join(cwd, 'notes.txt'), 'файл агента\n');
+    try { fs.unlinkSync(path.join(cwd, 'old.txt')); } catch (e) { /* not there */ }
+    out({ type: 'item.completed', item: { id: 'fc_1', type: 'file_change', changes: [{ kind: 'update', path: 'README.md' }, { kind: 'add', path: 'notes.txt' }, { kind: 'delete', path: 'old.txt' }], status: 'completed' } });
+    return finish(`Codex: ${said}`);
+  }
   if (scenario === 'reconnect') {
     retry(1); await sleep(60); retry(2);
     if (!(await gate('codex'))) return fail('fake codex: gate timeout', 4);

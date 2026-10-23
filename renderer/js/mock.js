@@ -109,6 +109,14 @@ export const mockNative = {
     background: async () => window.__mockBackground || [], onBackground: on('agentchat:background'),
     defaults: async () => ({ claude: { model: 'sonnet' }, codex: { model: 'gpt-5-codex', effort: 'medium', models: [] } }), onEvent: on('agentchat:event'),
   },
+  // git snapshots of an agent's folder: none in the browser unless a test sets window.__mockChanges
+  changes: {
+    snapshot: async (dir) => (window.__mockChanges ? { root: '/demo/repo', tree: 'tree-before' } : null),
+    since: async () => window.__mockChanges?.since || null,
+    patch: async (o) => window.__mockChanges?.patches?.[o.file] ?? '',
+    restore: async (o) => { (window.__mockChanges ||= {}).restores = [...(window.__mockChanges.restores || []), o]; return window.__mockChanges.restoreResult?.(o) || { done: o.files, skipped: [] }; },
+    reveal: async (o) => { (window.__mockChanges ||= {}).revealed = o; return true; },
+  },
   setBg: async () => {},
   attach: {
     saveBytes: async ({ name, bytes }) => { const ext = (name.split('.').pop() || '').toLowerCase(); const img = /^(png|jpe?g|gif|webp)$/.test(ext); const url = URL.createObjectURL(new Blob([bytes], { type: img ? `image/${ext === 'jpg' ? 'jpeg' : ext}` : 'application/octet-stream' })); return { id: String(Math.random()).slice(2, 8), file: name, name, size: bytes.length, mime: '', kind: img ? 'image' : 'file', ext, url }; },
