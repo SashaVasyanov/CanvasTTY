@@ -366,6 +366,14 @@ function reportEnd(inst, kind, text) {
   inbox.add({ nodeId: n.id, docId: inst.docId, kind, title: NODE_TYPES[n.type].title(n), text, type: n.type, agentId: n.data.agentId, provider: n.data.provider });
 }
 
+// a starter prompt from a layout template (data.draft): waits in the input until the first message
+function applyDraft(inst) {
+  const d = inst.node.data.draft;
+  if (!d || inst.input.value || inst.messages.length) return;
+  inst.input.value = d;
+  requestAnimationFrame(() => inst.input.dispatchEvent(new Event('input')));
+}
+
 // the last question once more, without the answer that failed or broke off
 function retryLast(inst) {
   const msgs = inst.messages;
@@ -659,6 +667,7 @@ class ChatInstance {
     this.renderAll();
     this.renderCtx();
     this.syncRunUi();
+    applyDraft(this);
   }
 
   async fillProviders() {
@@ -757,7 +766,7 @@ class ChatInstance {
     const msgs = [...this.messages, user];
     const asst = { role: 'assistant', content: '', running: true, host: state.info.host, ts: Date.now() };
     const all = [...msgs, asst];
-    this.view.setData(this.node.id, { messages: all });
+    this.view.setData(this.node.id, { messages: all, ...(this.node.data.draft ? { draft: null } : {}) });
     if (!this.node.data.title || this.node.data.title === 'Новый чат') this.view.setData(this.node.id, { title: (text || attachments[0]?.name || 'Чат').slice(0, 40) });
     const reqId = uid('req');
     this.docId = this.view.doc.id; activeRuns.set(this.node.id, this);
@@ -946,6 +955,7 @@ class AgentChatInstance {
     this.syncRunUi();
     this.reattach();
     if (this.node.data.worktree) this.refreshWorktree();
+    applyDraft(this);
   }
 
   // An answer saved as "running" while no run of this app owns it: the app was closed or reloaded
@@ -989,7 +999,7 @@ class AgentChatInstance {
       st.ahead ? `${st.ahead} ${st.ahead % 10 === 1 && st.ahead % 100 !== 11 ? 'коммит' : st.ahead % 10 >= 2 && st.ahead % 10 <= 4 && (st.ahead % 100 < 10 || st.ahead % 100 >= 20) ? 'коммита' : 'коммитов'}` : '',
       st.dirty ? `${st.dirty} ${filesWord(st.dirty)} без коммита` : '',
     ].filter(Boolean);
-    this.wtChip.replaceChildren(h('span', { html: icon('branch', 12) }), h('span', { class: 'wt-branch' }, w.branch.replace(/^vibetabula\//, '')), bits.length ? h('span', { class: 'wt-bits' }, bits.join(' · ')) : null);
+    this.wtChip.replaceChildren(h('span', { html: icon('branch', 12) }), h('span', { class: 'wt-branch' }, String(w.branch || 'копия').replace(/^vibetabula\//, '')), bits.length ? h('span', { class: 'wt-bits' }, bits.join(' · ')) : null);
     this.wtChip.title = `Агент работает в отдельной копии проекта\nВетка: ${w.branch}\nПапка: ${w.path}${st.into ? `\nВливается в: ${st.into}` : ''}\n\nНажмите для действий`;
     this.wtChip.classList.toggle('missing', !st.exists);
     this.wtChip.hidden = false;
@@ -1253,7 +1263,7 @@ class AgentChatInstance {
     this.chain = again?.relay?.chain || null;
     const asst = { role: 'assistant', content: '', parts: [], running: true, host: state.info.host, ts: Date.now() };
     const all = [...this.messages, user, asst];
-    this.view.setData(this.node.id, { messages: all });
+    this.view.setData(this.node.id, { messages: all, ...(this.node.data.draft ? { draft: null } : {}) });
     if (!this.node.data.title && text !== CONTINUE_PROMPT) this.view.setData(this.node.id, { title: (text || attachments[0]?.name || 'Задача').slice(0, 40) });
     const reqId = uid('ag');
     this.docId = this.view.doc.id; activeRuns.set(this.node.id, this);

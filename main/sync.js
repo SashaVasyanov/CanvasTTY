@@ -164,7 +164,10 @@ class SyncManager {
       else rp.canvases.push(...extra);
     }
     for (const p of projects) if (!p.canvases.length) p.canvases.push({ id: `c_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, name: 'Главный' });
-    return { ...remote, projects, tombstones: [...tomb].slice(-1000) };
+    // layout templates (renderer/js/templates.js): one made on either computer stays, a deleted one goes
+    const templates = (remote.templates || []).filter((t) => t && !tomb.has(t.id));
+    for (const lt of local.templates || []) if (lt && !tomb.has(lt.id) && !templates.some((t) => t.id === lt.id)) templates.push(lt);
+    return { ...remote, projects, templates, tombstones: [...tomb].slice(-1000) };
   }
 
   // a brand-new install (one empty project) should simply take what's in the folder

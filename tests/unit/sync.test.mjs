@@ -318,6 +318,24 @@ describe('SyncManager: два компьютера через общую пап�
     assert.deepEqual(B.sync.mergeWorkspace({ projects: [project('pA', 'Проект A', ['c1'])], tombstones: ['pX'] }, { projects: [project('pX', 'Удалить', ['cX'])] }).projects.map((p) => p.id), ['pA']);
   });
 
+  test('шаблоны раскладки: созданный на любом компьютере приходит на другой, удалённый не воскресает', async () => {
+    const { A, B } = await joined();
+    const tpl = (id, name) => ({ id, name, created: 1, nodes: [{ id: 'n1', type: 'sticky', x: 0, y: 0, w: 220, h: 220, data: { text: name } }], edges: [] });
+    await A.editWs((w) => { w.templates = [tpl('tpl_a', 'Разбор бага')]; });
+    await B.pull();
+    assert.deepEqual(B.ws().templates.map((t) => t.name), ['Разбор бага']);
+    // made on both computers at once: both stay
+    await B.editWs((w) => { w.templates = [...w.templates, tpl('tpl_b', 'Ретро')]; });
+    assert.deepEqual(B.sync.mergeWorkspace({ projects: A.ws().projects, templates: [tpl('tpl_a', 'Разбор бага'), tpl('tpl_c', 'Созвон')] }, B.ws()).templates.map((t) => t.id), ['tpl_a', 'tpl_c', 'tpl_b']);
+    await A.pull();
+    assert.deepEqual(A.ws().templates.map((t) => t.id).sort(), ['tpl_a', 'tpl_b']);
+    // deleted on A: gone on B, and B's older copy does not bring it back
+    await A.editWs((w) => { w.templates = w.templates.filter((t) => t.id !== 'tpl_a'); w.tombstones = [...(w.tombstones || []), 'tpl_a']; });
+    await B.pull();
+    assert.deepEqual(B.ws().templates.map((t) => t.id), ['tpl_b']);
+    assert.deepEqual(B.sync.mergeWorkspace({ projects: A.ws().projects, templates: [], tombstones: ['tpl_a'] }, { projects: A.ws().projects, templates: [tpl('tpl_a', 'Разбор бага')] }).templates, []);
+  });
+
   test('история чатов: новый чат приходит, удалённый удаляется', async () => {
     const { A, B } = await joined();
     const rec = { id: 'cv_b', kind: 'chat', agent: 'openai', title: 'чат с B', created: 5, updated: 6, messages: [{ role: 'user', content: 'чат с B' }] };

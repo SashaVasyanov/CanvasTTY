@@ -966,7 +966,8 @@ export class CanvasView extends Emitter {
     this.changed();
   }
   // copies of nodes (+ the edges between them) shifted by dx/dy; returns old id -> new id
-  insertCopies(srcNodes, edges = [], dx = 0, dy = 0) {
+  // fork: notes get their own file; numbered: «Фото» → «Фото 2» always (a copy), else only when the name is taken
+  insertCopies(srcNodes, edges = [], dx = 0, dy = 0, { fork = true, numbered = true } = {}) {
     const map = {};
     const z = this.maxZ();
     const newIds = [];
@@ -975,18 +976,24 @@ export class CanvasView extends Emitter {
       map[src.id] = n.id = uid(n.type.slice(0, 2));
       n.x = Math.round(n.x + dx); n.y = Math.round(n.y + dy); n.z = z + 1 + newIds.length; n.locked = false;
       if (n.data) { delete n.data.sessionId; delete n.data.convId; if (n.type === 'chat') n.data.messages = [...(n.data.messages || [])]; }
-      this.numberCopy(n);
+      if (numbered || this.nameTaken(n)) this.numberCopy(n);
       this.doc.nodes.push(n); this.createView(n); newIds.push(n.id);
     }
     for (const id of newIds) { const n = this.node(id); if (n.parent) { if (map[n.parent]) n.parent = map[n.parent]; else delete n.parent; } }
     this.recomputeGroups(new Set(newIds.filter((id) => !this.node(id).parent)));
     for (const e of edges || []) if (map[e.from] && map[e.to]) this.doc.edges.push({ ...deepClone(e), id: uid('e'), from: map[e.from], to: map[e.to] });
     this.renderEdges();
-    this.forkNotes(newIds);
+    if (fork) this.forkNotes(newIds);
     return { map, newIds };
   }
   // Figma-style names for copies: «Фото 1» -> «Фото 2», «Фото 3»… (the next free number among
   // objects of the same kind on this canvas). Notes get the same treatment for their file name.
+  nameTaken(n) {
+    const field = NAMED_COPY[n.type];
+    const name = (o) => (field === 'name' ? (o.data.name || (o.data.vault || '').split('/').pop().replace(/\.[a-z0-9]+$/i, '')) : o.data[field]);
+    const v = field && name(n);
+    return !!v && this.doc.nodes.some((o) => o.type === n.type && o.id !== n.id && name(o) === v);
+  }
   numberCopy(n) {
     const field = NAMED_COPY[n.type];
     if (!field) return;
@@ -1827,6 +1834,7 @@ export class CanvasView extends Emitter {
       { label: 'Дублировать', icon: 'copy', kbd: 'Ctrl+D', onClick: () => this.duplicate() },
       { label: 'Копировать', icon: 'squares', kbd: 'Ctrl+C', onClick: () => this.copy() },
       { label: 'В область', icon: 'area', kbd: 'Ctrl+G', onClick: () => this.groupIntoFrame() },
+      { label: 'Сохранить как шаблон…', icon: 'squares', onClick: () => { if (!this.selection.has(n.id)) this.select([n.id]); this.emit('saveTemplate'); } },
       '-',
       { label: 'На передний план', icon: 'bringFront', kbd: ']', onClick: () => this.zOrder('front') },
       { label: 'На задний план', icon: 'sendBack', kbd: '[', onClick: () => this.zOrder('back') },

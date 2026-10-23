@@ -254,6 +254,18 @@ svg.edges { position: absolute; left: 0; top: 0; width: 1px; height: 1px; overfl
 .ask-opt:hover { background: rgba(var(--fg-rgb), 0.05); }
 .ask-opt.on { background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .ask-wt { border-bottom: none; padding: 4px 0; }
+/* layout templates (renderer/js/templates.js) */
+.tpl-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; max-height: 60vh; overflow: auto; padding: 2px; }
+.tpl-section { grid-column: 1 / -1; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin-top: 6px; }
+.tpl-card { position: relative; border: 1px solid var(--line-2); border-radius: var(--radius); padding: 8px; cursor: pointer; background: rgba(var(--fg-rgb), 0.02); transition: border-color 0.12s, background 0.12s; outline: none; }
+.tpl-card:hover, .tpl-card:focus-visible { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.tpl-preview { display: block; width: 100%; height: 96px; margin-bottom: 6px; }
+.tpl-name { font-weight: 600; font-size: 13px; color: var(--text); }
+.tpl-meta { margin-top: 2px; }
+.tpl-actions { position: absolute; top: 6px; right: 6px; display: none; gap: 2px; background: var(--panel); border-radius: 7px; }
+.tpl-card:hover .tpl-actions, .tpl-card:focus-within .tpl-actions { display: flex; }
+.tpl-empty { grid-column: 1 / -1; padding: 6px 2px; }
+@media (max-width: 720px) { .tpl-grid { grid-template-columns: repeat(2, 1fr); } }
 .msg-relay { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--accent); margin-bottom: 4px; font-weight: 600; }
 .edge-label { fill: var(--text-2); font-size: 13px; text-anchor: middle; paint-order: stroke; stroke: var(--bg); stroke-width: 4px; }
 .edge-preview { stroke: var(--accent); stroke-width: 2; stroke-dasharray: 6 5; fill: none; vector-effect: non-scaling-stroke; }

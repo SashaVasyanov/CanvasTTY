@@ -251,7 +251,7 @@ export function modal({ title, body, actions = [], width = 520, onClose, classNa
   box.append(head, content);
   if (actions.length) {
     const foot = h('div', { class: 'modal-foot' });
-    for (const a of actions) foot.append(h('button', { class: `btn ${a.primary ? 'primary' : ''} ${a.danger ? 'danger' : ''}`, onclick: () => { const r = a.onClick && a.onClick(); if (r !== false) close(); } }, a.label));
+    for (const a of actions) foot.append(h('button', { class: `btn ${a.primary ? 'primary' : ''} ${a.danger ? 'danger' : ''}`, disabled: !!a.disabled, onclick: () => { const r = a.onClick && a.onClick(); if (r !== false) close(); } }, a.label));
     box.append(foot);
   }
   back.append(box);

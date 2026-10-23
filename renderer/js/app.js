@@ -12,6 +12,7 @@ import { setFpsMeter, toggleFpsMeter, runPerfTest } from './perf.js';
 import { AgentWatch, Companion, loadCodexPets, codexPetFor } from './companion.js';
 import { inbox, INBOX_KINDS, badgeOf, ago, projectOf } from './inbox.js';
 import { bindCanvasTools } from './canvasTools.js';
+import { openTemplates, saveTemplate, allTemplates, placeTemplate } from './templates.js';
 import { limits, limitsPanel, petSvg, LIMIT_SOURCES, PETS, openPetPicker, openPetCatalog, CLOCK_PRESETS, CLOCK_DEFAULT, clockColors, paintClock, clockMarkup } from './hub.js';
 
 const VERSION = '1.4.0';
@@ -551,6 +552,7 @@ class App {
         { label: 'Заметка', icon: 'note', children: [{ label: 'Новая заметка', icon: 'plus', onClick: () => this.newNoteOnCanvas(world) }, { label: 'Из хранилища…', icon: 'search', onClick: () => this.quickOpen(true, world) }] },
         { label: 'Изображение…', icon: 'image', onClick: () => this.pickImage(world) },
         { label: 'Виджет', icon: 'gallery', children: Object.entries(WIDGETS).map(([k, d]) => ({ label: d.name, icon: d.icon, onClick: () => this.addWidget(k, world) })) },
+        { label: 'Шаблон раскладки…', icon: 'squares', onClick: () => openTemplates(cv, { at: world }) },
         '-',
         { label: 'Чат с агентом', icon: 'chat', children: state.settings.agents.filter((a) => a.chat).map((a) => ({ label: a.name, badge: badge(a.mono, a.color, 16, a.dark), onClick: () => this.launchAgentChat({ agentId: a.id, world }) })) },
         { label: 'Агент в терминале', icon: 'terminal', children: state.settings.agents.map((a) => ({ label: a.name, badge: badge(a.mono, a.color, 16, a.dark), onClick: () => this.launchAgent({ agentId: a.id, world }) })) },
@@ -582,6 +584,7 @@ class App {
     });
     cv.on('drop', (e) => this.onDrop(e));
     cv.on('widgets', () => this.widgetPicker());
+    cv.on('saveTemplate', () => saveTemplate(cv));
     cv.on('dropToChat', ({ chatId, nodes }) => this.attachImagesToChat(chatId, nodes));
     document.addEventListener('paste', (e) => this.onPaste(e));
   }
@@ -734,6 +737,9 @@ class App {
       { label: 'Лимиты нейросетей', icon: 'gauge', run: () => this.showLimits(this.limitsBtn) },
       { label: 'Ждут вас — агенты, которые закончили', icon: 'bell', run: () => this.showInbox(this.inboxBtn) },
       { label: 'Спросить нескольких агентов…', icon: 'chat', run: async () => { const { openAskMany } = await import('./askmany.js'); openAskMany(this.canvas, {}); } },
+      { label: 'Шаблоны раскладки…', icon: 'squares', run: () => openTemplates(this.canvas) },
+      { label: 'Сохранить выделенное как шаблон…', icon: 'squares', run: () => saveTemplate(this.canvas) },
+      ...allTemplates().map((t) => ({ label: `Шаблон: ${t.name}`, hint: t.builtIn ? 'встроенный' : 'ваш', icon: 'squares', run: () => placeTemplate(this.canvas, t) })),
       { label: 'Настройки', icon: 'settings', hint: 'Ctrl+,', run: () => this.openSettings() },
       { label: 'Сменить питомца', icon: 'refresh', run: () => openPetPicker() },
       { label: 'Каталог Codex Pets', icon: 'globe', hint: 'codex-pets.net', run: () => openPetCatalog() },
