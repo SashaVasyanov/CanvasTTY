@@ -1191,7 +1191,13 @@ class AgentChatInstance {
   renderMsg(m, i) {
     const el = h('div', { class: `msg ${m.role}${i === this.messages.length - 1 ? ' is-last' : ''}` });
     if (m.role === 'user') { const rl = renderRelayNote(m); if (rl) el.append(rl); const atts = renderAttachments(m.attachments); if (atts) el.append(atts); if (m.content) el.append(h('div', { class: 'msg-text' }, m.content)); const ctx = renderContextNote(m.context); if (ctx) el.append(ctx); }
-    else { const body = h('div', { class: 'msg-body' }); this.renderParts(m, body); el.append(body); const ch = renderChanges(m, i); if (ch) el.append(ch); const cta = renderResume(this, m, i); if (cta) el.append(cta); }
+    else {
+      const body = h('div', { class: 'msg-body' }); this.renderParts(m, body); el.append(body);
+      const ch = renderChanges(m, i); if (ch) el.append(ch);
+      const cta = renderResume(this, m, i); if (cta) el.append(cta);
+      // a window of «Спросить нескольких»: keep this answer, close the others
+      if (this.node.data.compare && !m.running && !m.interrupted && i === this.messages.length - 1) el.append(h('div', { class: 'msg-cta' }, h('button', { class: 'btn sm primary no-drag', 'data-act': 'choose', 'data-i': i }, 'Выбрать этот ответ')));
+    }
     if (!m.running) el.append(h('div', { class: 'msg-actions' },
       h('button', { 'data-act': 'copy', 'data-i': i, title: 'Копировать', html: icon('copy', 12) }),
       m.role === 'assistant' ? h('button', { 'data-act': 'note', 'data-i': i, title: 'В заметку', html: icon('note', 12) }) : null));
@@ -1215,6 +1221,7 @@ class AgentChatInstance {
     if (!m) return;
     if (act === 'retry') { retryLast(this); return; }
     if (act === 'changes-show') { showChanges(this.view, this.node.id, m); return; }
+    if (act === 'choose') { const { chooseAnswer } = await import('./askmany.js'); await chooseAnswer(this.view, this.node.id); return; }
     if (act === 'changes-revert' || act === 'changes-reapply') { await revertChanges(this.view, this.node.id, m.ts, act === 'changes-reapply'); return; }
     if (act === 'continue') { this.send({ text: CONTINUE_PROMPT, attachments: [] }); return; }
     if (act === 'copy') { native.clipboard.write(m.content || ''); toast('Скопировано'); }
@@ -1267,6 +1274,9 @@ class AgentChatInstance {
       sig = ctx.linkedSig;
       if (ctx.labels.length) { user.context = ctx.labels; this.renderAll(); }
     } catch (e) { console.warn('canvas context', e); }
+    // «Спросить нескольких»: the context of the window the question came from
+    if (again?.extra) prompt = `${again.extra}\n\n---\n\n${prompt}`;
+    if (again?.extraLabels?.length) { user.context = [...(user.context || []), ...again.extraLabels]; this.renderAll(); }
     this.renderCtx();
     this.preparing = null;
     if (this.running !== reqId) return; // stopped while the context was being collected: nothing was sent
@@ -1539,6 +1549,7 @@ export const NODE_TYPES = {
     menu: (n, view, inst) => [
       { label: 'История чатов', icon: 'sidebar', onClick: () => inst?.hist.open() },
       { label: 'Новый чат', icon: 'plus', onClick: () => inst?.newSession() },
+      { label: 'Спросить нескольких…', icon: 'chat', onClick: async () => { const { openAskMany } = await import('./askmany.js'); openAskMany(view, { sourceId: n.id, text: inst?.input.value || '' }); } },
       { label: 'Сменить рабочую папку…', icon: 'folder', onClick: () => inst?.pickCwd() },
       ...(n.data.worktree ? [{ label: 'Отдельная копия', icon: 'branch', children: inst?.worktreeItems() || [] }] : [{ label: 'Работать в отдельной копии (git worktree)…', icon: 'branch', onClick: () => inst?.enableWorktree() }]),
       ...(n.data.kind === 'codex' ? [{ label: 'Папка с картинками Codex', icon: 'image', onClick: async () => {

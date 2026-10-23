@@ -121,7 +121,8 @@ export const mockNative = {
   wt: (() => {
     const log = (k, v) => { (window.__wtCalls ||= []).push([k, v]); };
     return {
-      create: async (o) => { log('create', o); if (window.__mockWt?.createError) throw new Error(window.__mockWt.createError); return { repo: '/demo/repo', path: '/demo/repo.worktrees/zadacha-ab12', cwd: '/demo/repo.worktrees/zadacha-ab12', branch: 'vibetabula/zadacha-ab12', baseBranch: 'main', baseCommit: 'c0ffee' }; },
+      isRepo: async (dir) => window.__mockWt?.isRepo ?? /repo/.test(String(dir)),
+      create: async (o) => { log('create', o); if (window.__mockWt?.createError) throw new Error(window.__mockWt.createError); const n = (window.__wtN = (window.__wtN || 0) + 1); const name = n === 1 ? 'zadacha-ab12' : `zadacha-${n}`; return { repo: '/demo/repo', path: `/demo/repo.worktrees/${name}`, cwd: `/demo/repo.worktrees/${name}`, branch: `vibetabula/${name}`, baseBranch: 'main', baseCommit: 'c0ffee' }; },
       status: async (w) => window.__mockWt?.status || { exists: true, ahead: 0, dirty: 0, into: 'main', merged: false },
       preview: async (w) => { log('preview', w); return window.__mockWt?.preview || { root: w.path, before: 't0', after: 't1', files: [] }; },
       merge: async (w) => { log('merge', w); return window.__mockWt?.merge || { ok: true, into: 'main', commits: 1 }; },

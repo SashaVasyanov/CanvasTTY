@@ -731,6 +731,7 @@ class App {
       { label: 'Показать всё', icon: 'home', hint: 'Shift+1', run: () => this.canvas.fit() },
       { label: 'Лимиты нейросетей', icon: 'gauge', run: () => this.showLimits(this.limitsBtn) },
       { label: 'Ждут вас — агенты, которые закончили', icon: 'bell', run: () => this.showInbox(this.inboxBtn) },
+      { label: 'Спросить нескольких агентов…', icon: 'chat', run: async () => { const { openAskMany } = await import('./askmany.js'); openAskMany(this.canvas, {}); } },
       { label: 'Настройки', icon: 'settings', hint: 'Ctrl+,', run: () => this.openSettings() },
       { label: 'Сменить питомца', icon: 'refresh', run: () => openPetPicker() },
       { label: 'Каталог Codex Pets', icon: 'globe', hint: 'codex-pets.net', run: () => openPetCatalog() },

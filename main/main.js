@@ -408,6 +408,7 @@ app.whenReady().then(() => {
     // removed — «Вернуть» brings it back from git anyway
     trash: async (abs) => { try { await shell.trashItem(abs); } catch { fs.unlinkSync(abs); } } }));
   // a separate copy of the project for an agent chat (main/worktrees.js)
+  ipcMain.handle('wt:isRepo', async (e, dir) => !!(await changes.rootOf(String(dir || ''))));
   ipcMain.handle('wt:create', (e, o) => worktrees.create({ cwd: String(o?.cwd || ''), name: String(o?.name || '') }));
   ipcMain.handle('wt:status', (e, w) => worktrees.status(w));
   ipcMain.handle('wt:preview', (e, w) => worktrees.preview(w));

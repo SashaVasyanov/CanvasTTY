@@ -39,7 +39,7 @@ contextBridge.exposeInMainWorld('native', {
   },
   dialog: { folder: inv('dialog:folder') },
   shell: { open: inv('shell:open'), openPath: inv('shell:openPath') },
-  wt: { create: inv('wt:create'), status: inv('wt:status'), preview: inv('wt:preview'), merge: inv('wt:merge'), remove: inv('wt:remove') },
+  wt: { isRepo: inv('wt:isRepo'), create: inv('wt:create'), status: inv('wt:status'), preview: inv('wt:preview'), merge: inv('wt:merge'), remove: inv('wt:remove') },
   changes: { snapshot: inv('changes:snapshot'), since: inv('changes:since'), patch: inv('changes:patch'), restore: inv('changes:restore'), reveal: inv('changes:reveal') },
   clipboard: { write: inv('clipboard:write') },
 });
