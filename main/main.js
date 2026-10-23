@@ -223,6 +223,7 @@ function createWindow() {
     ipcMain.once('app:flushed', done);
     send('app:flush');
   });
+  win.on('focus', () => win.flashFrame(false));
   win.on('maximize', () => send('win:state', { maximized: true }));
   win.on('unmaximize', () => send('win:state', { maximized: false }));
   win.webContents.setWindowOpenHandler(({ url }) => { safeExternal(url); return { action: 'deny' }; });
@@ -284,6 +285,10 @@ app.whenReady().then(() => {
   ipcMain.handle('win:maximize', () => (win.isMaximized() ? win.unmaximize() : win.maximize()));
   ipcMain.handle('win:close', () => win.close());
   ipcMain.handle('win:isMaximized', () => win.isMaximized());
+  // «Ждут вас»: a click on the system notification brings the window back; the taskbar button
+  // flashes while an agent is done and the window is not in focus
+  ipcMain.handle('win:focus', () => { if (win.isMinimized()) win.restore(); win.show(); win.focus(); });
+  ipcMain.handle('win:attention', () => { if (!win.isFocused()) win.flashFrame(true); });
   ipcMain.handle('perf:info', async () => ({
     gpu: app.getGPUFeatureStatus(),
     gpuInfo: await app.getGPUInfo('basic').catch(() => null),
@@ -329,6 +334,7 @@ app.whenReady().then(() => {
   ipcMain.handle('agentchat:abort', (e, reqId) => agentChat.abort(reqId));
   ipcMain.handle('agentchat:attach', (e, o) => agentChat.attach(o));
   ipcMain.handle('agentchat:release', (e, reqId) => agentChat.release(reqId));
+  ipcMain.handle('agentchat:background', () => agentChat.background().map(({ dir, ...r }) => r));
   ipcMain.handle('agentchat:defaults', () => agentDefaults());
   // where Codex keeps the pictures it generated in a session (~/.codex/generated_images/<session>)
   ipcMain.handle('agentchat:imagesDir', (e, sid) => {

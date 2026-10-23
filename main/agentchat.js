@@ -68,7 +68,12 @@ class AgentChatManager {
     this.runs = new Map(); // reqId → run (also finished ones, until the renderer releases them)
     this.runsDir = userData ? path.join(userData, 'agent-runs') : null;
     this.ticker = null;
+    // journal folder → state of runs no window follows (see background()); taken now, so a run that
+    // finishes in the first seconds after the start is reported too
+    this.bgState = new Map(this.background().map((r) => [r.dir, r.state]));
     setTimeout(() => this.prune(), 5000);
+    this.bgTimer = setInterval(() => this.checkBackground(), 4000);
+    this.bgTimer.unref?.();
   }
 
   // absolute paths of the files attached to this message
@@ -263,10 +268,36 @@ class AgentChatManager {
       if (age > JOURNAL_DAYS * 86400e3) this.removeJournal(dir);
     }
   }
+  // Runs no chat window follows right now: their canvas is not open (the app was restarted, or the
+  // run was started before a reload). «Ждут вас» shows the finished ones; state is 'running',
+  // 'done' (the CLI exited) or 'lost' (the helper is gone without finishing).
+  background() {
+    const followed = new Set([...this.runs.values()].filter((r) => !r.stopped).map((r) => r.dir));
+    const out = [];
+    for (const name of this.journalNames()) {
+      const dir = path.join(this.runsDir, name);
+      if (followed.has(dir)) continue;
+      const m = readJson(path.join(dir, 'meta.json'));
+      if (!m || !m.nodeId) continue;
+      const done = fs.existsSync(path.join(dir, 'exit.json'));
+      out.push({ dir, nodeId: m.nodeId, docId: m.docId, kind: m.kind, startedAt: m.startedAt, state: done ? 'done' : pidAlive(m.pid) ? 'running' : 'lost' });
+    }
+    return out;
+  }
+  // tell the window when such a run finishes
+  checkBackground() {
+    if (!this.runsDir) return;
+    const now = this.background();
+    const before = this.bgState;
+    this.bgState = new Map(now.map((r) => [r.dir, r.state]));
+    for (const r of now) if (before.get(r.dir) === 'running' && r.state !== 'running') this.send('agentchat:background', { nodeId: r.nodeId, docId: r.docId, state: r.state });
+  }
+
   // the app is quitting: runs keep going unless the user turned that off
   onQuit() {
     for (const run of this.runs.values()) if (!run.closed && run.meta.keepRunning === false) { killTree(run.pid); run.meta.quit = true; writeJson(path.join(run.dir, 'meta.json'), run.meta); }
     clearInterval(this.ticker); this.ticker = null;
+    clearInterval(this.bgTimer);
   }
 
   env() {

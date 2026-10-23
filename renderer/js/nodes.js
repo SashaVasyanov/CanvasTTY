@@ -12,6 +12,7 @@ import { ChatHistory, saveConversation } from './chathistory.js';
 import { AttachBar, renderAttachments, viewImages } from './attach.js';
 import { chatContext, imagesToAttachments, renderContextRow, renderContextNote, attachMentions } from './context.js';
 import { explainError, ERROR_ACTIONS } from './errors.js';
+import { inbox } from './inbox.js';
 
 // ---------------- routers for main-process events ----------------
 const ptyRoutes = new Map();
@@ -344,6 +345,27 @@ function settleStale(inst) {
   inst.view.setData(inst.node.id, { messages: fixed });
   inst.node = inst.view.node(inst.node.id) || inst.node;
 }
+// Is the user looking at this window right now (app in focus, its canvas open, most of the window
+// on screen and not a card)? Then a finished answer needs no entry in «Ждут вас».
+function watched(inst) {
+  const view = inst.view;
+  if (!document.hasFocus() || document.hidden || view.doc?.id !== inst.docId) return false;
+  const n = view.node(inst.node.id), v = view.views.get(inst.node.id);
+  if (!n || !v || v.culled || view.isCard(n)) return false;
+  const r = view.rect(), z = view.vp.z;
+  const x1 = r.left + view.vp.x + n.x * z, y1 = r.top + view.vp.y + n.y * z, x2 = x1 + n.w * z, y2 = y1 + n.h * z;
+  const seen = Math.max(0, Math.min(x2, r.right) - Math.max(x1, r.left)) * Math.max(0, Math.min(y2, r.bottom) - Math.max(y1, r.top));
+  return seen >= 0.3 * (x2 - x1) * (y2 - y1);
+}
+// an answer ended: «Ждут вас» gets an entry unless the user watched it end
+function reportEnd(inst, kind, text) {
+  if (!kind) return;
+  if (watched(inst)) { inbox.remove(inst.node.id); return; }
+  const view = inst.view;
+  const n = (view.doc?.id === inst.docId && view.node(inst.node.id)) || inst.node;
+  inbox.add({ nodeId: n.id, docId: inst.docId, kind, title: NODE_TYPES[n.type].title(n), text, type: n.type, agentId: n.data.agentId, provider: n.data.provider });
+}
+
 // the last question once more, without the answer that failed or broke off
 function retryLast(inst) {
   const msgs = inst.messages;
@@ -564,6 +586,7 @@ class ChatInstance {
     if (!again) { this.input.value = ''; this.input.style.height = 'auto'; }
     this.mentions?.close();
     // the message and "answering" show at once, the canvas context is collected after that
+    inbox.remove(this.node.id); // a new question: the previous answer has been seen
     const user = { role: 'user', content: text, ts: Date.now(), ...(attachments.length ? { attachments } : {}) };
     const msgs = [...this.messages, user];
     const asst = { role: 'assistant', content: '', running: true, host: state.info.host, ts: Date.now() };
@@ -596,18 +619,19 @@ class ChatInstance {
     chatRoutes.set(reqId, (ev) => {
       if (ev.type === 'delta') { asst.content += ev.text; paint(); }
       else if (ev.type === 'reasoning') { asst.reasoning = (asst.reasoning || '') + ev.text; }
-      else if (ev.type === 'error') { asst.content = `⚠ ${ev.message}`; asst.errorText = String(ev.message || ''); asst.error = true; this.finish(reqId, all); }
-      else if (ev.type === 'done') { if (ev.usage) { asst.usage = ev.usage; } if (!asst.content && ev.aborted) asst.content = '_(остановлено)_'; this.finish(reqId, all); }
+      else if (ev.type === 'error') { asst.content = `⚠ ${ev.message}`; asst.errorText = String(ev.message || ''); asst.error = true; this.finish(reqId, all, { error: true }); }
+      else if (ev.type === 'done') { if (ev.usage) { asst.usage = ev.usage; } if (!asst.content && ev.aborted) asst.content = '_(остановлено)_'; this.finish(reqId, all, ev); }
     });
     const req = msgs.map(({ role, content, attachments: a }, i) => { const all = i === msgs.length - 1 ? [...(a || []), ...ctxAtts] : a || []; return { role, content, ...(all.length ? { attachments: all } : {}) }; });
     await native.chat.send({ reqId, provider: this.node.data.provider || 'openai', model: this.node.data.model, system, messages: req, settings: state.settings });
   }
 
-  async finish(reqId, all) {
+  async finish(reqId, all, ev = {}) {
     chatRoutes.delete(reqId);
     this.streaming = null;
     const last = all[all.length - 1];
     if (last?.running) delete last.running;
+    reportEnd(this, ev.aborted ? null : ev.error ? 'error' : 'done', ev.error ? last?.errorText : last?.content);
     this.sendBtn.innerHTML = icon('send', 16); this.sendBtn.classList.remove('stop');
     activeRuns.delete(this.node.id);
     await patchNodeData(this, { messages: [...all] });
@@ -620,7 +644,7 @@ class ChatInstance {
   }
 
   stop() {
-    if (this.preparing && this.streaming === this.preparing) { const { all, asst } = this._prep; asst.content = '_(остановлено)_'; this.preparing = null; this.finish(this.streaming, all); return; }
+    if (this.preparing && this.streaming === this.preparing) { const { all, asst } = this._prep; asst.content = '_(остановлено)_'; this.preparing = null; this.finish(this.streaming, all, { aborted: true }); return; }
     const r = this.streaming || runOf(this)?.streaming; if (r) native.chat.abort(r);
   }
   isBusy() { return !!(this.streaming || runOf(this)); }
@@ -945,6 +969,7 @@ class AgentChatInstance {
     this.mentions?.close();
     // the message and "working" show at once; collecting the canvas context (pictures of a big
     // area) may take a moment and happens after that
+    inbox.remove(this.node.id); // a new question: the previous answer has been seen
     const user = { role: 'user', content: text, ts: Date.now(), ...(attachments.length ? { attachments } : {}) };
     const asst = { role: 'assistant', content: '', parts: [], running: true, host: state.info.host, ts: Date.now() };
     const all = [...this.messages, user, asst];
@@ -1019,6 +1044,8 @@ class AgentChatInstance {
     if (ev.aborted) asst.parts.push({ type: 'notice', text: 'Остановлено' });
     if (ev.interrupted) { asst.interrupted = true; asst.parts.push({ type: 'notice', text: INTERRUPTED }); }
     asst.content = asst.parts.filter((p) => p.type === 'text').map((p) => p.text).join('\n\n').trim();
+    const err = asst.parts.find((p) => p.type === 'error');
+    reportEnd(this, ev.aborted ? null : ev.interrupted ? 'interrupted' : err ? 'error' : asst.needsInput ? 'wait' : 'done', err ? err.text : asst.content);
     activeRuns.delete(this.node.id);
     await patchNodeData(this, { messages: [...all], ...(ev.sessionId ? { sessionId: ev.sessionId } : {}) });
     native.agentChat.release?.(reqId); // the answer is saved: main may delete the run's journal

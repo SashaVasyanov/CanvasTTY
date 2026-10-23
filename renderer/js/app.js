@@ -10,6 +10,7 @@ import { vaultIndex } from './vaultIndex.js';
 import { Sidebar, NotePanel, openGraph } from './notes.js';
 import { setFpsMeter, toggleFpsMeter, runPerfTest } from './perf.js';
 import { AgentWatch, Companion, loadCodexPets, codexPetFor } from './companion.js';
+import { inbox, INBOX_KINDS, badgeOf, ago, projectOf } from './inbox.js';
 import { limits, limitsPanel, petSvg, LIMIT_SOURCES, PETS, openPetPicker, openPetCatalog, CLOCK_PRESETS, CLOCK_DEFAULT, clockColors, paintClock, clockMarkup } from './hub.js';
 
 const VERSION = '1.4.0';
@@ -42,7 +43,73 @@ class App {
     limits.refresh();
     setInterval(() => this.canvas.refreshStatuses(), 1000);
     if (localStorage.getItem('sidebar') === '1') this.toggleSidebar(true);
+    this.bindInbox();
     document.getElementById('boot')?.remove();
+  }
+
+  // ---------------- «Ждут вас» ----------------
+  bindInbox() {
+    const paint = () => {
+      const n = inbox.count;
+      this.inboxCount.textContent = n > 9 ? '9+' : n ? String(n) : '';
+      this.inboxBtn.classList.toggle('has', n > 0);
+      this.inboxBtn.title = n ? `Ждут вас: ${n}` : 'Ждут вас: агенты, которые закончили или ждут разрешения';
+    };
+    bus.on('inbox', paint);
+    bus.on('inbox:open', (it) => this.openInboxItem(it));
+    paint();
+    // a click into a window means it has been seen
+    this.canvas.root.addEventListener('pointerdown', (e) => { const el = e.target.closest?.('.node[data-id]'); if (el) inbox.remove(el.dataset.id); }, true);
+    // answers agents finished in the background while their canvas was not open (or the app closed)
+    const add = async (r) => {
+      if (r.state === 'running' || !r.docId) return;
+      if (state.doc?.id === r.docId && this.canvas.views.has(r.nodeId)) return; // the window picks it up itself
+      let title = 'Чат агента', n = null;
+      try { n = (await native.canvas.load(r.docId))?.nodes?.find((x) => x.id === r.nodeId); } catch {}
+      if (!n) return; // the window was deleted
+      title = NODE_TYPES[n.type]?.title(n) || title;
+      inbox.add({ nodeId: r.nodeId, docId: r.docId, kind: r.state === 'lost' ? 'interrupted' : 'background', title, text: r.state === 'lost' ? 'Агент остановился, не закончив ответ' : 'Агент закончил, пока окно было закрыто', type: n.type, agentId: n.data.agentId }, { notify: true });
+    };
+    native.agentChat.background?.().then((list) => { for (const r of list || []) add(r); }).catch(() => {});
+    native.agentChat.onBackground?.((r) => add(r));
+  }
+  async openInboxItem(it) {
+    inbox.remove(it.nodeId);
+    const p = projectOf(it.docId);
+    if (!p) { toast('Этого canvas больше нет', 'warn'); return; }
+    if (state.doc?.id !== it.docId) await state.openCanvas(p.id, it.docId);
+    if (!this.canvas.node(it.nodeId)) { toast('Окно уже удалено', 'warn'); return; }
+    this.canvas.focusNode(it.nodeId);
+  }
+  showInbox(anchor) {
+    document.querySelector('.inbox-pop')?.remove();
+    const list = h('div', { class: 'inbox-list' });
+    const clearBtn = h('button', { class: 'btn sm', onclick: () => inbox.clear() }, 'Очистить');
+    const pop = h('div', { class: 'popover inbox-pop' },
+      h('div', { class: 'inbox-head' }, h('b', {}, 'Ждут вас'), clearBtn), list);
+    const close = () => { pop.remove(); off(); document.removeEventListener('pointerdown', away, true); };
+    const render = () => {
+      clearBtn.disabled = !inbox.count;
+      list.replaceChildren();
+      if (!inbox.count) { list.append(h('div', { class: 'inbox-empty muted' }, 'Здесь появятся агенты и чаты, которые закончили, ждут разрешения или упали с ошибкой, пока вы были в другом месте.')); return; }
+      for (const it of inbox.items) {
+        const b = badgeOf(it), k = INBOX_KINDS[it.kind];
+        list.append(h('button', { class: 'inbox-item', title: 'Открыть окно', onclick: () => { close(); this.openInboxItem(it); } },
+          badge(b.mono, b.color, 22, b.dark),
+          h('div', { class: 'inbox-main' },
+            h('div', { class: 'inbox-top' }, h('span', { class: 'inbox-title' }, it.title), h('span', { class: `inbox-kind ${k.cls}` }, k.label)),
+            it.text ? h('div', { class: 'inbox-text' }, it.text) : null,
+            h('div', { class: 'inbox-meta' }, [it.where, ago(it.ts)].filter(Boolean).join(' · ')))));
+      }
+    };
+    const off = bus.on('inbox', render);
+    render();
+    document.body.append(pop);
+    const r = anchor.getBoundingClientRect(), pr = pop.getBoundingClientRect();
+    pop.style.left = `${Math.min(innerWidth - pr.width - 10, Math.max(10, r.right - pr.width))}px`;
+    pop.style.top = `${r.bottom + 8}px`;
+    const away = (e) => { if (!pop.contains(e.target) && !anchor.contains(e.target)) close(); };
+    setTimeout(() => document.addEventListener('pointerdown', away, true), 0);
   }
 
   // ---------------- shell ----------------
@@ -52,6 +119,9 @@ class App {
     this.projBtn = h('button', { class: 'proj-btn', onclick: (e) => this.projectMenu(e) });
     this.tabs = h('div', { class: 'canvas-tabs' });
     this.limitsBtn = h('button', { class: 'tb-icon', title: 'Лимиты нейросетей', html: icon('gauge', 16), onclick: (e) => this.showLimits(e.currentTarget) });
+    this.inboxCount = h('span', { class: 'inbox-count' });
+    this.inboxBtn = h('button', { class: 'tb-icon inbox-btn', title: 'Ждут вас: агенты, которые закончили или ждут разрешения', html: icon('bell', 16), onclick: (e) => this.showInbox(e.currentTarget) });
+    this.inboxBtn.append(this.inboxCount);
     const title = h('header', { class: 'titlebar' },
       h('div', { class: 'tb-left' },
         h('img', { class: 'app-logo', src: 'assets/logo64.png', alt: '' }),
@@ -60,6 +130,7 @@ class App {
       h('div', { class: 'tb-center' }, this.projBtn, this.tabs),
       h('div', { class: 'tb-right' },
         h('button', { class: 'tb-icon', title: 'Заметки и canvas (Ctrl+\\)', html: icon('sidebar', 16), onclick: () => this.toggleSidebar() }),
+        this.inboxBtn,
         h('button', { class: 'tb-icon', title: 'Поиск команд (Ctrl+P)', html: icon('search', 16), onclick: () => this.palette() }),
         this.themeBtn = h('button', { class: 'tb-icon', title: 'Светлая / тёмная тема', onclick: () => this.toggleTheme() }),
         h('button', { class: 'tb-icon', title: 'Инструкция (F1)', html: icon('help', 16), onclick: () => this.openHelp() }),
@@ -659,6 +730,7 @@ class App {
       { label: 'Пульт агентов на canvas', icon: 'gauge', run: () => this.canvas.addNode('hub', {}) },
       { label: 'Показать всё', icon: 'home', hint: 'Shift+1', run: () => this.canvas.fit() },
       { label: 'Лимиты нейросетей', icon: 'gauge', run: () => this.showLimits(this.limitsBtn) },
+      { label: 'Ждут вас — агенты, которые закончили', icon: 'bell', run: () => this.showInbox(this.inboxBtn) },
       { label: 'Настройки', icon: 'settings', hint: 'Ctrl+,', run: () => this.openSettings() },
       { label: 'Сменить питомца', icon: 'refresh', run: () => openPetPicker() },
       { label: 'Каталог Codex Pets', icon: 'globe', hint: 'codex-pets.net', run: () => openPetCatalog() },
@@ -881,7 +953,11 @@ class App {
       // chat windows: the agent keeps answering when the app is closed (main/agent-runner.js)
       const keep = h('input', { type: 'checkbox', class: 'switch' }); keep.checked = s.agentsKeepRunning !== false;
       keep.onchange = () => state.setSetting('agentsKeepRunning', keep.checked);
+      const notify = h('input', { type: 'checkbox', class: 'switch' }); notify.checked = s.notifyAgents !== false;
+      notify.onchange = () => state.setSetting('notifyAgents', notify.checked);
       wrap.append(h('h3', {}, 'Окна чатов с агентами'),
+        h('div', { class: 'set-row' }, h('div', {}, h('div', { class: 'set-label' }, 'Уведомлять, когда агент закончил'),
+          h('div', { class: 'muted small' }, 'Системное уведомление и мигающая кнопка на панели задач, если VibeTabula не в фокусе. Список таких чатов — колокольчик «Ждут вас» вверху.')), notify),
         h('div', { class: 'set-row' }, h('div', {}, h('div', { class: 'set-label' }, 'Агент продолжает работать после закрытия приложения'),
           h('div', { class: 'muted small' }, 'Ответ дописывается в фоне и появляется в окне чата при следующем запуске. Если выключить, закрытие приложения останавливает агента, а в чате появляется кнопка «Продолжить».')), keep));
     };

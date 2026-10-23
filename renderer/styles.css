@@ -117,6 +117,24 @@ code.path { font: 12px var(--mono); color: var(--text-2); background: rgba(var(-
 .tb-right { display: flex; align-items: center; gap: 2px; flex: none; }
 .tb-icon { width: 32px; height: 28px; display: grid; place-items: center; border-radius: 7px; color: var(--text-2); }
 .tb-icon:hover { background: rgba(var(--fg-rgb), 0.07); color: var(--text); }
+/* «Ждут вас»: a bell with the number of chats waiting */
+.inbox-btn { position: relative; }
+.inbox-btn .inbox-count { position: absolute; top: 1px; right: 1px; min-width: 15px; height: 15px; padding: 0 4px; border-radius: 8px; background: var(--red); color: #fff; font-size: 10px; font-weight: 700; line-height: 15px; text-align: center; display: none; font-variant-numeric: tabular-nums; }
+.inbox-btn.has .inbox-count { display: block; }
+.inbox-btn.has { color: var(--text); }
+.inbox-pop { width: 360px; max-height: min(520px, calc(100vh - 80px)); display: flex; flex-direction: column; padding: 6px; }
+.inbox-head { display: flex; align-items: center; justify-content: space-between; padding: 6px 8px 8px; }
+.inbox-list { overflow: auto; display: flex; flex-direction: column; gap: 2px; }
+.inbox-empty { padding: 10px 8px 12px; font-size: 12.5px; line-height: 1.45; }
+.inbox-item { display: flex; gap: 10px; align-items: flex-start; text-align: left; padding: 8px; border-radius: 9px; width: 100%; color: var(--text); }
+.inbox-item:hover { background: rgba(var(--fg-rgb), 0.06); }
+.inbox-main { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.inbox-top { display: flex; align-items: baseline; gap: 8px; }
+.inbox-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+.inbox-kind { font-size: 11px; font-weight: 600; flex-shrink: 0; }
+.inbox-kind.ok { color: var(--green); } .inbox-kind.wait { color: var(--amber); } .inbox-kind.err { color: var(--red); }
+.inbox-text { font-size: 12px; color: var(--text-2); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.inbox-meta { font-size: 11px; color: var(--muted); }
 .win-ctrls { display: flex; margin-left: 8px; }
 .win-btn { width: 46px; height: 38px; display: grid; place-items: center; color: var(--text-2); }
 .win-btn:hover { background: rgba(var(--fg-rgb), 0.08); color: var(--text); }

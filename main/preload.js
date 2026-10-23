@@ -9,7 +9,7 @@ const inv = (channel) => (...args) => ipcRenderer.invoke(channel, ...args);
 
 contextBridge.exposeInMainWorld('native', {
   isElectron: true,
-  win: { minimize: inv('win:minimize'), maximize: inv('win:maximize'), close: inv('win:close'), isMaximized: inv('win:isMaximized'), onState: on('win:state') },
+  win: { minimize: inv('win:minimize'), maximize: inv('win:maximize'), close: inv('win:close'), isMaximized: inv('win:isMaximized'), focus: inv('win:focus'), attention: inv('win:attention'), onState: on('win:state') },
   info: inv('app:info'),
   ws: { load: inv('ws:load'), save: inv('ws:save') },
   canvas: { load: inv('canvas:load'), save: inv('canvas:save'), remove: inv('canvas:delete') },
@@ -21,7 +21,7 @@ contextBridge.exposeInMainWorld('native', {
     onData: on('pty:data'), onExit: on('pty:exit'),
   },
   chat: { providers: inv('chat:providers'), send: inv('chat:send'), abort: inv('chat:abort'), models: inv('chat:models'), onEvent: on('chat:event') },
-  agentChat: { run: inv('agentchat:run'), abort: inv('agentchat:abort'), attach: inv('agentchat:attach'), release: inv('agentchat:release'), defaults: inv('agentchat:defaults'), imagesDir: inv('agentchat:imagesDir'), onEvent: on('agentchat:event') },
+  agentChat: { run: inv('agentchat:run'), abort: inv('agentchat:abort'), attach: inv('agentchat:attach'), release: inv('agentchat:release'), background: inv('agentchat:background'), onBackground: on('agentchat:background'), defaults: inv('agentchat:defaults'), imagesDir: inv('agentchat:imagesDir'), onEvent: on('agentchat:event') },
   setBg: inv('win:setBg'),
   perf: { info: inv('perf:info'), save: inv('perf:save') },
   history: { list: inv('history:list'), get: inv('history:get'), save: inv('history:save'), remove: inv('history:remove') },
