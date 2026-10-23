@@ -39,6 +39,15 @@ const markExt = {
 const noteMd = new M.Marked({ gfm: true, breaks: true });
 noteMd.use({ extensions: [wikilinkExt, tagExt, markExt] });
 
+// a link's target if it is a file path (C:\…, /…, ~/…, file://…, or relative to the agent's folder)
+export function localPath(href) {
+  let p = String(href || '').trim();
+  try { p = decodeURI(p); } catch {}
+  if (!p || p.startsWith('#')) return null;
+  if (/^file:/i.test(p) || /^[a-z]:[\\/]/i.test(p) || /^(\\\\|\/|~[\\/])/.test(p)) return p;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(p)) return null; // another scheme (javascript:, vscode:…)
+  return /[\\/.]/.test(p) ? p : null; // out/report.xlsx, README.md
+}
 const chatMd = new M.Marked({ gfm: true, breaks: true });
 chatMd.use({
   extensions: [wikilinkExt],
@@ -50,6 +59,9 @@ chatMd.use({
     },
     link(token) {
       const href = /^(https?:|mailto:)/i.test(token.href || '') ? token.href : '#';
+      const file = href === '#' ? localPath(token.href) : null;
+      // a file on this computer (the agent wrote it): a click shows it in Explorer / Finder
+      if (file) return `<a href="#" class="file-link" data-path="${esc(file)}" title="Показать в проводнике: ${esc(file)}">${this.parser.parseInline(token.tokens)}</a>`;
       return `<a href="${esc(href)}" target="_blank" rel="noreferrer">${this.parser.parseInline(token.tokens)}</a>`;
     },
     image(token) { return `<span class="muted">[изображение: ${esc(token.text || token.href)}]</span>`; },

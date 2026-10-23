@@ -211,6 +211,7 @@ export const mockNative = {
     reveal: async () => {}, onChanged: on('vault:changed'),
   },
   dialog: { folder: async () => '/demo/project' },
-  shell: { open: async (u) => window.open(u, '_blank'), openPath: async () => {} },
+  // reveal: tests read window.__revealed and set window.__revealResult (an error text) — like main.js shell:reveal
+  shell: { open: async (u) => window.open(u, '_blank'), openPath: async () => {}, reveal: async (o) => { (window.__revealed ||= []).push(o); return window.__revealResult || ''; } },
   clipboard: { write: async (t) => navigator.clipboard?.writeText(t) },
 };

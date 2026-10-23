@@ -4,7 +4,7 @@ import { cssColor, wantsWhiteText, BAR_COLORS, OBJECT_COLORS, STICKY_COLORS } fr
 import { sanitizeHtml, htmlText } from './sanitize.js';
 import { WIDGETS, mountWidget } from './widgets.js';
 import { state, native, PROVIDER_META, providerName, editCanvasFile } from './state.js';
-import { renderChatMarkdown } from './md.js';
+import { renderChatMarkdown, localPath } from './md.js';
 import { RichEditor } from './editor.js';
 import { vaultIndex } from './vaultIndex.js';
 import { mountHub } from './hub.js';
@@ -411,6 +411,69 @@ function reportEnd(inst, kind, text) {
   inbox.add({ nodeId: n.id, docId: inst.docId, kind, title: NODE_TYPES[n.type].title(n), text, type: n.type, agentId: n.data.agentId, provider: n.data.provider });
 }
 
+// ---------------- files an agent made or named, shown in Explorer / Finder ----------------
+// { path, cwd }: cwd is the folder a relative path is taken from (main.js shell:reveal)
+const FILE_TOOLS = /^(Edit|Write|MultiEdit|NotebookEdit|Create|Файлы)$/;
+const KIND = /^(add|update|create|modify|delete|remove|rename|move)\s+(.+)$/i;
+const ABS_PATH = /^(?:[a-z]:[\\/]|\\\\|\/|~[\\/])\S/i;
+const baseName = (p) => String(p).replace(/[\\/]+$/, '').split(/[\\/]/).pop() || p;
+// paths of one tool call; deleted files are left out
+function toolFiles(p) {
+  if (p?.type !== 'tool' || !p.input || !FILE_TOOLS.test(p.name)) return [];
+  if (p.name !== 'Файлы') return [p.input.split('\n')[0].trim()].filter(Boolean);
+  return p.input.split('\n').map((l) => l.trim()).filter(Boolean).map((l) => { const k = KIND.exec(l); return k ? (/^(delete|remove)$/i.test(k[1]) ? null : k[2].trim()) : l; }).filter(Boolean);
+}
+// paths in an answer's text: links to files and `C:\…` / `/…` in inline code
+function textFiles(text) {
+  const out = [];
+  for (const m of String(text || '').matchAll(/\]\(<?([^)>\s]+)>?\)/g)) { const f = localPath(m[1]); if (f) out.push(f); }
+  for (const m of String(text || '').matchAll(/`([^`\n]{3,300})`/g)) if (ABS_PATH.test(m[1].trim())) out.push(m[1].trim());
+  return out;
+}
+// every file of a message, at most 15
+function messageFiles(inst, m) {
+  const cwd = inst.cwd || inst.node.data.cwd || '';
+  const seen = new Set(), out = [];
+  const add = (path, base = cwd) => { const k = `${base}|${path}`; if (path && !seen.has(k) && out.length < 15) { seen.add(k); out.push({ path, cwd: base }); } };
+  for (const p of m.parts || []) { for (const f of toolFiles(p)) add(f); if (p.type === 'text') for (const f of textFiles(p.text)) add(f); }
+  if (!m.parts) for (const f of textFiles(m.content)) add(f);
+  for (const f of m.changes?.files || []) if (f.status !== 'D') add(f.path, m.changes.root);
+  for (const f of m.touched || []) add(f);
+  return out;
+}
+// the file(s) under the mouse: a link, a tool call, a path in inline code
+function filesAt(inst, target) {
+  const cwd = inst.cwd || inst.node.data.cwd || '';
+  const link = target?.closest?.('a.file-link');
+  if (link) return [{ path: link.dataset.path, cwd }];
+  const tool = target?.closest?.('.tool-call');
+  if (tool?._part) return toolFiles(tool._part).map((path) => ({ path, cwd }));
+  const code = target?.closest?.('code');
+  const t = code && !code.closest('pre') ? code.textContent.trim() : '';
+  return ABS_PATH.test(t) ? [{ path: t, cwd }] : [];
+}
+async function revealFile(f) {
+  if (!native.shell?.reveal) { toast('Доступно в приложении', 'warn'); return; }
+  const r = await native.shell.reveal(f);
+  if (r) toast(r, /открыта папка/.test(r) ? 'info' : 'warn');
+}
+const fullPath = (f) => (ABS_PATH.test(f.path) || /^file:/i.test(f.path) || !f.cwd ? f.path : `${f.cwd.replace(/[\\/]+$/, '')}${f.cwd.includes('\\') ? '\\' : '/'}${f.path.replace(/^\.[\\/]/, '')}`);
+// menu items: the clicked file first, else the files of the message
+function fileItems(inst, target, m) {
+  const here = filesAt(inst, target);
+  const files = here.length ? here : messageFiles(inst, m);
+  if (!files.length) return [];
+  if (files.length === 1) {
+    const f = files[0];
+    return [
+      { label: `Показать «${clip(baseName(f.path), 40)}» в проводнике`, icon: 'folder', onClick: () => revealFile(f) },
+      { label: 'Копировать путь к файлу', icon: 'copy', onClick: () => { native.clipboard.write(fullPath(f)); toast('Путь скопирован'); } },
+    ];
+  }
+  return [{ label: here.length ? 'Показать в проводнике' : 'Файлы ответа — показать в проводнике', icon: 'folder', children: files.map((f) => ({ label: clip(baseName(f.path), 48), hint: clip(fullPath(f), 60), onClick: () => revealFile(f) })) }];
+}
+const clip = (s, n) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
+
 // the message under the mouse (its element carries data-i); -1 outside messages
 function msgIndexAt(inst, target) {
   const el = target?.closest?.('.msg[data-i]');
@@ -713,6 +776,8 @@ class ChatInstance {
       if (btn) { const code = btn.closest('.code-block').querySelector('code').textContent; native.clipboard.write(code); btn.textContent = 'Скопировано'; setTimeout(() => { btn.textContent = 'Копировать'; }, 1200); }
       const act = e.target.closest('[data-act]');
       if (act) this.msgAction(act.dataset.act, +act.dataset.i);
+      const file = e.target.closest('a.file-link');
+      if (file) { e.preventDefault(); revealFile({ path: file.dataset.path, cwd: this.cwd || this.node.data.cwd || '' }); }
     });
     this.offEdges = bindContext(this);
     this.offRelay = bindRelayStop(this);
@@ -772,6 +837,7 @@ class ChatInstance {
     const i = msgIndexAt(this, target), m = this.messages[i];
     if (!m || m.running) return [];
     return [
+      ...fileItems(this, target, m),
       { label: m.role === 'user' ? 'Копировать сообщение' : 'Копировать ответ', icon: 'copy', onClick: () => this.msgAction('copy', i) },
       ...(m.role === 'assistant' ? [
         { label: 'Ответ в заметку', icon: 'note', onClick: () => this.msgAction('note', i) },
@@ -1006,6 +1072,8 @@ class AgentChatInstance {
       if (btn) { native.clipboard.write(btn.closest('.code-block').querySelector('code').textContent); btn.textContent = 'Скопировано'; setTimeout(() => { btn.textContent = 'Копировать'; }, 1200); }
       const act = e.target.closest('[data-act]');
       if (act) this.msgAction(act.dataset.act, +act.dataset.i);
+      const file = e.target.closest('a.file-link');
+      if (file) { e.preventDefault(); revealFile({ path: file.dataset.path, cwd: this.cwd || this.node.data.cwd || '' }); }
     });
     this.offEdges = bindContext(this);
     this.offRelay = bindRelayStop(this);
@@ -1228,6 +1296,7 @@ class AgentChatInstance {
           h('summary', {}, h('span', { class: 'tool-dot' }), h('b', {}, p.name), h('span', { class: 'tool-input' }, (p.input || '').split('\n')[0])));
         if (p.input && p.input.includes('\n')) d.append(h('pre', { class: 'tool-in' }, p.input));
         if (p.output) d.append(h('pre', { class: 'tool-out' }, p.output));
+        d._part = p; // right click: the files of this call (fileItems)
         return d;
       }
       if (p.type === 'error') return renderError(p.text, { source: this.kind, name: this.agent.name, model: this.node.data.model, install: this.agent.install, cmd: this.agent.cmd, exitCode: p.code });
@@ -1277,6 +1346,7 @@ class AgentChatInstance {
     const i = msgIndexAt(this, target), m = this.messages[i];
     if (!m || m.running) return [];
     return [
+      ...fileItems(this, target, m),
       { label: m.role === 'user' ? 'Копировать сообщение' : 'Копировать ответ', icon: 'copy', onClick: () => this.msgAction('copy', i) },
       ...(m.role === 'assistant' && m.content ? [{ label: 'Ответ в заметку', icon: 'note', onClick: () => this.msgAction('note', i) }] : []),
     ];

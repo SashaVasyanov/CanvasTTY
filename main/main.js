@@ -449,6 +449,26 @@ app.whenReady().then(() => {
   });
   // folders only (opening a file could run it)
   ipcMain.handle('shell:openPath', (e, p) => { try { if (fs.statSync(String(p)).isDirectory()) return shell.openPath(String(p)); } catch {} return 'Можно открыть только папку'; });
+  // a file an agent made or named in a chat: shown in Explorer / Finder (selected in its folder).
+  // Nothing is opened or run — a folder opens as a folder, a file only gets selected.
+  // { path, cwd }: a relative path is taken from the chat's working folder. → '' or what went wrong
+  ipcMain.handle('shell:reveal', (e, o) => {
+    let p = String(o?.path || '').trim();
+    if (!p || p.length > 4096) return 'Пустой путь';
+    if (/^file:/i.test(p)) { try { p = require('url').fileURLToPath(p); } catch { return 'Неверный путь'; } }
+    if (/^~(?=[\\/]|$)/.test(p)) p = path.join(os.homedir(), p.slice(1));
+    p = p.replace(/#L\d+(-L?\d+)?$/i, '').replace(/(\.[^\\/.:]+):\d+(:\d+)?$/, '$1'); // file.py:12, file.py#L12
+    if (!path.isAbsolute(p)) {
+      const base = String(o?.cwd || '');
+      if (!base || !path.isAbsolute(base)) return 'Путь указан относительно папки, которой здесь нет';
+      p = path.resolve(base, p);
+    }
+    p = path.normalize(p);
+    try { if (fs.statSync(p).isDirectory()) { shell.openPath(p); return ''; } shell.showItemInFolder(p); return ''; } catch {}
+    const dir = path.dirname(p);
+    try { if (fs.statSync(dir).isDirectory()) { shell.openPath(dir); return 'Файла уже нет — открыта папка, где он был'; } } catch {}
+    return 'Файл не найден на этом компьютере';
+  });
   ipcMain.handle('clipboard:write', (e, text) => clipboard.writeText(text));
 
   // canvas tools of the agents: the MCP server of a run asks here, the window (renderer/js/canvasTools.js) answers
