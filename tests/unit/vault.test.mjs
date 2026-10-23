@@ -73,6 +73,11 @@ describe('создание заметок', () => {
     assert.equal(await v.create('Папка', 'Идея', 'текст'), 'Папка/Идея.md');
     assert.equal(await v.create('Папка', 'Идея'), 'Папка/Идея 1.md');
     assert.equal(await v.create('', '  '), 'Без названия.md');
+    // names Windows keeps for devices (CON, NUL, COM1…) and trailing dots are not file names there
+    assert.equal(await v.create('', 'NUL'), 'NUL (заметка).md');
+    assert.equal(await v.create('', 'con.txt'), 'con.txt (заметка).md');
+    assert.equal(await v.create('', 'Concert'), 'Concert.md');
+    assert.equal(await v.create('', 'Итог...'), 'Итог.md');
     assert.equal(read('Папка/Идея.md'), 'текст');
   });
 

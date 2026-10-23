@@ -62,30 +62,39 @@ export function freeSpot(nodes, anchor, w, h, { area = null } = {}) {
   return { x: Math.max(...nodes.map((n) => n.x + n.w)) + GAP, y: anchor.y };
 }
 
-// the smallest area that holds the rectangle (for a canvas edited in its file)
+// the smallest area that holds the rectangle and is bigger than it (for a canvas edited in its
+// file; like the view's own grouping, two areas of the same size never hold each other)
 function frameFor(nodes, r, selfId = null) {
   let best = null;
-  for (const f of nodes) if (f.type === 'frame' && f.id !== selfId && inside(r, f) && (!best || f.w * f.h < best.w * best.h)) best = f;
+  for (const f of nodes) if (f.type === 'frame' && f.id !== selfId && inside(r, f) && f.w * f.h > r.w * r.h && (!best || f.w * f.h < best.w * best.h)) best = f;
   return best;
 }
 
 // ---------------- the canvas an agent works on ----------------
-// the canvas on screen: changes go through the view (one undo step per answer)
-let undoMark = null; // { run, snap }: the undo step taken before the last run's first change
+// the canvas on screen: changes go through the view. Everything one answer adds is one undo step —
+// as long as nothing else changed the canvas in between (the user, sync, a widget): then the next
+// addition starts a new step, so Ctrl+Z never takes back more than the agent did.
+const VOLATILE = new Set(['messages', 'sessionId', 'convId', 'ctxHash', 'actualModel', 'draft']); // as the view's undo keeps them
+const layoutOf = (doc) => JSON.stringify({ e: doc.edges, n: doc.nodes.map((n) => (['chat', 'agentchat', 'terminal'].includes(n.type) ? { ...n, data: Object.fromEntries(Object.entries(n.data || {}).filter(([k]) => !VOLATILE.has(k))) } : n)) });
+let undoMark = null; // { run, snap, after }: the step taken before the run's first change, the layout after its last
+export class Moved extends Error {}
 function liveCanvas(view, run) {
+  const doc = view.doc;
   const step = () => {
+    // the user went to another canvas while the request waited: this one is in its file now
+    if (view.doc !== doc) throw new Moved('холст закрыт');
     const top = view.undoStack[view.undoStack.length - 1];
-    if (undoMark?.run === run && top === undoMark.snap) return; // nothing else happened since: the same step
+    if (undoMark?.run === run && top === undoMark.snap && layoutOf(doc) === undoMark.after) return;
     view.checkpoint();
-    undoMark = { run, snap: view.undoStack[view.undoStack.length - 1] };
+    undoMark = { run, snap: view.undoStack[view.undoStack.length - 1], after: null };
   };
+  const done = (r) => { if (undoMark?.run === run) undoMark.after = layoutOf(doc); return r; };
   return {
-    live: true, doc: view.doc, view,
+    live: true, doc, view,
     node: (id) => view.node(id),
-    add(type, geom, data) { step(); return view.addNode(type, { ...geom, data }, { select: false, checkpoint: false, center: false }); },
-    edge(from, to, extra) { step(); return view.addEdge(from, to, extra, { checkpoint: false }); },
-    update(id, patch) { step(); view.updateNode(id, patch); },
-    save: async () => {},
+    add(type, geom, data) { step(); return done(view.addNode(type, { ...geom, data }, { select: false, checkpoint: false, center: false })); },
+    edge(from, to, extra) { step(); return done(view.addEdge(from, to, extra, { checkpoint: false })); },
+    update(id, patch) { step(); view.updateNode(id, patch); done(); },
   };
 }
 // a canvas that is not on screen: its file
@@ -102,7 +111,7 @@ function fileCanvas(doc) {
       if (host) n.parent = host.id;
       if (type === 'frame') {
         for (const x of doc.nodes) {
-          if (x.id === n.id || !inside(x, n)) continue;
+          if (x.id === n.id || !inside(x, n) || x.w * x.h >= n.w * n.h) continue;
           const cur = x.parent && node(x.parent);
           if (!cur || inside(n, cur)) x.parent = n.id; // the new area is the closer one
         }
@@ -189,15 +198,15 @@ const ops = {
     const n = c.add('text', spot(c, self, a, w, h), { html: textHtml(text), size, createdBy: self.id });
     return `Текст добавлен: [${n.id}] · ${where(n)}`;
   },
-  async create_note(c, self, t, a) {
+  async create_note(c, self, t, a, ctx) {
     const title = str(a.title, 'title', 120).replace(/\s+/g, ' ').trim();
     const name = title.replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim() || 'Заметка агента';
     const md = typeof a.markdown === 'string' ? a.markdown : '';
     if (md.length > 200000) throw new Error('markdown: заметка слишком большая');
-    const path = await native.vault.create(NOTE_FOLDER, name, /^#\s/.test(md) ? md : `# ${title}\n\n${md}`);
-    vaultIndex.refresh?.();
-    const n = c.add('note', spot(c, self, a, 420, 380), { path, createdBy: self.id });
-    return `Заметка добавлена: [${n.id}] · файл «${path}» в заметках пользователя · ${where(n)}`;
+    const geom = spot(c, self, a, 420, 380); // a wrong near / area fails before any file is made
+    if (!ctx.notePath) { ctx.notePath = await native.vault.create(NOTE_FOLDER, name, /^#\s/.test(md) ? md : `# ${title}\n\n${md}`); vaultIndex.refresh?.(); }
+    const n = c.add('note', c.live ? spot(c, self, a, 420, 380) : geom, { path: ctx.notePath, createdBy: self.id });
+    return `Заметка добавлена: [${n.id}] · файл «${ctx.notePath}» в заметках пользователя · ${where(n)}`;
   },
   async create_area(c, self, t, a) {
     const title = str(a.title, 'title', 120);
@@ -237,7 +246,7 @@ const ops = {
     if (!n) throw new Error(`Объекта ${a.id} нет на холсте`);
     if (n.data?.createdBy !== self.id) throw new Error('Менять можно только объекты, которые вы добавили сами в этом окне чата. Чужие объекты пользователь правит сам — предложите ему правку текстом или добавьте новый стикер рядом.');
     const text = typeof a.text === 'string' ? a.text : '';
-    if (text.length > 200000) throw new Error('text: слишком длинный текст');
+    if (text.length > (n.type === 'note' ? 200000 : 4000)) throw new Error(`text: слишком длинный текст (не больше ${n.type === 'note' ? 200000 : 4000} символов)`);
     switch (n.type) {
       case 'sticky': case 'shape': c.update(n.id, { data: { text } }); break;
       case 'text': c.update(n.id, { data: { html: textHtml(text) } }); break;
@@ -264,40 +273,50 @@ function tell(view, self, n) {
 }
 
 // target: { nodeId, docId, run } — decided by the main process from the run's token
-export async function canvasRequest(view, target, op, args = {}) {
+// deadline: the main process stops waiting for the answer then (the agent would get an error and
+// try again), so a request that only gets its turn after it does nothing
+export async function canvasRequest(view, target, op, args = {}, { deadline = 0 } = {}) {
   const fn = Object.hasOwn(ops, op) ? ops[op] : null;
   if (!fn) throw new Error(`Нет такого действия: ${op}`);
   if (state.settings?.canvasTools === false) throw new Error('Пользователь выключил инструменты холста в настройках VibeTabula.');
   const write = WRITES.has(op);
-  if (write && op !== 'update_text' && op !== 'connect') {
+  if (op.startsWith('create_')) { // every call counts, also one that fails half-way (a note's file is made first)
     const k = perRun.get(target.run) || 0;
     if (k >= MAX_PER_RUN) throw new Error(`За один ответ можно добавить не больше ${MAX_PER_RUN} объектов`);
+    perRun.set(target.run, k + 1);
   }
+  const ctx = {}; // what this request already made (a note's file), if it is redone in the canvas file
   const work = async (c) => {
+    if (deadline && Date.now() > deadline) throw new Error('VibeTabula был занят и не успел выполнить запрос — ничего не изменено, повторите его.');
     const self = c.node(target.nodeId);
     if (!self) throw new Error('Окна этого чата больше нет на холсте');
     const before = c.doc.nodes.length;
-    const r = await fn(c, self, target, args || {});
+    const r = await fn(c, self, target, args || {}, ctx);
     const added = c.doc.nodes.length - before;
-    if (added > 0) perRun.set(target.run, (perRun.get(target.run) || 0) + added);
     if (c.live && added > 0) tell(view, self, added);
     return r;
   };
-  if (view.doc?.id === target.docId) return work(liveCanvas(view, target.run));
+  const inFile = async () => {
+    let out;
+    await editCanvasFile(target.docId, async (doc) => {
+      // the user opened that canvas while the request waited: change it on screen instead
+      if (view.doc?.id === target.docId) { out = await work(liveCanvas(view, target.run)); return false; }
+      out = await work(fileCanvas(doc));
+    });
+    return out;
+  };
+  if (view.doc?.id === target.docId) {
+    try { return await work(liveCanvas(view, target.run)); } catch (e) { if (!(e instanceof Moved)) throw e; }
+    return inFile(); // the user went to another canvas mid-request, before anything was added: into its file
+  }
   if (!write) { const doc = await native.canvas.load(target.docId); if (!doc) throw new Error('Холст этого чата не найден'); return work(fileCanvas(doc)); }
-  let out;
-  await editCanvasFile(target.docId, async (doc) => {
-    // the user opened that canvas while the request waited: change it on screen instead
-    if (view.doc?.id === target.docId) { out = await work(liveCanvas(view, target.run)); return false; }
-    out = await work(fileCanvas(doc));
-  });
-  return out;
+  return inFile();
 }
 
 export function bindCanvasTools(view) {
   if (!native.canvasTools?.onRequest) return;
-  native.canvasTools.onRequest(async ({ id, nodeId, docId, run, op, args }) => {
-    try { native.canvasTools.reply(id, { result: await canvasRequest(view, { nodeId, docId, run }, op, args) }); }
+  native.canvasTools.onRequest(async ({ id, nodeId, docId, run, op, args, deadline }) => {
+    try { native.canvasTools.reply(id, { result: await canvasRequest(view, { nodeId, docId, run }, op, args, { deadline }) }); }
     catch (e) { native.canvasTools.reply(id, { error: String(e.message || e) }); }
   });
   native.canvasTools.ready?.();

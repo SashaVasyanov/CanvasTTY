@@ -83,6 +83,24 @@ test('без канала инструментов холста нет; чужо
   await assert.rejects(call(b.path, TOKEN, 'list_objects', {}), /VibeTabula закрыт/);
 });
 
+test('второй экземпляр приложения не перехватывает канал первого; сокет доступен только пользователю', async () => {
+  const b = await bridge(async () => 'первый');
+  if (process.platform !== 'win32') {
+    assert.equal(path.dirname(b.path), path.join(tmp, 'ud'), 'сокет в папке профиля');
+    assert.equal(fs.statSync(b.path).mode & 0o077, 0);
+  }
+  let ready = false;
+  const second = new CanvasBridge({ userData: path.join(tmp, 'ud'), resolve: () => ({ nodeId: 'x', docId: 'y', run: 'z' }), request: async () => 'второй' });
+  const errors = console.error; console.error = () => {}; // Windows reports the taken pipe
+  try {
+    second.start(() => { ready = true; });
+    await sleep(1200);
+  } finally { console.error = errors; }
+  assert.equal(ready, false, 'второй не слушает');
+  second.stop();
+  assert.equal(await call(b.path, TOKEN, 'list_objects', {}), 'первый', 'первый по-прежнему отвечает');
+});
+
 // ---------------- tokens of the runs (main/agentchat.js) ----------------
 function shim(script, name) {
   if (process.platform !== 'win32') { fs.chmodSync(script, 0o755); return script; }
@@ -147,7 +165,8 @@ test('Claude Code: свой конфиг MCP с токеном и разрешё
   const token = m.runs.get('c1').meta.opts.canvasToken;
   const args = cliArgs(m, 'c1');
   const cfg = args[args.indexOf('--mcp-config') + 1];
-  assert.equal(path.basename(cfg), `${token}.json`);
+  assert.equal(path.dirname(cfg), path.join(tmp, 'ud', 'mcp-runs'));
+  assert.ok(!cfg.includes(token), 'имя конфига не выдаёт токен');
   const server = JSON.parse(fs.readFileSync(cfg, 'utf8')).mcpServers.vibetabula;
   assert.equal(server.env.VT_CANVAS_TOKEN, token);
   assert.equal(server.env.VT_CANVAS_PIPE, 'test-pipe');

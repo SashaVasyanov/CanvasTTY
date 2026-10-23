@@ -12,7 +12,7 @@ contextBridge.exposeInMainWorld('native', {
   win: { minimize: inv('win:minimize'), maximize: inv('win:maximize'), close: inv('win:close'), isMaximized: inv('win:isMaximized'), focus: inv('win:focus'), attention: inv('win:attention'), onState: on('win:state') },
   info: inv('app:info'),
   ws: { load: inv('ws:load'), save: inv('ws:save') },
-  canvas: { load: inv('canvas:load'), save: inv('canvas:save'), remove: inv('canvas:delete') },
+  canvas: { load: inv('canvas:load'), loadVer: inv('canvas:loadVer'), saveIf: inv('canvas:saveIf'), save: inv('canvas:save'), remove: inv('canvas:delete') },
   pty: {
     spawn: inv('pty:spawn'),
     write: (id, data) => ipcRenderer.send('pty:write', id, data),

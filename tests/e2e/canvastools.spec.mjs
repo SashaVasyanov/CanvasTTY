@@ -159,3 +159,92 @@ test('настройка выключена — инструменты отве�
   await page.evaluate((id) => window.__app.canvas.removeNodes([id]), a.id);
   expect((await a.call('list_objects')).error).toContain('Окна этого чата больше нет на холсте');
 });
+
+test('пользователь ушёл на другой холст, пока агент создавал заметку: заметка попадает в холст агента, а не на открытый', async ({ app, page }) => {
+  const a = await agent(app, page);
+  await page.evaluate(async () => {
+    const { native } = await import('/js/state.js');
+    const create = native.vault.create;
+    native.vault.create = async (...x) => { await new Promise((r) => setTimeout(r, 400)); return create(...x); };
+  });
+  const pending = a.call('create_note', { title: 'План', markdown: 'шаги' });
+  await page.waitForTimeout(100);
+  const other = await page.evaluate(async () => { const { state } = await import('/js/state.js'); return (await state.createCanvas(state.project.id, 'Другой')).id; });
+  const r = await pending;
+  expect(r.error).toBeUndefined();
+  const id = idIn(r.result);
+  expect(await page.evaluate(() => window.__app.canvas.doc.id)).toBe(other);
+  expect(await app.node(id), 'не на открытом холсте').toBeFalsy();
+  const doc = await page.evaluate(async (d) => (await import('/js/state.js')).native.canvas.load(d), a.target.docId);
+  expect(doc.nodes.find((n) => n.id === id)).toMatchObject({ type: 'note', data: { createdBy: a.id } });
+  expect((await vault.paths(page, 'Из чатов/')).filter((p) => p.startsWith('Из чатов/План'))).toHaveLength(1);
+});
+
+test('Ctrl+Z после добавлений агента не откатывает то, что менялось на холсте между ними', async ({ app, page }) => {
+  const a = await agent(app, page);
+  const list = await app.add('widget', { x: -500, y: 0, w: 300, h: 300, data: { kind: 'checklist', title: 'Дела', items: [] } });
+  await a.ok('create_sticky', { text: 'один' });
+  // a change without its own undo step (a widget, sync from another computer)
+  await page.evaluate((id) => window.__app.canvas.updateNode(id, { data: { items: [{ id: 't1', text: 'купить хлеб', done: false }] } }), list);
+  const second = idIn(await a.ok('create_sticky', { text: 'два' }));
+  await app.undo();
+  expect(await app.node(second)).toBeFalsy();
+  expect((await app.node(list)).data.items, 'пункт чек-листа на месте').toHaveLength(1);
+});
+
+test('холст в файле: две области вокруг одних и тех же объектов не вкладываются друг в друга; поздний запрос ничего не делает', async ({ app, page }) => {
+  await page.evaluate(async () => {
+    const { native } = await import('/js/state.js');
+    await native.canvas.save('doc-f', { id: 'doc-f', nodes: [
+      { id: 'ag_f', type: 'agentchat', x: 0, y: 0, w: 460, h: 600, z: 1, data: { kind: 'codex', messages: [] } },
+      { id: 'st_1', type: 'sticky', x: 600, y: 0, w: 200, h: 200, z: 2, data: { text: 'A' } },
+    ], edges: [] });
+  });
+  const t = { nodeId: 'ag_f', docId: 'doc-f', run: 'f' };
+  const call = (op, args, extra) => page.evaluate(([t, op, args, extra]) => window.__canvasCall(t, op, args, extra), [t, op, args, extra || {}]);
+  const f1 = idIn((await call('create_area', { title: 'Первая', objects: ['st_1'] })).result);
+  const f2 = idIn((await call('create_area', { title: 'Вторая', objects: ['st_1'] })).result);
+  const doc = await page.evaluate(async () => (await import('/js/state.js')).native.canvas.load('doc-f'));
+  const byId = Object.fromEntries(doc.nodes.map((n) => [n.id, n]));
+  expect(byId[f1].parent === f2 && byId[f2].parent === f1, 'нет цикла').toBe(false);
+  expect((await call('read_object', { id: f1 })).error).toBeUndefined();
+  const late = await call('create_sticky', { text: 'поздно' }, { deadline: Date.now() - 1 });
+  expect(late.error).toContain('не успел');
+  expect((await page.evaluate(async () => (await import('/js/state.js')).native.canvas.load('doc-f'))).nodes).toHaveLength(doc.nodes.length);
+});
+
+test('файл холста поменялся между чтением и записью (синхронизация): агент перечитывает и не затирает чужое', async ({ app, page }) => {
+  await page.evaluate(async () => {
+    const { native } = await import('/js/state.js');
+    await native.canvas.save('doc-s', { id: 'doc-s', nodes: [{ id: 'ag_s', type: 'agentchat', x: 0, y: 0, w: 460, h: 600, z: 1, data: { kind: 'codex', messages: [] } }], edges: [] });
+    const loadVer = native.canvas.loadVer;
+    let once = true;
+    native.canvas.loadVer = async (id) => {
+      const r = await loadVer(id);
+      if (once && id === 'doc-s') { // another computer's change lands right after the read
+        once = false;
+        const d = JSON.parse(JSON.stringify(r.doc)); d.nodes.push({ id: 'st_remote', type: 'sticky', x: 2000, y: 0, w: 200, h: 200, z: 5, data: { text: 'с другого компьютера' } });
+        await native.canvas.save(id, d);
+      }
+      return r;
+    };
+  });
+  const r = await page.evaluate(() => window.__canvasCall({ nodeId: 'ag_s', docId: 'doc-s', run: 's' }, 'create_sticky', { text: 'от агента' }));
+  expect(r.error).toBeUndefined();
+  const doc = await page.evaluate(async () => (await import('/js/state.js')).native.canvas.load('doc-s'));
+  expect(doc.nodes.map((n) => n.data.text).filter(Boolean).sort()).toEqual(['от агента', 'с другого компьютера']);
+});
+
+test('заметка с неверным местом не оставляет файла; копия объекта агента — уже не его; длинный текст стикера — отказ', async ({ app, page }) => {
+  const a = await agent(app, page);
+  const before = await vault.paths(page, 'Из чатов/');
+  expect((await a.call('create_note', { title: 'Сирота', markdown: 'x', area: 'fr_nope' })).error).toContain('нет на холсте');
+  expect(await vault.paths(page, 'Из чатов/')).toEqual(before);
+  const own = idIn(await a.ok('create_sticky', { text: 'моё' }));
+  expect((await a.call('update_text', { id: own, text: 'x'.repeat(4001) })).error).toContain('слишком длинный');
+  await app.select([own]);
+  await page.evaluate(() => window.__app.canvas.duplicate());
+  const copy = (await app.nodes('sticky')).find((n) => n.id !== own);
+  expect(copy.data.createdBy).toBeUndefined();
+  expect((await a.call('update_text', { id: copy.id, text: 'чужое' })).error).toContain('только объекты');
+});

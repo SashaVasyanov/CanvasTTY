@@ -6,6 +6,8 @@ const path = require('path');
 const IGNORE = new Set(['.obsidian', '.git', '.trash', 'node_modules', '.vibetabula', '.canvastty']);
 const WIKILINK_RE = /\[\[([^\]|#\n]+)(?:#[^\]|\n]*)?(?:\|[^\]\n]*)?\]\]/g;
 const TAG_RE = /(^|[\s(])#([\p{L}\p{N}_\-/]+)/gu;
+// names Windows keeps for devices: a note called «CON» or «nul.md» would not be a file there
+const RESERVED = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\..*)?$/i;
 
 class Vault {
   constructor({ send }) {
@@ -109,7 +111,8 @@ class Vault {
   }
 
   async uniquePath(folder, base, ext = '.md') {
-    let name = base.replace(/[\\/:*?"<>|]/g, '-').trim() || 'Без названия';
+    let name = base.replace(/[\\/:*?"<>|]/g, '-').replace(/[.\s]+$/, '').trim() || 'Без названия';
+    if (RESERVED.test(name)) name += ' (заметка)'; // CON, NUL, COM1… are devices on Windows, not files
     let rel = path.posix.join(folder || '', name + ext);
     let i = 1;
     while (fs.existsSync(this.abs(rel))) { rel = path.posix.join(folder || '', `${name} ${i++}${ext}`); }
@@ -118,7 +121,8 @@ class Vault {
 
   // copy of a note named like Figma does: «Идея 1» -> «Идея 2», «Идея 3»… (next free number)
   async createNumbered(folder, stem, content = '') {
-    const base = String(stem || 'Без названия').replace(/\s+\d+$/, '').trim() || 'Без названия';
+    let base = String(stem || 'Без названия').replace(/\s+\d+$/, '').trim() || 'Без названия';
+    if (RESERVED.test(base)) base += ' (заметка)';
     let names = [];
     try { names = await fsp.readdir(this.abs(folder || '')); } catch {}
     const esc = base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

@@ -12,21 +12,57 @@ const crypto = require('crypto');
 
 const MAX_LINE = 4 * 1024 * 1024; // a request (a note's markdown at most) is far smaller
 
+// The same path for every start of the app with this profile: an agent that keeps working after a
+// restart reaches the new instance. Linux/macOS: a socket in the profile folder, which only the user
+// can open (a private folder in the temp dir if that path is too long for a socket).
 function pipePath(userData) {
   const id = crypto.createHash('sha1').update(String(userData || '')).digest('hex').slice(0, 12);
-  return process.platform === 'win32' ? `\\\\.\\pipe\\vibetabula-canvas-${id}` : path.join(os.tmpdir(), `vibetabula-canvas-${id}.sock`);
+  if (process.platform === 'win32') return `\\\\.\\pipe\\vibetabula-canvas-${id}`;
+  const inProfile = path.join(String(userData || os.tmpdir()), 'canvas.sock');
+  if (Buffer.byteLength(inProfile) <= 100) return inProfile;
+  const uid = typeof process.getuid === 'function' ? process.getuid() : 'u';
+  return path.join(os.tmpdir(), `vibetabula-${uid}-${id}`, 'canvas.sock');
 }
+// the socket's folder exists, is ours and nobody else can enter it
+function privateDir(dir, userData) {
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  if (dir === path.resolve(String(userData || ''))) return true; // the profile folder itself
+  const st = fs.lstatSync(dir);
+  const mine = typeof process.getuid !== 'function' || st.uid === process.getuid();
+  return st.isDirectory() && !st.isSymbolicLink() && mine && (st.mode & 0o077) === 0;
+}
+// is another instance of the app listening there?
+const answers = (p) => new Promise((resolve) => {
+  const c = net.createConnection(p);
+  const t = setTimeout(() => { c.destroy(); resolve(false); }, 500);
+  c.on('connect', () => { clearTimeout(t); c.destroy(); resolve(true); });
+  c.on('error', () => { clearTimeout(t); resolve(false); });
+});
 
 class CanvasBridge {
   // resolve(token) → { nodeId, docId } | null; request(target, op, args) → Promise<result>
   constructor({ userData, resolve, request }) {
+    this.userData = userData;
     this.path = pipePath(userData);
+    this.owned = false; // we listen there (and remove the socket file on quit)
     this.resolve = resolve;
     this.request = request;
     this.server = null;
   }
+  // onReady(path) once it listens; not called when another instance of the app already does (the
+  // agents then use that one) or the socket folder is not safe
   start(onReady) {
-    if (process.platform !== 'win32') { try { fs.unlinkSync(this.path); } catch {} } // left by a crash
+    this.listen(onReady).catch((e) => console.error('canvas bridge', e.message));
+    return this;
+  }
+  async listen(onReady) {
+    if (process.platform !== 'win32') {
+      if (!privateDir(path.dirname(this.path), this.userData)) { console.error('canvas bridge: unsafe folder', path.dirname(this.path)); return; }
+      if (fs.existsSync(this.path)) {
+        if (await answers(this.path)) { console.warn('canvas bridge: another VibeTabula instance listens'); return; }
+        try { fs.unlinkSync(this.path); } catch {} // left by a crash
+      }
+    }
     this.server = net.createServer((conn) => {
       let buf = '';
       conn.setEncoding('utf8');
@@ -41,12 +77,12 @@ class CanvasBridge {
       });
       conn.on('error', () => {});
     });
-    this.server.on('error', (e) => console.error('canvas bridge', e.message));
+    this.server.on('error', (e) => console.error('canvas bridge', e.message)); // Windows: the pipe is taken by another instance
     this.server.listen(this.path, () => {
+      this.owned = true;
       if (process.platform !== 'win32') { try { fs.chmodSync(this.path, 0o600); } catch {} }
       if (onReady) onReady(this.path);
     });
-    return this;
   }
   async handle(line) {
     let msg;
@@ -57,7 +93,11 @@ class CanvasBridge {
     try { return { id, result: await this.request(target, String(op || ''), args && typeof args === 'object' ? args : {}) }; }
     catch (e) { return { id, error: String(e.message || e) }; }
   }
-  stop() { try { this.server?.close(); } catch {} if (process.platform !== 'win32') { try { fs.unlinkSync(this.path); } catch {} } }
+  stop() {
+    try { this.server?.close(); } catch {}
+    if (this.owned && process.platform !== 'win32') { try { fs.unlinkSync(this.path); } catch {} }
+    this.owned = false;
+  }
 }
 
 // the client side, used by the MCP server: one request per connection

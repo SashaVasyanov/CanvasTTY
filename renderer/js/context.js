@@ -69,6 +69,7 @@ function areaSummary(view, f) {
 
 // one object as text; pictures are collected for attaching
 async function describe(view, n, images, depth = 0) {
+  if (depth > 12) return ''; // areas inside areas: enough (and no endless loop on a broken file)
   const t = titleOf(n);
   const hh = depth ? '####' : '###';
   try {
@@ -123,7 +124,7 @@ export const describeObject = (view, n) => describe(view, n, null, 0);
 // text + pictures of a set of objects (objects inside an area that is also in the set come once)
 export async function collect(view, nodes) {
   const ids = new Set(nodes.map((n) => n.id));
-  const inArea = (n) => { let p = n.parent; while (p) { if (ids.has(p)) return true; p = view.node(p)?.parent; } return false; };
+  const inArea = (n) => { let p = n.parent; for (let d = 0; p && d < 60; d++) { if (ids.has(p)) return true; p = view.node(p)?.parent; } return false; };
   const images = [];
   const parts = [];
   for (const n of nodes.filter((x) => !inArea(x))) { const s = await describe(view, n, images); if (s) parts.push(s); }

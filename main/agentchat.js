@@ -104,7 +104,7 @@ class AgentChatManager {
   claudeMcpConfig(opts = {}, journal = null) {
     if (!this.userData) return null;
     const own = this.canvasOn(opts);
-    const file = own ? path.join(this.userData, 'mcp-runs', `${opts.canvasToken}.json`) : path.join(this.userData, 'mcp-vibetabula.json');
+    const file = own ? path.join(this.userData, 'mcp-runs', `${opts.canvasCfg || 'run'}.json`) : path.join(this.userData, 'mcp-vibetabula.json');
     if (journal) return file;
     try {
       if (own) fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -117,7 +117,7 @@ class AgentChatManager {
     const t = opts && opts.canvasToken;
     if (!t || !this.userData) return;
     this.tokenDirs.delete(t);
-    try { fs.unlinkSync(path.join(this.userData, 'mcp-runs', `${t}.json`)); } catch {}
+    if (opts.canvasCfg) { try { fs.unlinkSync(path.join(this.userData, 'mcp-runs', `${opts.canvasCfg}.json`)); } catch {} }
   }
   // the canvas behind a token: the chat window (node) and its canvas (doc) of a run still going
   canvasTarget(token) {
@@ -372,8 +372,11 @@ class AgentChatManager {
       emit('error', { message: 'Запуск отменён: программа агента не разрешена.' }); emit('done', {}); return;
     }
     opts = { ...opts, kind, cmd };
-    delete opts.canvasToken;
-    if (opts.canvasTools && opts.nodeId && opts.docId && this.canvasPipe) opts.canvasToken = crypto.randomBytes(16).toString('hex');
+    delete opts.canvasToken; delete opts.canvasCfg;
+    if (opts.canvasTools && opts.nodeId && opts.docId && this.canvasPipe) {
+      opts.canvasToken = crypto.randomBytes(16).toString('hex');
+      opts.canvasCfg = crypto.randomBytes(8).toString('hex'); // the config's name: not the token
+    }
     const resolved = this.ptys.which(cmd);
     if (!resolved) {
       emit('error', { message: `Команда «${cmd || kind}» не найдена. Установите ${kind === 'claude' ? 'Claude Code: npm i -g @anthropic-ai/claude-code' : 'Codex: npm i -g @openai/codex'} и войдите в аккаунт (запустите её один раз в терминале).` });

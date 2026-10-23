@@ -975,13 +975,13 @@ export class CanvasView extends Emitter {
       const n = deepClone(src);
       map[src.id] = n.id = uid(n.type.slice(0, 2));
       n.x = Math.round(n.x + dx); n.y = Math.round(n.y + dy); n.z = z + 1 + newIds.length; n.locked = false;
-      if (n.data) { delete n.data.sessionId; delete n.data.convId; if (n.type === 'chat') n.data.messages = [...(n.data.messages || [])]; }
+      if (n.data) { delete n.data.sessionId; delete n.data.convId; delete n.data.createdBy; if (n.type === 'chat') n.data.messages = [...(n.data.messages || [])]; } // a copy is the user's, not an agent's
       if (numbered || this.nameTaken(n)) this.numberCopy(n);
       this.doc.nodes.push(n); this.createView(n); newIds.push(n.id);
     }
     for (const id of newIds) { const n = this.node(id); if (n.parent) { if (map[n.parent]) n.parent = map[n.parent]; else delete n.parent; } }
     this.recomputeGroups(new Set(newIds.filter((id) => !this.node(id).parent)));
-    for (const e of edges || []) if (map[e.from] && map[e.to]) this.doc.edges.push({ ...deepClone(e), id: uid('e'), from: map[e.from], to: map[e.to] });
+    for (const e of edges || []) if (map[e.from] && map[e.to]) { const c = { ...deepClone(e), id: uid('e'), from: map[e.from], to: map[e.to] }; delete c.createdBy; this.doc.edges.push(c); }
     this.renderEdges();
     if (fork) this.forkNotes(newIds);
     return { map, newIds };

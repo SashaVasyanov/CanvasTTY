@@ -137,23 +137,41 @@ const chat = new ChatManager({
 // (the delayed save and the flush when the window closes) used to share "<file>.tmp" and could
 // leave a broken canvas. The newest save is written last.
 const writeQueues = new Map();
-function writeJson(file, data) {
-  const text = JSON.stringify(data, null, 1); // the state at the moment of the call
+// jobs on one file (writes, and reads that must not see a half-done sequence) one after another
+function queueFile(file, job) {
   const prev = writeQueues.get(file) || Promise.resolve();
-  const next = prev.catch(() => {}).then(async () => {
-    const tmp = `${file}.${process.pid}.${Math.random().toString(36).slice(2, 10)}.tmp`;
-    await fsp.writeFile(tmp, text, 'utf8');
-    // Windows: an antivirus or a cloud client may hold the target for a moment
-    for (let i = 0; ; i++) {
-      try { await fsp.rename(tmp, file); return; } catch (e) {
-        if (i >= 4 || !['EPERM', 'EBUSY', 'EACCES'].includes(e.code)) { await fsp.unlink(tmp).catch(() => {}); throw e; }
-        await new Promise((r) => setTimeout(r, 60 * (i + 1)));
-      }
-    }
-  });
+  const next = prev.catch(() => {}).then(job);
   writeQueues.set(file, next);
   next.then(() => {}, () => {}).then(() => { if (writeQueues.get(file) === next) writeQueues.delete(file); });
   return next;
+}
+async function writeNow(file, text) {
+  const tmp = `${file}.${process.pid}.${Math.random().toString(36).slice(2, 10)}.tmp`;
+  await fsp.writeFile(tmp, text, 'utf8');
+  // Windows: an antivirus or a cloud client may hold the target for a moment
+  for (let i = 0; ; i++) {
+    try { await fsp.rename(tmp, file); return; } catch (e) {
+      if (i >= 4 || !['EPERM', 'EBUSY', 'EACCES'].includes(e.code)) { await fsp.unlink(tmp).catch(() => {}); throw e; }
+      await new Promise((r) => setTimeout(r, 60 * (i + 1)));
+    }
+  }
+}
+function writeJson(file, data) {
+  const text = JSON.stringify(data, null, 1); // the state at the moment of the call
+  return queueFile(file, () => writeNow(file, text));
+}
+// A canvas that is not on screen is changed in its file by the window (an agent's canvas tools, a
+// passed answer, a finished answer): read with its version, written back only if nobody (a save,
+// sync from another computer) wrote it in between — otherwise the window reads it again and redoes
+// its change (renderer/js/state.js editCanvasFile).
+const versionOf = (buf) => (buf ? require('crypto').createHash('sha1').update(buf).digest('hex') : '');
+const readBuf = (file) => { try { return fs.readFileSync(file); } catch { return null; } };
+function readVersioned(file) {
+  return queueFile(file, async () => { const buf = readBuf(file); let doc = null; try { doc = buf ? JSON.parse(buf.toString('utf8')) : null; } catch {} return { doc, ver: versionOf(buf) }; });
+}
+function writeJsonIf(file, data, ver) {
+  const text = JSON.stringify(data, null, 1);
+  return queueFile(file, async () => { if (versionOf(readBuf(file)) !== ver) return false; await writeNow(file, text); return true; });
 }
 function readJsonSync(file, fallback) {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return fallback; }
@@ -315,7 +333,10 @@ app.whenReady().then(() => {
   // ---------- storage ----------
   ipcMain.handle('ws:load', () => loadWorkspace());
   ipcMain.handle('ws:save', async (e, ws) => { await writeJson(wsFile, encodeWs(ws)); sync?.localChanged('workspace', 'workspace', ws); });
-  ipcMain.handle('canvas:load', (e, id) => readJsonSync(path.join(canvasDir, `${id}.json`), null));
+  // waits for saves of that file still being written (a canvas just left is flushed on the way out)
+  ipcMain.handle('canvas:load', async (e, id) => { const f = path.join(canvasDir, `${id}.json`); await writeQueues.get(f)?.catch(() => {}); return readJsonSync(f, null); });
+  ipcMain.handle('canvas:loadVer', (e, id) => readVersioned(path.join(canvasDir, `${id}.json`)));
+  ipcMain.handle('canvas:saveIf', async (e, id, data, ver) => { const ok = await writeJsonIf(path.join(canvasDir, `${id}.json`), data, ver); if (ok) sync?.localChanged('canvas', id, data); return ok; });
   ipcMain.handle('canvas:save', async (e, id, data) => { await writeJson(path.join(canvasDir, `${id}.json`), data); sync?.localChanged('canvas', id, data); });
   ipcMain.handle('canvas:delete', async (e, id) => { try { await fsp.unlink(path.join(canvasDir, `${id}.json`)); } catch {} sync?.localDeleted('canvas', id); });
 
@@ -352,7 +373,7 @@ app.whenReady().then(() => {
   // ---------- chat history ----------
   const history = new HistoryStore(path.join(userData, 'chats'));
   // ---------- sync between computers ----------
-  sync = new SyncManager({ userData, wsFile, canvasDir, history, send, encodeWs, decodeWs });
+  sync = new SyncManager({ userData, wsFile, canvasDir, history, send, encodeWs, decodeWs, writeLocal: writeJson });
   history.onChange = (op, v) => (op === 'save' ? sync.localChanged('chat', v.id, v) : sync.localDeleted('chat', v));
   ipcMain.handle('sync:info', () => sync.info());
   ipcMain.handle('sync:configure', (e, patch) => sync.configure(patch || {}));
@@ -465,7 +486,7 @@ app.whenReady().then(() => {
       const id = ++canvasSeq;
       const timer = setTimeout(() => { pendingCanvas.delete(id); reject(new Error('Окно VibeTabula не ответило (возможно, оно ещё загружается) — попробуйте ещё раз')); }, 15000);
       pendingCanvas.set(id, { resolve, reject, timer });
-      send('canvastools:request', { id, ...target, op, args });
+      send('canvastools:request', { id, ...target, op, args, deadline: Date.now() + 12000 }); // the page gives up before this does
     });
   }
 

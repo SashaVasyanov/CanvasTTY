@@ -48,8 +48,11 @@ async function writeAtomic(file, data) {
 }
 
 class SyncManager {
-  constructor({ userData, wsFile, canvasDir, history, send, encodeWs = (x) => x, decodeWs = (x) => x }) {
+  // writeLocal: how the app writes its own files (main.js queues them, so a merge from the folder and
+  // a save of the window never overlap)
+  constructor({ userData, wsFile, canvasDir, history, send, encodeWs = (x) => x, decodeWs = (x) => x, writeLocal = writeAtomic }) {
     this.userData = userData; this.wsFile = wsFile; this.canvasDir = canvasDir; this.history = history; this.send = send;
+    this.writeLocal = writeLocal;
     this.encodeWs = encodeWs; this.decodeWs = decodeWs;
     this.cfgFile = path.join(userData, 'sync.json');
     this.baseDir = path.join(userData, 'sync-base'); // last version both sides agreed on, per canvas
@@ -199,7 +202,7 @@ class SyncManager {
       const has = (pid, cid) => ws.projects?.some((p) => p.id === pid && (!cid || p.canvases.some((c) => c.id === cid)));
       ws.activeProjectId = local && has(local.activeProjectId, local.activeCanvasId) ? local.activeProjectId : ws.projects?.[0]?.id;
       ws.activeCanvasId = local && has(local.activeProjectId, local.activeCanvasId) ? local.activeCanvasId : ws.projects?.[0]?.canvases?.[0]?.id;
-      await writeAtomic(this.wsFile, this.encodeWs(ws));
+      await this.writeLocal(this.wsFile, this.encodeWs(ws));
       this.st.items[this.key(kind, id)] = { ts: env.ts, hash: env.hash };
       this.pristine = null;
       // projects that only exist here go back to the folder
@@ -218,7 +221,7 @@ class SyncManager {
         for (const h of [env.parent, ...(env.ancestors || [])]) if (h && (base = await this.version(id, h))) break;
         if (!base) base = await this.version(id, this.st.items[this.key(kind, id)]?.hash);
         const merged = local ? mergeDocs(base, local, env.data) : clone(env.data);
-        await writeAtomic(file, { ...merged, viewport: local?.viewport || { x: 0, y: 0, z: 1 } });
+        await this.writeLocal(file, { ...merged, viewport: local?.viewport || { x: 0, y: 0, z: 1 } });
         const mergedBody = this.strip('canvas', merged);
         await this.addVersion(id, env.hash, env.data);
         extra = { base, remote: env.data };

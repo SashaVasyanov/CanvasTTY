@@ -29,7 +29,12 @@ export const mockNative = {
   win: { minimize() {}, maximize() {}, close() {}, isMaximized: async () => false, focus: async () => {}, attention: async () => { window.__attention = (window.__attention || 0) + 1; }, onState: on('win:state') },
   info: async () => ({ version: '1.4.0', platform: 'browser', home: '/home/user', host: 'demo-pc' }),
   ws: { load: async () => LS.get('mock:ws', null), save: async (ws) => LS.set('mock:ws', ws) },
-  canvas: { load: async (id) => LS.get(`mock:canvas:${id}`, null), save: async (id, d) => LS.set(`mock:canvas:${id}`, d), remove: async (id) => localStorage.removeItem(`mock:canvas:${id}`) },
+  canvas: {
+    load: async (id) => LS.get(`mock:canvas:${id}`, null), save: async (id, d) => LS.set(`mock:canvas:${id}`, d), remove: async (id) => localStorage.removeItem(`mock:canvas:${id}`),
+    // like main.js: the version is the file content; saveIf writes only if it is still the same
+    loadVer: async (id) => { const raw = localStorage.getItem(`mock:canvas:${id}`); return { doc: raw ? JSON.parse(raw) : null, ver: raw || '' }; },
+    saveIf: async (id, d, ver) => { if ((localStorage.getItem(`mock:canvas:${id}`) || '') !== ver) return false; LS.set(`mock:canvas:${id}`, d); return true; },
+  },
   pty: {
     async spawn({ cmd }) {
       const id = `mock_${seq++}`;
@@ -117,11 +122,11 @@ export const mockNative = {
     restore: async (o) => { (window.__mockChanges ||= {}).restores = [...(window.__mockChanges.restores || []), o]; return window.__mockChanges.restoreResult?.(o) || { done: o.files, skipped: [] }; },
     reveal: async (o) => { (window.__mockChanges ||= {}).revealed = o; return true; },
   },
-  // the agents' canvas tools: tests call window.__canvasCall({ nodeId, docId, run }, op, args) → { result } | { error }
+  // the agents' canvas tools: tests call window.__canvasCall({ nodeId, docId, run }, op, args, { deadline }) → { result } | { error }
   canvasTools: (() => {
     const waiting = new Map();
     let n = 0;
-    window.__canvasCall = (target, op, args = {}) => new Promise((resolve) => { const id = ++n; waiting.set(id, resolve); emit('canvastools:request', { id, ...target, op, args }); });
+    window.__canvasCall = (target, op, args = {}, extra = {}) => new Promise((resolve) => { const id = ++n; waiting.set(id, resolve); emit('canvastools:request', { id, ...target, op, args, ...extra }); });
     return { onRequest: on('canvastools:request'), reply: (id, r) => { waiting.get(id)?.(r); waiting.delete(id); } };
   })(),
   // separate copies for agents: tests set window.__mockWt = { status, preview, merge, remove(opts) }

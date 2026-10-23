@@ -6,22 +6,33 @@ import { mergeDocs } from './merge.js';
 export const native = window.native || mockNative;
 
 // A canvas that is not on screen is edited in its file (an agent that keeps working after the user
-// went to another canvas): one load → change → save at a time per canvas, so two writers (the
-// answer being saved, the agent's canvas tools, a passed answer) never overwrite each other.
+// went to another canvas): one load → change → save at a time per canvas, so two writers here (the
+// answer being saved, the agent's canvas tools, a passed answer) never overwrite each other, and
+// opening that canvas waits for them. The file is written back only if nobody else wrote it since
+// it was read (sync from another computer, a late save): then it is read again and fn runs again.
 // fn(doc) changes doc in place; returning false skips the save. → what fn returned
 const fileQueue = new Map();
-export function editCanvasFile(id, fn) {
-  const run = (fileQueue.get(id) || Promise.resolve()).then(async () => {
-    const doc = await native.canvas.load(id);
-    if (!doc) throw new Error('Холст не найден');
-    const r = await fn(doc);
-    if (r !== false) await native.canvas.save(id, doc);
-    return r;
-  });
+export function withCanvasFile(id, job) {
+  const run = (fileQueue.get(id) || Promise.resolve()).then(job);
   const tail = run.catch(() => {});
   fileQueue.set(id, tail);
   tail.then(() => { if (fileQueue.get(id) === tail) fileQueue.delete(id); });
   return run;
+}
+export function editCanvasFile(id, fn) {
+  return withCanvasFile(id, async () => {
+    for (let attempt = 0; ; attempt++) {
+      const versioned = !!native.canvas.loadVer;
+      const { doc, ver } = versioned ? await native.canvas.loadVer(id) : { doc: await native.canvas.load(id) };
+      if (!doc) throw new Error('Холст не найден');
+      doc.nodes = doc.nodes || []; doc.edges = doc.edges || [];
+      const r = await fn(doc);
+      if (r === false) return r;
+      if (!versioned) { await native.canvas.save(id, doc); return r; }
+      if (await native.canvas.saveIf(id, doc, ver)) return r;
+      if (attempt >= 4) throw new Error('Холст всё время меняется — попробуйте ещё раз');
+    }
+  });
 }
 
 export const DEFAULT_AGENTS = [
@@ -130,11 +141,14 @@ class State extends Emitter {
     const c = p.canvases.find((x) => x.id === canvasId) || p.canvases[0];
     this.ws.activeProjectId = p.id;
     this.ws.activeCanvasId = c.id;
-    const doc = (await native.canvas.load(c.id)) || emptyCanvas(c.id);
-    doc.nodes = doc.nodes || []; doc.edges = doc.edges || [];
-    this.doc = doc;
-    this.saveWs();
-    this.emit('canvas', doc);
+    // after the changes waiting for its file; ones queued later see the canvas open and use the view
+    await withCanvasFile(c.id, async () => {
+      const doc = (await native.canvas.load(c.id)) || emptyCanvas(c.id);
+      doc.nodes = doc.nodes || []; doc.edges = doc.edges || [];
+      this.doc = doc;
+      this.saveWs();
+      this.emit('canvas', doc);
+    });
   }
 
   touch() { this.saveDoc(); }
@@ -242,7 +256,7 @@ class State extends Emitter {
     const c = { id: uid('c'), name: `${src.name} (копия)` };
     const copy = JSON.parse(JSON.stringify(data || emptyCanvas(c.id)));
     copy.id = c.id;
-    for (const n of copy.nodes) if (n.data) { delete n.data.sessionId; delete n.data.convId; }
+    for (const n of copy.nodes) if (n.data) { delete n.data.sessionId; delete n.data.convId; delete n.data.createdBy; } // a copy is the user's, not the agent's
     await native.canvas.save(c.id, copy);
     p.canvases.push(c);
     this.saveWs(); this.emit('projects');

@@ -10,7 +10,7 @@ import { NODE_TYPES } from './nodes.js';
 import { vaultIndex } from './vaultIndex.js';
 
 const NOTE_FOLDER = 'Из шаблонов';
-const MAX_SIZE = 1_500_000; // characters of JSON: a template is a layout, not an archive
+const MAX_SIZE = 600_000; // characters of JSON: a template is a layout, not an archive (it lives in workspace.json, saved and synced often)
 // data that belongs to the work done in an object, not to the layout
 const DROP = ['messages', 'sessionId', 'convId', 'ctxHash', 'actualModel', 'worktree', 'compare', 'pendingRelay', 'createdBy', 'cwd', 'changes', 'running', 'draftAtt'];
 const SKIP_TYPES = new Set(['diff']); // a changes card belongs to one answer
@@ -117,7 +117,7 @@ export async function deleteTemplate(id) {
 // ---------------- placing ----------------
 // at: the world point for the middle of the layout (default: the middle of the screen) → new ids
 export async function placeTemplate(view, tpl, at = null) {
-  const nodes = deepClone(tpl.nodes).filter((n) => NODE_TYPES[n.type] && !SKIP_TYPES.has(n.type));
+  const nodes = deepClone(tpl.nodes).filter((n) => Object.hasOwn(NODE_TYPES, n.type) && !SKIP_TYPES.has(n.type));
   if (!nodes.length) return [];
   // notes: a new file with the template's text, so each placed copy is its own note
   for (const n of nodes) {
