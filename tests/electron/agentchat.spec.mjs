@@ -20,8 +20,10 @@ test('Claude Code: потоковый ответ с инструментом, с
   expect(first.prompt).toBe(question);
   expect(first.cwd).toBe(home);
   expect(first.argv.slice(0, 7)).toEqual(['-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--permission-mode', 'acceptEdits']);
-  expect(path.dirname(argAfter(first.argv, '--mcp-config'))).toBe(app.userData);
-  expect(argAfter(first.argv, '--allowedTools')).toBe('mcp__vibetabula__search_chats,mcp__vibetabula__read_chat,mcp__vibetabula__list_chats');
+  // each run has its own MCP config (with the token of the canvas tools), deleted after the answer
+  expect(path.dirname(argAfter(first.argv, '--mcp-config'))).toBe(path.join(app.userData, 'mcp-runs'));
+  expect(argAfter(first.argv, '--allowedTools').split(',')).toEqual(['mcp__vibetabula__search_chats', 'mcp__vibetabula__read_chat', 'mcp__vibetabula__list_chats',
+    ...['list_objects', 'read_object', 'create_sticky', 'create_note', 'create_text', 'create_area', 'connect', 'update_text'].map((t) => `mcp__vibetabula__canvas_${t}`)]);
   expect(first.argv).not.toContain('--resume');
 
   expect(answer.parts.map((p) => p.type)).toEqual(['text', 'tool', 'text']);

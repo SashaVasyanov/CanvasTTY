@@ -5,7 +5,8 @@
 //
 //   scenario  <state>/scenario.json {"codex": "images", "claude": "denied"} (written by app.scenario()),
 //             else FAKE_CODEX_SCENARIO / FAKE_CLAUDE_SCENARIO, else "basic"
-//   log       <state>/calls.jsonl, one JSON line per call: cli, argv, cwd, prompt, pid, childPid, scenario
+//   log       <state>/calls.jsonl, one JSON line per call: cli, argv, cwd, prompt, pid, childPid, scenario,
+//             mcpConfig (what --mcp-config pointed to)
 //   gate      waiting scenarios (reconnect, slow) go on once <state>/release-<cli> exists (app.release())
 // <state> is FAKE_CLI_STATE (set by tests/electron/fixtures.mjs), else the OS temp folder.
 //
@@ -354,7 +355,10 @@ async function main(cli) {
   const child = scenario === 'slow' ? startChild() : null;
   try {
     fs.mkdirSync(STATE, { recursive: true });
-    fs.appendFileSync(path.join(STATE, 'calls.jsonl'), JSON.stringify({ cli, argv, cwd: process.cwd(), prompt, pid: process.pid, childPid: child ? child.pid : null, scenario, time: Date.now() }) + '\n');
+    // the MCP config Claude Code got (the app deletes a run's own config when the run ends)
+    let mcpConfig = null;
+    try { const f = argAfter(argv, '--mcp-config'); if (f) mcpConfig = JSON.parse(fs.readFileSync(f, 'utf8')); } catch (e) { /* none */ }
+    fs.appendFileSync(path.join(STATE, 'calls.jsonl'), JSON.stringify({ cli, argv, cwd: process.cwd(), prompt, pid: process.pid, childPid: child ? child.pid : null, scenario, mcpConfig, time: Date.now() }) + '\n');
   } catch (e) { /* logging is best effort */ }
   await (cli === 'codex' ? codex(argv, prompt, scenario) : claude(argv, prompt, scenario));
   if (child) child.kill();

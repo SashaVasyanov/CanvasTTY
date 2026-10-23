@@ -92,7 +92,7 @@ export class App {
 export const test = base.extend({
   app: async ({ page }, use) => {
     const errors = [];
-    page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
+    page.on('pageerror', (e) => { errors.push(`pageerror: ${e.message}`); if (process.env.VT_STACKS) console.log(e.stack); });
     page.on('console', (m) => { if (m.type() === 'error' && !IGNORED.test(m.text())) errors.push(`console: ${m.text()}`); });
     // every test has its own browser context, so storage starts empty (no clear + reload, whose
     // debounced saves of the first page could land after the clear)

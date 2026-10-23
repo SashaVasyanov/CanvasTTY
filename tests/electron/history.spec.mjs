@@ -99,8 +99,10 @@ async function searchOldChats(app, home) {
   expect(tool, JSON.stringify(a.parts)).toMatchObject({ name: 'mcp__vibetabula__search_chats', status: 'ok' });
   expect(tool.output).toContain('1. [vibetabula] Обсуждение кометы');
   expect(tool.output).toContain('ref="cv_comet"');
-  const config = app.readJson(argAfter(app.calls('claude')[0].argv, '--mcp-config'));
+  const config = app.calls('claude')[0].mcpConfig;
   expect(config.mcpServers.vibetabula).toMatchObject({ type: 'stdio', command: await app.main(() => process.execPath), env: { ELECTRON_RUN_AS_NODE: '1', CANVASTTY_USERDATA: app.userData } });
+  // the run's own config (it carries the canvas token) is gone once the answer is done
+  await expect.poll(() => fs.existsSync(argAfter(app.calls('claude')[0].argv, '--mcp-config'))).toBe(false);
 
   // Codex gets the server as -c mcp_servers.vibetabula.* and finds its own session on disk
   const codex = await app.openAgentChat('codex', { x: 850, y: 300 });
