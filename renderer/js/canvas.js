@@ -5,6 +5,7 @@ import { NODE_TYPES, strokePath } from './nodes.js';
 import { PEN_TOOLS, penSettings, currentTool, cssColor, resolveColor, normColor, colorRow, openColorPicker, colorName, OBJECT_COLORS } from './pentools.js';
 import { Comments } from './comments.js';
 import { paintActivity } from './activity.js';
+import { bookmarkItems } from './bookmarks.js';
 
 const MIN_Z = 0.08, MAX_Z = 3;
 const SNAP_PX = 6;
@@ -135,6 +136,7 @@ export class CanvasView extends Emitter {
     this.zoomBar = h('div', { class: 'zoom-bar' },
       this.mapBtn,
       h('button', { class: 'icon-btn', title: 'Показать всё (Shift+1)', html: icon('home', 15), onclick: () => this.fit() }),
+      h('button', { class: 'icon-btn bm-btn', title: 'Закладки вида: Ctrl+1…9 — перейти, Ctrl+Shift+1…9 — запомнить', html: icon('bookmark', 15), onclick: (e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); menu(bookmarkItems(this), r.left, r.bottom + 6, { minWidth: 240 }); } }),
       h('button', { class: 'icon-btn', title: 'Отдалить (−)', html: icon('zoomOut', 15), onclick: () => this.zoomBy(1 / 1.25) }),
       h('button', { class: 'icon-btn', title: 'Приблизить (+)', html: icon('zoomIn', 15), onclick: () => this.zoomBy(1.25) }),
       this.zoomLabel,

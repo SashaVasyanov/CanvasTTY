@@ -87,11 +87,26 @@ describe('mergeDocs: слияние canvas по объектам', () => {
     });
   }
 
+  // view bookmarks (renderer/js/bookmarks.js): one per slot, merged like objects
+  const bm = (slot, name, x = 0) => ({ id: `b${slot}`, slot, name, x, y: 0, z: 1 });
+  for (const [name, merge] of MERGES) {
+    test(`${name}: закладки вида — разные слоты с двух компьютеров сохраняются оба, удаление доходит, без закладок ключа нет`, () => {
+      const b = { ...doc([]), bookmarks: [bm(1, 'Сборка'), bm(2, 'Отчёт')] };
+      const l = { ...doc([]), bookmarks: [bm(1, 'Сборка'), bm(2, 'Отчёт'), bm(3, 'Здесь')] };
+      const r = { ...doc([]), bookmarks: [bm(1, 'Сборка', 500)] }; // moved 1, deleted 2
+      assert.deepEqual(merge(b, l, r).bookmarks.map((x) => [x.slot, x.name, x.x]), [[1, 'Сборка', 500], [3, 'Здесь', 0]]);
+      assert.equal('bookmarks' in merge(doc([]), doc([]), doc([])), false, 'холст без закладок не меняется');
+      assert.deepEqual(merge(null, doc([]), { ...doc([]), bookmarks: [bm(4, 'Там')] }).bookmarks.map((x) => x.name), ['Там']);
+    });
+  }
+
   test('обе копии слияния дают одинаковый результат', () => {
     const b = doc([sticky('a', 'A'), sticky('b', 'B'), sticky('c', 'C'), sticky('d', 'D')]);
     const l = doc([sticky('d', 'D'), sticky('a', 'A1'), sticky('c', 'C'), sticky('x', 'X')]);
     const r = doc([sticky('b', 'B2'), sticky('a', 'A2'), sticky('y', 'Y')]);
     for (const args of [[b, l, r], [null, l, r], [b, r, l], [b, b, b]]) assert.deepEqual(mergeDocs(...args), mergeDocsRenderer(...args));
+    const bb = { ...b, bookmarks: [bm(1, 'A')] }, lb = { ...l, bookmarks: [bm(1, 'A'), bm(2, 'B')] }, rb = { ...r, bookmarks: [bm(3, 'C')] };
+    for (const args of [[bb, lb, rb], [null, lb, rb], [bb, rb, lb], [b, l, rb]]) assert.deepEqual(mergeDocs(...args), mergeDocsRenderer(...args));
   });
 
   // Regression (fixed): merge.js says "keep the remote order, then local additions", but objects present on both
@@ -265,6 +280,20 @@ describe('SyncManager: два компьютера через общую пап�
     await waitFor(() => readJson(remoteFile('canvases', 'c1.json')).device === A.sync.st.deviceId, 'A отправляет объединённую версию');
     await B.pull();
     assert.deepEqual(texts(B.canvas('c1')), ['A одновременно', 'B одновременно', 'Привет с A']);
+  });
+
+  test('закладки вида: запомненные на разных компьютерах одновременно объединяются', async () => {
+    const { A, B } = await joined();
+    await A.edit('c1', (c) => { c.bookmarks = [{ id: 'b1', slot: 1, name: 'Сборка', x: 10, y: 20, z: 0.5 }]; });
+    await B.pull();
+    assert.deepEqual(B.canvas('c1').bookmarks.map((b) => b.name), ['Сборка']);
+    await A.edit('c1', (c) => { c.bookmarks.push({ id: 'b2', slot: 2, name: 'С A', x: 0, y: 0, z: 1 }); });
+    await B.edit('c1', (c) => { c.bookmarks.push({ id: 'b3', slot: 3, name: 'С B', x: 0, y: 0, z: 1 }); });
+    await A.pull();
+    assert.deepEqual(A.canvas('c1').bookmarks.map((b) => b.name).sort(), ['С A', 'С B', 'Сборка']);
+    await waitFor(() => readJson(remoteFile('canvases', 'c1.json')).device === A.sync.st.deviceId, 'A отправляет объединённую версию');
+    await B.pull();
+    assert.deepEqual(B.canvas('c1').bookmarks.map((b) => b.name).sort(), ['С A', 'С B', 'Сборка']);
   });
 
   const setText = (id, text) => (c) => { c.nodes.find((n) => n.id === id).data.text = text; };

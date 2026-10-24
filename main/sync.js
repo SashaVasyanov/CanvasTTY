@@ -32,7 +32,10 @@ function mergeDocs(base, local, remote) {
     for (const x of [...(r || []), ...(l || [])]) if (!order.has(x.id)) order.set(x.id, order.size);
     return out.sort((a, b) => order.get(a.id) - order.get(b.id));
   };
-  return { ...local, ...remote, nodes: mergeList(base?.nodes, local?.nodes, remote?.nodes), edges: mergeList(base?.edges, local?.edges, remote?.edges), comments: mergeList(base?.comments, local?.comments, remote?.comments) };
+  const out = { ...local, ...remote, nodes: mergeList(base?.nodes, local?.nodes, remote?.nodes), edges: mergeList(base?.edges, local?.edges, remote?.edges), comments: mergeList(base?.comments, local?.comments, remote?.comments) };
+  // view bookmarks (renderer/js/bookmarks.js): by slot id, like objects; no key when nobody has any
+  if (base?.bookmarks || local?.bookmarks || remote?.bookmarks) out.bookmarks = mergeList(base?.bookmarks, local?.bookmarks, remote?.bookmarks);
+  return out;
 }
 
 const hashOf = (v) => crypto.createHash('sha1').update(JSON.stringify(v)).digest('hex');

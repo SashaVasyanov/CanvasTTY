@@ -1,4 +1,4 @@
-// Three-way merge of canvas documents (used by sync). Nodes, edges and comments are merged by id:
+// Three-way merge of canvas documents (used by sync). Nodes, edges, comments and view bookmarks are merged by id:
 // a change made on only one side is kept, a deletion on one side wins over "unchanged" on
 // the other, and when both sides changed the same object the remote (newer) version wins.
 // Without a common ancestor nothing is deleted: both sets are combined.
@@ -23,5 +23,8 @@ export function mergeDocs(base, local, remote) {
     for (const x of [...(r || []), ...(l || [])]) if (!order.has(x.id)) order.set(x.id, order.size);
     return out.sort((a, b) => order.get(a.id) - order.get(b.id));
   };
-  return { ...local, ...remote, nodes: mergeList(base?.nodes, local?.nodes, remote?.nodes), edges: mergeList(base?.edges, local?.edges, remote?.edges), comments: mergeList(base?.comments, local?.comments, remote?.comments) };
+  const out = { ...local, ...remote, nodes: mergeList(base?.nodes, local?.nodes, remote?.nodes), edges: mergeList(base?.edges, local?.edges, remote?.edges), comments: mergeList(base?.comments, local?.comments, remote?.comments) };
+  // view bookmarks (renderer/js/bookmarks.js): by slot id, like objects; no key when nobody has any
+  if (base?.bookmarks || local?.bookmarks || remote?.bookmarks) out.bookmarks = mergeList(base?.bookmarks, local?.bookmarks, remote?.bookmarks);
+  return out;
 }

@@ -42,7 +42,7 @@ test('чат агента: строка в шапке меняется по ша
   expect(m.end - m.ts).toBeGreaterThanOrEqual(125_000);
 
   // saved with the answer: the same after a reload
-  await page.waitForTimeout(700); // the canvas save
+  await page.evaluate(async () => (await import('/js/state.js')).state.saveDoc.flush()); // the canvas file is written
   await reloadApp(page);
   await expect(head(app, id)).toHaveText('Готово за 2 мин · 1 файл');
 });

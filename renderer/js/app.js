@@ -13,6 +13,7 @@ import { AgentWatch, Companion, loadCodexPets, codexPetFor } from './companion.j
 import { inbox, INBOX_KINDS, badgeOf, ago, projectOf } from './inbox.js';
 import { bindCanvasTools } from './canvasTools.js';
 import { openSearch } from './search.js';
+import { bookmarks, bookmarkKey, saveBookmark, saveToFree, goBookmark, bookmarkItems } from './bookmarks.js';
 import { openTemplates, saveTemplate, allTemplates, placeTemplate } from './templates.js';
 import { limits, limitsPanel, petSvg, LIMIT_SOURCES, PETS, openPetPicker, openPetCatalog, CLOCK_PRESETS, CLOCK_DEFAULT, clockColors, paintClock, clockMarkup } from './hub.js';
 
@@ -607,6 +608,7 @@ class App {
         '-',
         { label: 'Выделить всё', icon: 'cursor', kbd: 'Ctrl+A', onClick: () => cv.select(state.doc.nodes.map((n) => n.id)) },
         { label: 'Показать всё', icon: 'home', kbd: 'Shift+1', onClick: () => cv.fit() },
+        { label: 'Закладки вида', icon: 'bookmark', children: bookmarkItems(cv) },
       ], x, y, { minWidth: 230 });
     });
     cv.on('connectToEmpty', ({ from, world, clientX, clientY }) => {
@@ -749,6 +751,15 @@ class App {
 
   // ---------------- keyboard ----------------
   bindKeys() {
+    // view bookmarks: Ctrl+1…9 fly, Ctrl+Shift+1…9 remember — also from the input of a chat window
+    // (it keeps its keys to itself), so before everyone else; a terminal keeps them (Ctrl+2…7 are its
+    // control keys)
+    window.addEventListener('keydown', (e) => {
+      const bk = bookmarkKey(e);
+      if (!bk || document.querySelector('.modal-back') || document.activeElement?.closest?.('.xterm')) return;
+      e.preventDefault(); e.stopPropagation();
+      if (bk.save) saveBookmark(this.canvas, bk.slot); else goBookmark(this.canvas, bk.slot);
+    }, true);
     window.addEventListener('keydown', (e) => {
       if (document.querySelector('.modal-back')) return;
       const mod = e.ctrlKey || e.metaKey;
@@ -785,6 +796,9 @@ class App {
       { label: 'Новый проект', icon: 'folder', run: () => this.projectDialog() },
       { label: 'Пульт агентов на canvas', icon: 'gauge', run: () => this.canvas.addNode('hub', {}) },
       { label: 'Показать всё', icon: 'home', hint: 'Shift+1', run: () => this.canvas.fit() },
+      ...bookmarks(this.canvas).map((b) => ({ label: `Закладка ${b.slot}: ${b.name}`, icon: 'bookmark', hint: `Ctrl+${b.slot}`, run: () => goBookmark(this.canvas, b.slot) })),
+      { label: 'Запомнить вид в закладку', icon: 'bookmark', hint: 'Ctrl+Shift+1…9', run: () => saveToFree(this.canvas) },
+      { label: 'Закладки вида…', icon: 'bookmark', run: () => { const r = this.canvas.rect(); menu(bookmarkItems(this.canvas), r.left + r.width / 2 - 120, r.top + 120, { minWidth: 240 }); } },
       { label: 'Лимиты нейросетей', icon: 'gauge', run: () => this.showLimits(this.limitsBtn) },
       { label: 'Ждут вас — агенты, которые закончили', icon: 'bell', run: () => this.showInbox(this.inboxBtn) },
       { label: 'Следующий ждущий агент', icon: 'bell', hint: 'Ctrl+J', run: () => this.nextWaiting() },
@@ -1089,7 +1103,7 @@ class App {
       ['Shift + клик, рамка', 'Множественное выделение'], ['Shift при перемещении', 'Только по оси'], ['Alt при перемещении', 'Без привязки'],
       ['Ctrl+Z / Ctrl+Shift+Z', 'Отменить / повторить'], ['Ctrl+C / X / V / D', 'Копировать / вырезать / вставить / дублировать'],
       ['Ctrl+G', 'Сгруппировать в область'], ['Ctrl + / − / 0', 'Текст в окне чата (в поле ввода)'], ['Ctrl+L', 'Закрепить'], ['[ / ]', 'Назад / вперёд по слоям'], ['Стрелки (+Shift)', 'Сдвиг на 1 (10) px'],
-      ['Shift+1 / Shift+2 / Shift+0', 'Показать всё / выделенное / 100%'], ['Ctrl+P (в терминале Ctrl+Shift+P)', 'Палитра команд'], ['Ctrl+K (в терминале Ctrl+Shift+K)', 'Поиск по всему'], ['Ctrl+J (в терминале Ctrl+Shift+J)', 'Следующий ждущий агент'], ['Ctrl+O / Ctrl+Shift+O', 'Открыть заметку'], ['Ctrl+N / Ctrl+Shift+N', 'Новая заметка'],
+      ['Shift+1 / Shift+2 / Shift+0', 'Показать всё / выделенное / 100%'], ['Ctrl+P (в терминале Ctrl+Shift+P)', 'Палитра команд'], ['Ctrl+K (в терминале Ctrl+Shift+K)', 'Поиск по всему'], ['Ctrl+J (в терминале Ctrl+Shift+J)', 'Следующий ждущий агент'], ['Ctrl+Shift+1…9 / Ctrl+1…9', 'Запомнить вид в закладку / вернуться к закладке'], ['Ctrl+O / Ctrl+Shift+O', 'Открыть заметку'], ['Ctrl+N / Ctrl+Shift+N', 'Новая заметка'],
       ['Ctrl+`', 'Новый терминал'], ['Ctrl+\\', 'Боковая панель'], ['M', 'Скрыть / показать миникарту'], ['Ctrl+Shift+F', 'Счётчик FPS'], ['F1', 'Инструкция'], ['Ctrl+K (в заметке)', 'Ссылка'], ['[[ (в заметке)', 'Ссылка на заметку с автодополнением'],
       ['Ctrl+Shift+L (в заметке)', 'Чек-лист'], ['# , - , 1. , [] , > (в заметке)', 'Markdown-сокращения'],
     ];

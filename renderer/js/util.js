@@ -87,6 +87,7 @@ const P = {
   calendar: '<rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/>',
   hourglass: '<path d="M7 3h10M7 21h10M8 3c0 5 8 6 8 9s-8 4-8 9M16 3c0 5-8 6-8 9s8 4 8 9"/>',
   stopwatch: '<circle cx="12" cy="13.5" r="7.5"/><path d="M12 13.5V9.5M10 2.5h4M18.5 6.5l1.5-1.5"/>',
+  bookmark: '<path d="M6.5 3.5h11v17l-5.5-4-5.5 4z"/>',
   flag: '<path d="M5 21V4M5 4h11l-2 4 2 4H5"/>',
   check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
   comment: '<path d="M12 3.5a8.5 8.5 0 1 1 0 17H3.5V12A8.5 8.5 0 0 1 12 3.5z"/>',
