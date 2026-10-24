@@ -345,6 +345,15 @@ svg.guides line { stroke: #ff5ca8; stroke-width: 1; }
 .head-title { font-size: 12px; font-weight: 550; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .node.selected .head-title { color: var(--text); }
 .head-status { width: 7px; height: 7px; border-radius: 50%; background: #535a68; flex: none; }
+/* what the agent is doing now / how its last answer went (nodes.js statusInfo detail); shrinks before the title */
+.head-activity { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 0 3 auto; }
+.head-activity:empty { display: none; }
+.head-activity, .card-status, .hs-st, .wg-agent-st { display: flex; min-width: 0; }
+.act-what { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 0 1 auto; }
+.act-time { flex: none; white-space: pre; } /* the time stays when a long command is cut */
+.head-activity.busy { color: var(--text-2); }
+.head-activity.wait { color: #f6a04d; }
+.head-activity.na { color: #e9938f; }
 .head-status.busy { background: var(--green); animation: beat 1.4s infinite; }
 .head-status.idle { background: var(--amber); }
 .head-status.na { background: var(--red); }
@@ -371,7 +380,7 @@ svg.guides line { stroke: #ff5ca8; stroke-width: 1; }
 .card-badge { display: flex; transform: scale(calc(1 / var(--z) * 0.8)); transform-origin: center; margin: 0 calc(6px / var(--z)); }
 .card-text { min-width: 0; }
 .card-title { font-weight: 650; font-size: clamp(14px, calc(14px / var(--z)), 80px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text); line-height: 1.25; }
-.card-status { font-size: clamp(10px, calc(10px / var(--z)), 50px); color: var(--muted); }
+.card-status { font-size: clamp(10px, calc(10px / var(--z)), 50px); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .card-status.busy { color: var(--green); }
 .card-status.na { color: #e9938f; }
 /* AI chat windows (.far-lod) turn into cards at their own, lower zoom (.lod-far) */
@@ -629,7 +638,7 @@ svg.guides line { stroke: #ff5ca8; stroke-width: 1; }
 .hs-row:hover { filter: brightness(1.05); }
 .hs-text { min-width: 0; flex: 1; line-height: 1.15; }
 .hs-title { font-size: 11px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.hs-st { font-size: 10px; opacity: 0.7; }
+.hs-st { font-size: 10px; opacity: 0.7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .hs-dot { width: 7px; height: 7px; border-radius: 50%; background: #7d8494; flex: none; }
 .hs-row.busy .hs-dot { background: #2f9e6e; animation: beat 1.4s infinite; }
 .hs-row.idle .hs-dot { background: #c98a2b; }
@@ -1287,7 +1296,7 @@ button.wg-day.marked:hover { background: color-mix(in srgb, var(--dc) 34%, trans
 .wg-agent.st-error .wg-dot { background: var(--red); }
 @keyframes wg-pulse { 50% { box-shadow: 0 0 0 6px rgba(63, 185, 80, 0); } }
 .wg-agent-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.wg-agent-st { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.wg-agent-st { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 60%; }
 /* limits */
 .wk-limits .wg-body { padding: 26px 8px 8px; align-items: stretch; justify-content: flex-start; }
 .wk-limits .limits-pop { position: static; width: auto; max-height: none; box-shadow: none; border: 0; background: transparent; overflow-y: auto; flex: 1; min-height: 0; padding: 0; }

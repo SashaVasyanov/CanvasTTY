@@ -4,6 +4,7 @@ import { state, native } from './state.js';
 import { NODE_TYPES, strokePath } from './nodes.js';
 import { PEN_TOOLS, penSettings, currentTool, cssColor, resolveColor, normColor, colorRow, openColorPicker, colorName, OBJECT_COLORS } from './pentools.js';
 import { Comments } from './comments.js';
+import { paintActivity } from './activity.js';
 
 const MIN_Z = 0.08, MAX_Z = 3;
 const SNAP_PX = 6;
@@ -426,8 +427,9 @@ export class CanvasView extends Emitter {
       v.badge = h('span', { class: 'head-badge' });
       v.title = h('span', { class: 'head-title' });
       v.status = h('span', { class: 'head-status' });
+      v.activity = h('span', { class: 'head-activity' }); // what the agent is doing (nodes.js statusInfo detail)
       v.btns = h('div', { class: 'head-btns' });
-      v.head.append(v.badge, v.title, v.status, h('span', { class: 'flex' }), v.btns);
+      v.head.append(v.badge, v.title, v.status, v.activity, h('span', { class: 'flex' }), v.btns);
       v.body = h('div', { class: 'node-body' });
       v.card = h('div', { class: 'node-card' }, h('div', { class: 'card-row' }, h('span', { class: 'card-badge' }), h('div', { class: 'card-text' }, h('div', { class: 'card-title' }), h('div', { class: 'card-status' }))));
       el.append(v.head, v.body, v.card);
@@ -478,15 +480,17 @@ export class CanvasView extends Emitter {
       v.badge.replaceChildren(def.badge(n, 14));
       v.card.querySelector('.card-badge').replaceChildren(def.badge(n, 22));
     }
-    const skey = `${title}|${status ? status.label + status.kind : ''}`;
+    const detail = status?.detail || '';
+    const skey = `${title}|${status ? status.label + status.kind : ''}|${detail}`;
     if (v.skey === skey) return;
     v.skey = skey;
     v.card.querySelector('.card-title').textContent = title;
     const st = v.card.querySelector('.card-status');
-    st.textContent = status ? status.label : '';
+    paintActivity(st, detail ? status : { what: status ? status.label : '' }); // the card: what it is doing, else the status
     st.className = `card-status ${status ? status.kind : ''}`;
     v.status.className = `head-status ${status ? status.kind : ''}`;
     v.status.title = status ? status.label : '';
+    if (v.activity) { paintActivity(v.activity, detail ? status : null); v.activity.className = `head-activity ${status ? status.kind : ''}`; }
   }
 
   refreshStatuses() { for (const n of this.doc.nodes) { const v = this.views.get(n.id); if (v && v.def.status) this.syncHead(n); } }

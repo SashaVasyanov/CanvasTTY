@@ -67,7 +67,12 @@ const CANVAS_HINT = ' Your chat window sits on the user\'s VibeTabula canvas (an
 class AgentChatManager {
   constructor({ send, ptys, userData, attachments }) {
     this.attachments = attachments;
-    this.send = send;
+    // 'done' says when the CLI really exited (exit.json): a run replayed after a restart ended
+    // long before the window saw it, and «Готово за 2 мин» must not count the time the app was closed
+    this.send = (ch, ev) => {
+      if (ch === 'agentchat:event' && ev?.type === 'done' && !ev.endedAt) { const r = this.runs.get(ev.reqId); if (r?.endedAt) ev = { ...ev, endedAt: r.endedAt }; }
+      send(ch, ev);
+    };
     this.ptys = ptys;
     this.userData = userData;
     this.runs = new Map(); // reqId → run (also finished ones, until the renderer releases them)
@@ -244,6 +249,7 @@ class AgentChatManager {
   close(run, code, extra = {}) {
     if (run.closed) return;
     run.closed = true;
+    run.endedAt = readJson(path.join(run.dir, 'exit.json'))?.at || (extra.lost && mtimeOf(path.join(run.dir, 'alive'))) || Date.now();
     this.dropCanvasToken(run.meta.opts); // a retry (onClose below) writes a new config for its run
     if (run.meta.quit && !run.aborted) extra = { lost: true }; // stopped by quitting the app: broke off
     for (const t of run.timers) clearInterval(t);

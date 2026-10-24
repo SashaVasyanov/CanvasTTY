@@ -3,6 +3,7 @@ import { safeUrl } from './sanitize.js';
 import { h, icon, badge, bus, relTime, Emitter, esc, modal, toast, menu, confirmBox } from './util.js';
 import { state, native } from './state.js';
 import { SpritePet, codexPets, codexPetFor, isCodexKind, loadCodexPets, PET_ROWS } from './companion.js';
+import { paintActivity } from './activity.js';
 
 // ---------------- clock colours ----------------
 // d: the four digits (they overlap: screen blend on dark backgrounds, multiply on light ones)
@@ -421,18 +422,23 @@ export function mountHub({ node, view, body }) {
   let statusSig = '';
   const renderStatus = () => {
     const nodes = agentNodes();
-    const sig = nodes.map((n) => { const v = view.views.get(n.id); const st = v?.def?.status?.(n, v?.inst); return `${n.id}:${v?.def?.title(n)}:${st?.label}`; }).join('|');
-    if (sig === statusSig && statusBox.childElementCount) return;
+    const sts = new Map(nodes.map((n) => { const v = view.views.get(n.id); return [n.id, v?.def?.status?.(n, v?.inst)]; }));
+    const sig = nodes.map((n) => { const v = view.views.get(n.id); const st = sts.get(n.id); return `${n.id}:${v?.def?.title(n)}:${st?.kind}:${st?.label}`; }).join('|');
+    // the same rows: only the line «what it is doing» changes (the time counts up), in place
+    if (sig === statusSig && statusBox.childElementCount) {
+      for (const el of statusBox.querySelectorAll('.hs-st[data-id]')) paintActivity(el, sts.get(el.dataset.id));
+      return;
+    }
     statusSig = sig;
     statusBox.innerHTML = '';
     if (!nodes.length) statusBox.append(h('div', { class: 'hs-empty' }, 'Нет агентов на этом canvas'));
     const order = { wait: 0, busy: 1, na: 2, idle: 3, off: 4 };
-    const list = nodes.map((n) => { const v = view.views.get(n.id); const def = v?.def; return { n, def, st: def?.status?.(n, v?.inst) || { label: '', kind: 'off' } }; })
+    const list = nodes.map((n) => { const v = view.views.get(n.id); const def = v?.def; return { n, def, st: sts.get(n.id) || { label: '', kind: 'off' } }; })
       .filter((x) => x.def)
       .sort((a, b) => (order[a.st.kind] ?? 9) - (order[b.st.kind] ?? 9));
     for (const { n, def, st } of list.slice(0, 3)) {
       statusBox.append(h('div', { class: `hs-row ${st.kind} no-drag`, onclick: (e) => { e.stopPropagation(); view.focusNode(n.id); } },
-        def.badge(n, 14), h('div', { class: 'hs-text' }, h('div', { class: 'hs-title' }, def.title(n)), h('div', { class: 'hs-st' }, st.label)),
+        def.badge(n, 14), h('div', { class: 'hs-text' }, h('div', { class: 'hs-title' }, def.title(n)), (() => { const el = h('div', { class: 'hs-st', 'data-id': n.id }); paintActivity(el, st); return el; })()),
         h('span', { class: 'hs-dot' })));
     }
     if (list.length > 3) statusBox.append(h('div', { class: 'hs-more' }, `+ ещё ${list.length - 3}`));

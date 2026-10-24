@@ -25,6 +25,8 @@ test('агент поменял файлы: строка под ответом, 
   expect(answer.changes.files.map((f) => [f.path, f.status]).sort()).toEqual([['README.md', 'M'], ['notes.txt', 'A'], ['old.txt', 'D']]);
   const line = app.el(chat).locator('.msg-changes');
   await expect(line.locator('.mc-text')).toHaveText('Изменено 3 файла');
+  // the header says how the answer went (renderer/js/activity.js)
+  await expect(app.el(chat).locator('.node-head .head-activity')).toHaveText(/^Готово за \d+ с · 3 файла$/);
   await expect(line.locator('.mc-add')).toHaveText('+2');
   await expect(line.locator('.mc-del')).toHaveText('−1');
 

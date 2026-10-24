@@ -65,7 +65,7 @@ test.describe('статус и остановка', () => {
     await agentRun(page);
     await expectStatus(c, 'Работает', 'busy');
     await expect(c.send).toHaveClass(/stop/);
-    await expect(row.locator('.wg-agent-st')).toHaveText('Работает');
+    await expect(row.locator('.wg-agent-st')).toHaveText(/^Думает… · \d+ с$/); // what it is doing (activity.spec)
     await expect(row).toHaveClass(/st-busy/);
     await expect(page.locator('.wg-count')).toHaveText('1 из 1 работают');
     await emitAgent(page, { type: 'delta', text: ' слово1' });
@@ -74,7 +74,7 @@ test.describe('статус и остановка', () => {
     // far out the chat becomes a card with the status
     await setZoom(page, 0.15);
     await expect(c.cardStatus).toBeVisible();
-    await expect(c.cardStatus).toHaveText('Работает');
+    await expect(c.cardStatus).toHaveText(/^Пишет ответ… · \d+ с$/);
     await setZoom(page, 1);
 
     // another canvas and back: the window is created anew while the answer goes on
@@ -88,7 +88,7 @@ test.describe('статус и остановка', () => {
     await expect(c.userMsgs).toHaveText(['Сделай карту']);
     await emitAgent(page, { type: 'delta', text: ' слово3' });
     await expect(c.lastAnswer, 'новое окно показывает идущий ответ').toContainText('слово1 слово2 слово3');
-    await expect(page.locator('.wg-agent .wg-agent-st')).toHaveText('Работает');
+    await expect(page.locator('.wg-agent .wg-agent-st'), 'новое окно знает, что делает агент').toHaveText(/^Пишет ответ… · \d+ с$/);
 
     await c.send.click();
     const { reqId } = (await agentRuns(page))[0];
@@ -97,7 +97,7 @@ test.describe('статус и остановка', () => {
     await expect(c.send).not.toHaveClass(/stop/);
     await expect(c.lastAnswer).toContainText('слово1 слово2 слово3');
     await expect(c.lastAnswer).toContainText('Остановлено');
-    await expect(page.locator('.wg-agent .wg-agent-st')).toHaveText('Ожидает');
+    await expect(page.locator('.wg-agent .wg-agent-st')).toHaveText(/^Остановлено через \d+ с$/);
   });
 
   test('сообщение и «Работает» видны сразу, пока собирается контекст; Стоп до запуска агента ничего не запускает', async ({ app, page }) => {

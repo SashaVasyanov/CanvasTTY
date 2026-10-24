@@ -5,6 +5,7 @@
 import { h, icon, uid, toast, relTime, bus } from './util.js';
 import { state } from './state.js';
 import { popover, colorRow, cssColor, OBJECT_COLORS } from './pentools.js';
+import { paintActivity } from './activity.js';
 
 const pad2 = (n) => String(n).padStart(2, '0');
 const fmtDur = (ms) => { const s = Math.max(0, Math.round(ms / 1000)); const hh = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60; return hh ? `${hh}:${pad2(m)}:${pad2(sec)}` : `${pad2(m)}:${pad2(sec)}`; };
@@ -315,12 +316,14 @@ export const WIDGETS = {
         const nodes = view.doc.nodes.filter((n) => ['terminal', 'agentchat', 'chat'].includes(n.type));
         const rows = nodes.map((n) => { const def = NODE_TYPES[n.type]; const st = def.status?.(n, view.views.get(n.id)?.inst) || {}; return { n, title: def.title(n), st }; });
         const k = rows.map((r) => `${r.n.id}:${r.title}:${r.st.kind}:${r.st.label}`).join('|');
-        if (k === key) return;
+        // the same rows: only «what it is doing» changes (the time counts up), in place
+        if (k === key) { list.querySelectorAll('.wg-agent-st').forEach((el, i) => paintActivity(el, rows[i]?.st)); return; }
         key = k;
         const busy = rows.filter((r) => r.st.kind === 'busy').length;
         w.body.querySelector('.wg-count').textContent = rows.length ? `${busy} из ${rows.length} работают` : '';
         list.replaceChildren(...(rows.length ? rows.map((r) => {
-          const row = h('button', { class: `wg-agent st-${r.st.kind || 'idle'}`, title: 'Показать на canvas' }, h('span', { class: 'wg-dot' }), h('span', { class: 'wg-agent-name' }, r.title), h('span', { class: 'wg-agent-st' }, r.st.label || ''));
+          const row = h('button', { class: `wg-agent st-${r.st.kind || 'idle'}`, title: 'Показать на canvas' }, h('span', { class: 'wg-dot' }), h('span', { class: 'wg-agent-name' }, r.title), h('span', { class: 'wg-agent-st' }));
+          paintActivity(row.lastChild, r.st);
           row.addEventListener('click', (e) => { e.stopPropagation(); view.focusNode(r.n.id); });
           return row;
         }) : [h('div', { class: 'wg-empty' }, 'На этом canvas пока нет агентов')]));

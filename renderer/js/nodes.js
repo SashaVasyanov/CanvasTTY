@@ -13,6 +13,7 @@ import { AttachBar, renderAttachments, viewImages } from './attach.js';
 import { chatContext, imagesToAttachments, renderContextRow, renderContextNote, attachMentions } from './context.js';
 import { explainError, ERROR_ACTIONS } from './errors.js';
 import { inbox } from './inbox.js';
+import { live, outcome, filesWord } from './activity.js';
 
 // ---------------- routers for main-process events ----------------
 const ptyRoutes = new Map();
@@ -646,7 +647,6 @@ function touchedFiles(parts) {
   return [...out].slice(0, 50);
 }
 const changeTotals = (c) => c.files.reduce((t, f) => ({ add: t.add + (f.add || 0), del: t.del + (f.del || 0) }), { add: 0, del: 0 });
-const filesWord = (n) => (n % 10 === 1 && n % 100 !== 11 ? 'файл' : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? 'файла' : 'файлов');
 // the line under an answer: "Изменено 3 файла +42 −7 · Показать · Откатить"
 function renderChanges(m, i) {
   const c = m.changes;
@@ -914,7 +914,7 @@ class ChatInstance {
     if (!this.node.data.title || this.node.data.title === 'Новый чат') this.view.setData(this.node.id, { title: (text || attachments[0]?.name || 'Чат').slice(0, 40) });
     const reqId = uid('req');
     this.docId = this.view.doc.id; activeRuns.set(this.node.id, this);
-    this.streaming = reqId; this.preparing = reqId; this._prep = { all, asst };
+    this.streaming = reqId; this.preparing = reqId; this._prep = { all, asst }; this.live = asst;
     this.follow = true; // a new question: show it and the answer
     const typing = () => { this.renderAll(); const t = this.list.lastElementChild.querySelector('.msg-text'); t.innerHTML = '<span class="typing"><i></i><i></i><i></i></span>'; return t; };
     let textEl = typing();
@@ -947,9 +947,10 @@ class ChatInstance {
 
   async finish(reqId, all, ev = {}) {
     chatRoutes.delete(reqId);
-    this.streaming = null;
+    this.streaming = null; this.live = null;
     const last = all[all.length - 1];
     if (last?.running) delete last.running;
+    if (last?.role === 'assistant') { last.end = Date.now(); if (ev.aborted) last.stopped = true; }
     reportEnd(this, ev.aborted ? null : ev.error ? 'error' : 'done', ev.error ? last?.errorText : last?.content);
     this.sendBtn.innerHTML = icon('send', 16); this.sendBtn.classList.remove('stop');
     activeRuns.delete(this.node.id);
@@ -995,13 +996,15 @@ class ChatInstance {
     this.view.syncHead(this.node);
   }
 
+  // detail: what it is doing now («Пишет ответ… · 12 с») or how the last answer went (activity.js)
   statusInfo() {
-    if (this.streaming || runOf(this)) return { label: 'Отвечает…', kind: 'busy' };
+    const run = this.streaming ? this : runOf(this);
+    if (run) return { label: 'Отвечает…', kind: 'busy', ...(run.preparing ? { detail: 'Смотрит холст…' } : run.live ? live(run.live) : {}) };
     const m = this.messages[this.messages.length - 1];
-    if (runsElsewhere(m)) return { label: 'Отвечает на другом компьютере', kind: 'busy' };
-    if (m?.interrupted) return { label: 'Прервано', kind: 'wait' };
-    if (m?.error) return { label: 'Ошибка', kind: 'na' };
-    return { label: this.messages.length ? `${this.messages.length} сообщ.` : 'Готов', kind: 'idle' };
+    if (runsElsewhere(m)) return { label: 'Отвечает на другом компьютере', kind: 'busy', detail: 'Отвечает на другом компьютере' };
+    if (m?.interrupted) return { label: 'Прервано', kind: 'wait', detail: 'Ответ прервался' };
+    if (m?.error) return { label: 'Ошибка', kind: 'na', detail: outcome(m) || 'Ошибка' };
+    return { label: this.messages.length ? `${this.messages.length} сообщ.` : 'Готов', kind: 'idle', detail: outcome(m) };
   }
 
   update(n) { this.node = n; if (!this.streaming) { this.providerSel.value = n.data.provider || 'openai'; this.modelInput.value = n.data.model || ''; this.renderAll(); } }
@@ -1122,7 +1125,7 @@ class AgentChatInstance {
     this.syncRunUi();
     const giveUp = () => {
       if (this.running !== reqId) return;
-      chatRoutes.delete(reqId); activeRuns.delete(this.node.id); this.running = null;
+      chatRoutes.delete(reqId); activeRuns.delete(this.node.id); this.running = null; this.live = null;
       settleStale(this);
       this.renderAll(); this.syncRunUi(); this.syncHead();
     };
@@ -1422,7 +1425,7 @@ class AgentChatInstance {
     if (!this.node.data.title && text !== CONTINUE_PROMPT) this.view.setData(this.node.id, { title: (text || attachments[0]?.name || 'Задача').slice(0, 40) });
     const reqId = uid('ag');
     this.docId = this.view.doc.id; activeRuns.set(this.node.id, this);
-    this.running = reqId; this.preparing = reqId; this._prep = { all, asst };
+    this.running = reqId; this.preparing = reqId; this._prep = { all, asst }; this.live = asst;
     this.follow = true; // a new question: show it and the answer
     this.renderAll();
     this.syncRunUi();
@@ -1458,6 +1461,7 @@ class AgentChatInstance {
   // events of a run → the answer; also replays a run picked up after a restart (reattach)
   listen(reqId, all, asst) {
     let body = null, newText = true;
+    this.live = asst; // what it is doing now: statusInfo
     const paint = throttle(() => {
       if (!body?.isConnected) body = this.list.lastElementChild?.querySelector('.msg-body');
       if (body) this.renderParts(asst, body);
@@ -1492,6 +1496,8 @@ class AgentChatInstance {
 
   async finish(reqId, all, asst, ev) {
     chatRoutes.delete(reqId);
+    // when the agent really ended (main: exit.json) — a run replayed after a restart ended earlier
+    const end = ev.endedAt && ev.endedAt >= (asst.ts || 0) && ev.endedAt <= Date.now() ? ev.endedAt : Date.now();
     // what the agent changed in its folder (while the window still says «Работает»)
     if (asst.snap) {
       try { const c = await native.changes.since(asst.snap); if (c?.files?.length) asst.changes = c; } catch (e) { console.warn('changes', e); }
@@ -1500,8 +1506,9 @@ class AgentChatInstance {
       const touched = touchedFiles(asst.parts);
       if (touched.length) asst.touched = touched;
     }
-    this.running = null;
-    asst.running = false;
+    this.running = null; this.live = null;
+    asst.running = false; asst.end = end;
+    if (ev.aborted) asst.stopped = true;
     for (const p of asst.parts) if (p.type === 'tool' && p.status === 'run') p.status = ev.aborted ? 'err' : 'ok';
     if (ev.aborted) asst.parts.push({ type: 'notice', text: 'Остановлено' });
     if (ev.interrupted) { asst.interrupted = true; asst.parts.push({ type: 'notice', text: INTERRUPTED }); }
@@ -1535,14 +1542,17 @@ class AgentChatInstance {
     const r = this.running || runOf(this)?.running; if (r) native.agentChat.abort(r);
   }
   syncHead() { this.view.syncHead(this.view.node(this.node.id) || this.node); bus.emit('agents'); }
+  // detail: what it is doing now («Запускает npm test · 2 мин») or how the last answer went
+  // («Готово за 2 мин · 3 файла»), activity.js
   statusInfo() {
-    if (this.running || runOf(this)) return { label: 'Работает', kind: 'busy' };
+    const run = this.running ? this : runOf(this);
+    if (run) return { label: 'Работает', kind: 'busy', ...(run.preparing ? { detail: 'Смотрит холст…' } : run.live ? live(run.live) : {}) };
     const m = this.messages[this.messages.length - 1];
-    if (runsElsewhere(m)) return { label: 'Работает на другом компьютере', kind: 'busy' };
-    if (m?.interrupted) return { label: 'Прервано', kind: 'wait' };
-    if (m && (m.parts || []).some((p) => p.type === 'error')) return { label: 'Ошибка', kind: 'na' };
-    if (m && m.needsInput) return { label: 'Нужно разрешение', kind: 'wait' };
-    return { label: this.messages.length ? 'Ожидает' : 'Готов', kind: 'idle' };
+    if (runsElsewhere(m)) return { label: 'Работает на другом компьютере', kind: 'busy', detail: 'Работает на другом компьютере' };
+    if (m?.interrupted) return { label: 'Прервано', kind: 'wait', detail: 'Ответ прервался' };
+    if (m && (m.parts || []).some((p) => p.type === 'error')) return { label: 'Ошибка', kind: 'na', detail: outcome(m) || 'Ошибка' };
+    if (m && m.needsInput) return { label: 'Нужно разрешение', kind: 'wait', detail: 'Ждёт разрешения' };
+    return { label: this.messages.length ? 'Ожидает' : 'Готов', kind: 'idle', detail: outcome(m) };
   }
   update(n) { this.node = n; if (!this.running) { this.modeSel.value = n.data.mode || this.modeSel.value; this.fillModelOptions(); this.renderCwd(); this.renderAll(); } }
   edit() { this.input.focus({ preventScroll: true }); }
