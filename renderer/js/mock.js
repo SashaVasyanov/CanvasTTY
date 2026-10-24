@@ -36,7 +36,9 @@ export const mockNative = {
     saveIf: async (id, d, ver) => { if ((localStorage.getItem(`mock:canvas:${id}`) || '') !== ver) return false; LS.set(`mock:canvas:${id}`, d); return true; },
   },
   pty: {
-    async spawn({ cmd }) {
+    // every start is in window.__ptySpawns ({ cmd, args, session }) for the tests
+    async spawn({ cmd, args, session }) {
+      (window.__ptySpawns ||= []).push(JSON.parse(JSON.stringify({ cmd, args: args || [], session: session || null })));
       const id = `mock_${seq++}`;
       const s = sessions[id] = { line: '', buffer: '', last: Date.now(), cmd };
       const out = (d) => { s.buffer += d; s.last = Date.now(); emit('pty:data', { id, data: d }); };
@@ -61,6 +63,12 @@ export const mockNative = {
     statuses: async () => Object.fromEntries(Object.entries(sessions).map(([id, s]) => [id, { exited: false, busy: Date.now() - s.last < 2500, lastOutput: s.last }])),
     which: async () => '/usr/bin/demo',
     onData: on('pty:data'), onExit: on('pty:exit'),
+  },
+  // sessions of terminal agents: tests list existing ids in window.__mockSessions, the Codex one found
+  // after a start in window.__mockCodexFind
+  termSessions: {
+    exists: async (kind, id) => (window.__mockSessions || []).includes(id),
+    findCodex: async () => window.__mockCodexFind || null,
   },
   chat: {
     providers: async () => ({

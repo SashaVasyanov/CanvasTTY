@@ -272,4 +272,36 @@ async function sessionFiles(kind, limit = 400) {
   return newestFiles(files, limit);
 }
 
-module.exports = { HistoryStore, listSessions, readSession, sessionFiles };
+// ---------------- the session of a terminal window (renderer TerminalInstance) ----------------
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// is there a session with this id (its file appears with the first message)?
+async function sessionExists(kind, id) {
+  if (!UUID.test(String(id || ''))) return false;
+  if (kind === 'claude') {
+    let dirs = [];
+    try { dirs = await fsp.readdir(claudeRoot(), { withFileTypes: true }); } catch { return false; }
+    for (const d of dirs) if (d.isDirectory() && fs.existsSync(path.join(claudeRoot(), d.name, `${id}.jsonl`))) return true;
+    return false;
+  }
+  if (kind === 'codex') return (await walk(codexRoot(), (n) => n.startsWith('rollout-') && n.endsWith(`${id}.jsonl`))).length > 0;
+  return false;
+}
+// the Codex session a terminal started in `cwd` after `since` (ms); ids other windows have are skipped
+async function findCodexSession({ cwd, since, exclude = [] } = {}) {
+  const want = normPath(cwd), skip = new Set(exclude.map(String));
+  const files = (await newestFiles(await walk(codexRoot(), (n) => /^rollout-.*\.jsonl$/.test(n)), 40)).filter((x) => x.m >= since - 5000);
+  for (const { f } of files) {
+    let id = '', dir = '', at = 0;
+    await eachLine(f, (o) => {
+      const meta = codexMeta(o);
+      if (meta) { id = id || meta.id || ''; dir = dir || meta.cwd || ''; at = at || Date.parse(meta.timestamp) || 0; }
+      if (o.type === 'turn_context' && o.payload?.cwd && !dir) dir = o.payload.cwd;
+      return !!(id && dir);
+    });
+    if (!id) { const mm = path.basename(f).match(/([0-9a-f]{8}-[0-9a-f-]{27,})\.jsonl$/i); id = mm ? mm[1] : ''; }
+    if (UUID.test(id) && !skip.has(id) && normPath(dir) === want && (!at || at >= since - 3000)) return id;
+  }
+  return null;
+}
+
+module.exports = { HistoryStore, listSessions, readSession, sessionFiles, sessionExists, findCodexSession };

@@ -1046,6 +1046,9 @@ class App {
       // chat windows: the agent keeps answering when the app is closed (main/agent-runner.js)
       const keep = h('input', { type: 'checkbox', class: 'switch' }); keep.checked = s.agentsKeepRunning !== false;
       keep.onchange = () => state.setSetting('agentsKeepRunning', keep.checked);
+      // Claude Code / Codex in terminals continue their own session after a restart (nodes.js TerminalInstance)
+      const resumeT = h('input', { type: 'checkbox', class: 'switch' }); resumeT.checked = s.resumeAgents !== false;
+      resumeT.onchange = () => state.setSetting('resumeAgents', resumeT.checked);
       const notify = h('input', { type: 'checkbox', class: 'switch' }); notify.checked = s.notifyAgents !== false;
       notify.onchange = () => state.setSetting('notifyAgents', notify.checked);
       // «Пока вас не было» (renderer/js/away.js): after how many minutes away, or never
@@ -1062,6 +1065,8 @@ class App {
           h('div', { class: 'muted small' }, 'Когда вы вернулись к компьютеру или в приложение, а агенты за это время закончили: кто закончил, сколько файлов изменил, у кого ошибка или кто ждёт решения. Клик по строке — к окну.')), awaySel),
         h('div', { class: 'set-row' }, h('div', {}, h('div', { class: 'set-label' }, 'Агент продолжает работать после закрытия приложения'),
           h('div', { class: 'muted small' }, 'Ответ дописывается в фоне и появляется в окне чата при следующем запуске. Если выключить, закрытие приложения останавливает агента, а в чате появляется кнопка «Продолжить».')), keep),
+        h('div', { class: 'set-row' }, h('div', {}, h('div', { class: 'set-label' }, 'Терминальные агенты продолжают свою сессию'),
+          h('div', { class: 'muted small' }, 'Claude Code и Codex в окнах терминала после перезапуска приложения сами продолжают ту же сессию, что шла в этом окне (а не последнюю в папке). Если выключить, окно предложит кнопки «Запустить» и «Продолжить прошлую сессию».')), resumeT),
         h('div', { class: 'set-row' }, h('div', {}, h('div', { class: 'set-label' }, 'Инструменты холста для агентов'),
           h('div', { class: 'muted small' }, 'Агент видит объекты холста своего окна и может добавить рядом стикеры, заметки, текст, области и стрелки — например разложить план по шагам. Менять он может только то, что добавил сам, удалять — ничего; всё добавленное за один ответ убирается одним Ctrl+Z. Действует со следующего сообщения.')), tools));
     };

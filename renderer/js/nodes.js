@@ -151,6 +151,16 @@ const CTX_HINT = 'Соедините стрелкой с этим окном о�
 // =====================================================================
 const WAIT_RE = /(Do you want to|Would you like to|Allow (this|command|once)|Approve|approval|\(y\/n\)|\[y\/N\]|\[Y\/n\]|Proceed\?|Press Enter to continue|❯\s*1\.\s*Yes|Yes, and don't ask|Разрешить|Подтвердите)/i;
 
+// Claude Code / Codex in a terminal window keep their own session (node.data.agentSession
+// { kind, id, ended? }): Claude starts with --session-id <a new uuid>, Codex's id is found in its
+// session files right after the start (main/history.js). After a restart the window continues
+// exactly that session (--resume <id> / resume <id>; main/pty.js adds them), not «the last one in
+// this folder». Settings → Агенты → «Терминальные агенты продолжают свою сессию».
+const progName = (cmd) => String(cmd || '').split(/[\\/]/).pop().replace(/\.(exe|cmd|bat|ps1)$/i, '').toLowerCase();
+const termKind = (a) => (['claude', 'codex'].includes(progName(a.cmd)) ? progName(a.cmd) : null);
+const OWN_ARGS = /(^|\s)(--resume|-r|--continue|-c|--session-id|resume)(\s|$)/;
+const uuid = () => { const b = crypto.getRandomValues(new Uint8Array(16)); b[6] = (b[6] & 0x0f) | 0x40; b[8] = (b[8] & 0x3f) | 0x80; const x = [...b].map((v) => v.toString(16).padStart(2, '0')).join(''); return `${x.slice(0, 8)}-${x.slice(8, 12)}-${x.slice(12, 16)}-${x.slice(16, 20)}-${x.slice(20)}`; };
+
 class TerminalInstance {
   constructor({ node, view, body }) {
     this.node = node; this.view = view; this.body = body;
@@ -222,14 +232,27 @@ class TerminalInstance {
         this.syncHead();
         return;
       }
-      // session gone (app restarted)
+      // session gone (app restarted): an agent goes on with its own session
       this.sessionId = null;
+      if (await this.canResume()) {
+        this.term.write('\x1b[2m(VibeTabula: продолжаю прошлую сессию агента)\x1b[0m\r\n');
+        await this.spawn(true);
+        return;
+      }
       this.state = 'stopped';
       this.showStopped();
       this.syncHead();
       return;
     }
+    if (this.data.resumeOnStart) { this.view.setData(this.node.id, { resumeOnStart: null }); await this.spawn(true); return; } // «Открыть эту сессию в терминале»
     await this.spawn();
+  }
+  // the window's own agent session is there to continue
+  get data() { return (this.view.node(this.node.id) || this.node).data; }
+  async canResume() {
+    const own = this.data.agentSession, kind = termKind(this.agent);
+    if (state.settings.resumeAgents === false || !kind || !own?.id || own.kind !== kind || own.ended) return false;
+    try { return !!(await native.termSessions?.exists(kind, own.id)); } catch { return false; }
   }
 
   async spawn(resume = false) {
@@ -237,12 +260,28 @@ class TerminalInstance {
     const a = this.agent;
     const project = state.project;
     const cwd = this.node.data.cwd || project.cwd || state.info.home;
-    const args = [resume && a.resumeArgs ? a.resumeArgs : a.args, this.node.data.extraArgs].filter(Boolean).join(' ').split(/\s+/).filter(Boolean);
+    // the window's own session (see termKind): continue it, or start a new one with a known id
+    const kind = termKind(a), extra = this.data.extraArgs || '';
+    const own = this.data.agentSession?.kind === kind ? this.data.agentSession : null;
+    let session = null, useResumeArgs = resume;
+    if (kind && !OWN_ARGS.test(`${a.args || ''} ${extra}`)) {
+      if (resume && own?.id && await native.termSessions?.exists(kind, own.id)) { session = { kind, id: own.id, resume: true }; useResumeArgs = false; }
+      else if (!resume || own?.id) { // a new session (also when the old one never got a message)
+        session = { kind, id: kind === 'claude' ? (own?.id && resume ? own.id : uuid()) : null, resume: false };
+        useResumeArgs = false;
+      }
+    }
+    const args = [useResumeArgs && a.resumeArgs ? a.resumeArgs : a.args, extra].filter(Boolean).join(' ').split(/\s+/).filter(Boolean);
     this.state = 'starting';
     this.syncHead();
     await new Promise((r) => requestAnimationFrame(r));
     try { this.fit.fit(); } catch {}
-    const res = await native.pty.spawn({ cmd: a.cmd, args, cwd, cols: this.term.cols || 100, rows: this.term.rows || 30 });
+    const since = Date.now();
+    const res = await native.pty.spawn({ cmd: a.cmd, args, cwd, cols: this.term.cols || 100, rows: this.term.rows || 30, ...(session ? { session } : {}) });
+    if (session && !res.error) {
+      this.view.setData(this.node.id, { agentSession: { kind, id: session.id || (session.resume ? own.id : null), at: since } });
+      if (kind === 'codex' && !session.id) this.findCodexSession(cwd, since);
+    }
     // the window was closed while the terminal was starting: don't leave the process behind
     if (this.disposed || this.destroyed) { native.pty.kill(res.id); return; }
     this.sessionId = res.id;
@@ -263,6 +302,8 @@ class TerminalInstance {
     if (this.state !== 'running') { this.state = 'running'; this.syncHead(); }
   }
   onExit(code, error) {
+    const own = this.data.agentSession;
+    if (own && !own.ended) this.view.setData(this.node.id, { agentSession: { ...own, ended: true } }); // the agent itself quit: not continued on its own
     this.state = 'exited';
     this.exitCode = code;
     this.showEnded(code, error);
@@ -286,6 +327,19 @@ class TerminalInstance {
     this.banner.style.display = 'flex';
   }
   hideBanner() { this.banner.style.display = 'none'; }
+  // Codex picks its session id itself: its session file in this folder that appeared after the start
+  async findCodexSession(cwd, since) {
+    const token = (this._codexWatch = {});
+    for (let i = 0; i < 240 && this._codexWatch === token && !this.destroyed; i++) {
+      await new Promise((r) => setTimeout(r, i < 6 ? 2000 : 5000));
+      const own = this.data.agentSession;
+      if (this._codexWatch !== token || !own || own.id || own.kind !== 'codex') return;
+      const exclude = this.view.doc.nodes.filter((n) => n.id !== this.node.id && n.data?.agentSession?.id).map((n) => n.data.agentSession.id);
+      let id = null;
+      try { id = await native.termSessions?.findCodex({ cwd, since, exclude }); } catch {}
+      if (id && this.view.node(this.node.id)) { this.view.setData(this.node.id, { agentSession: { ...own, id } }); return; }
+    }
+  }
 
   async restart() {
     if (this.sessionId) { ptyRoutes.delete(this.sessionId); await native.pty.kill(this.sessionId); }
@@ -535,11 +589,14 @@ function renderError(raw, ctx) {
     e.raw && (!other || e.raw.length > 400) ? h('details', { class: 'err-raw' }, h('summary', {}, 'Подробности'), h('pre', {}, e.raw)) : null);
 }
 // the agent's CLI in a terminal next to the chat (login, or this session to see more)
-function openAgentTerminal(inst, extra) {
+// a terminal next to the chat: with extra arguments (login), or continuing the chat's session
+function openAgentTerminal(inst, extra, { resume } = {}) {
   const a = inst.agent, view = inst.view, n = view.node(inst.node.id);
   if (!n) return;
-  native.trust?.add([[a.cmd, a.args, extra].filter(Boolean).join(' ')]); // started by the user here
-  const t = view.addNode('terminal', { x: n.x + n.w + 60, y: n.y, data: { agentId: a.id, extraArgs: extra, cwd: inst.cwd } }, { center: false });
+  if (extra) native.trust?.add([[a.cmd, a.args, extra].filter(Boolean).join(' ')]); // started by the user here
+  const kind = termKind(a);
+  const own = resume && kind ? { agentSession: { kind, id: resume }, resumeOnStart: true } : {};
+  const t = view.addNode('terminal', { x: n.x + n.w + 60, y: n.y, data: { agentId: a.id, cwd: inst.cwd, ...(extra ? { extraArgs: extra } : {}), ...own } }, { center: false });
   view.select([t.id]);
 }
 function errAction(inst, act) {
@@ -560,7 +617,7 @@ function errAction(inst, act) {
     case 'err-install': if (inst.agent?.install) { native.clipboard.write(inst.agent.install); toast(`Скопировано: ${inst.agent.install} — выполните в терминале`); } break;
     case 'err-terminal': {
       const sid = inst.node.data.sessionId;
-      openAgentTerminal(inst, sid ? (inst.kind === 'codex' ? `resume ${sid}` : `--resume ${sid}`) : '');
+      openAgentTerminal(inst, '', { resume: sid || null });
       break;
     }
     default: break;
@@ -1732,10 +1789,10 @@ export const NODE_TYPES = {
       } }] : []),
       { label: 'Открыть эту сессию в терминале', icon: 'terminal', onClick: () => {
         const a = state.agent(n.data.agentId);
-        const sid = n.data.sessionId;
-        const extra = sid ? (n.data.kind === 'codex' ? `resume ${sid}` : `--resume ${sid}`) : '';
-        native.trust?.add([[a.cmd, a.args, extra].filter(Boolean).join(' ')]); // started by the user here
-        const t = view.addNode('terminal', { x: n.x + n.w + 60, y: n.y, data: { agentId: a.id, extraArgs: extra, cwd: n.data.cwd } }, { center: false });
+        const sid = n.data.sessionId, kind = termKind(a);
+        // the terminal continues the chat's session as its own (TerminalInstance spawn)
+        const own = sid && kind === (n.data.kind || kind) ? { agentSession: { kind, id: sid }, resumeOnStart: true } : {};
+        const t = view.addNode('terminal', { x: n.x + n.w + 60, y: n.y, data: { agentId: a.id, cwd: n.data.cwd, ...own } }, { center: false });
         view.addEdge(n.id, t.id);
       } },
       { label: 'Сохранить переписку в заметку', icon: 'save', onClick: async () => {

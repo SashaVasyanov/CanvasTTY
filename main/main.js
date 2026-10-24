@@ -11,7 +11,7 @@ const { getLimits } = require('./limits');
 const { AgentChatManager, agentDefaults } = require('./agentchat');
 const { CanvasBridge } = require('./canvas-bridge');
 const { SearchIndex } = require('./search');
-const { HistoryStore, listSessions, readSession } = require('./history');
+const { HistoryStore, listSessions, readSession, sessionExists, findCodexSession } = require('./history');
 const { Attachments } = require('./attachments');
 // automated tests run the app against a throw-away profile: settings, canvases, chats and the
 // notes vault all live in that folder, never in the user's own data
@@ -344,6 +344,9 @@ app.whenReady().then(() => {
 
   // ---------- pty ----------
   ipcMain.handle('pty:spawn', (e, opts) => ptys.spawn(opts));
+  // the agent session of a terminal window, continued after a restart (history.js, pty.js withSession)
+  ipcMain.handle('termsess:exists', (e, kind, id) => sessionExists(String(kind || ''), String(id || '')));
+  ipcMain.handle('termsess:findCodex', (e, o) => findCodexSession({ cwd: String(o?.cwd || ''), since: Number(o?.since) || 0, exclude: Array.isArray(o?.exclude) ? o.exclude.slice(0, 200).map(String) : [] }));
   // commands typed in Settings on this computer (not from sync) are trusted
   ipcMain.handle('trust:add', (e, keys) => { trust.add(keys); return true; });
   ipcMain.on('pty:write', (e, id, data) => ptys.write(id, data));

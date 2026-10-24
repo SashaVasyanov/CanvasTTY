@@ -11,6 +11,17 @@ const isWin = process.platform === 'win32';
 const { which } = require('./which');
 const MAX_SCROLLBACK = 400 * 1024;
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const progName = (cmd) => String(cmd || '').split(/[\\/]/).pop().replace(/\.(exe|cmd|bat|ps1)$/i, '').toLowerCase();
+// the session arguments of a terminal agent (see spawn); anything else is left as it is
+function withSession(cmd, args, own) {
+  const kind = own?.kind, id = String(own?.id || '');
+  if (!UUID.test(id) || !['claude', 'codex'].includes(kind) || progName(cmd) !== kind) return args;
+  if (args.some((a) => /^(--resume|-r|--continue|-c|--session-id|resume)$/.test(a))) return args; // already says which one
+  if (kind === 'claude') return [...args, own.resume ? '--resume' : '--session-id', id];
+  return own.resume ? [...args, 'resume', id] : args; // Codex picks its own id: found afterwards (history.js)
+}
+
 class PtyManager {
   constructor({ userData, send }) {
     this.userData = userData;
@@ -77,7 +88,10 @@ class PtyManager {
   }
 
   // ---------- api ----------
-  async spawn({ cmd, args, cwd, cols, rows, env }) {
+  // session: { kind: 'claude'|'codex', id, resume } — the agent's own session of this window: after
+  // the trust check of the command itself, `--session-id <id>` / `--resume <id>` / `resume <id>` are
+  // added here (only a UUID, only for that agent's own program), so they never need approval
+  async spawn({ cmd, args, cwd, cols, rows, env, session: own }) {
     const id = `pty_${Date.now().toString(36)}_${(this.seq++).toString(36)}`;
     const session = { id, cmd, buffer: '', exited: false, exitCode: null, lastOutput: 0, proc: null, notFound: false };
     this.sessions.set(id, session);
@@ -95,6 +109,7 @@ class PtyManager {
     if (cmd && !this.which(cmd)) {
       session.notFound = true;
     }
+    args = withSession(cmd, args, own);
 
     let bridge;
     try {
@@ -212,4 +227,4 @@ class PtyManager {
   }
 }
 
-module.exports = { PtyManager };
+module.exports = { PtyManager, withSession };

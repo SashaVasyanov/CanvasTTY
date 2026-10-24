@@ -50,3 +50,36 @@ test('сессия терминала продолжает работать, п�
   await type(app, term, echo('STILL_HERE'));
   await expect.poll(() => tail(app, term), { timeout: 20_000 }).toContain('STILL_HERE 42');
 });
+
+// Claude Code / Codex in a terminal window keep their own session; after a restart of the app the
+// window continues exactly that one (the fake CLIs in a pty act like the interactive ones:
+// tests/electron/bin/fake-cli.cjs interactive)
+async function openAgent(app, agentId, world) {
+  const id = await app.page.evaluate(([agentId, world]) => window.__app.launchAgent({ agentId, world }).id, [agentId, world]);
+  return id;
+}
+const ownSession = (app, id) => app.page.evaluate((id) => window.__app.canvas.node(id).data.agentSession, id);
+const ttyCalls = (app, cli) => app.calls(cli).filter((c) => c.tty);
+
+test('Claude Code и Codex в терминале: своя сессия, после перезапуска приложения — продолжение именно её', async ({ app }) => {
+  const cl = await openAgent(app, 'claude', { x: 420, y: 260 });
+  await expect.poll(() => tail(app, cl), { timeout: 45_000, message: 'Claude запустился' }).toContain('Fake Claude: new session');
+  const sid = (await ownSession(app, cl)).id;
+  expect(sid).toMatch(/^[0-9a-f-]{36}$/);
+  expect(await tail(app, cl)).toContain(sid);
+  expect(ttyCalls(app, 'claude')[0].argv).toEqual(['--session-id', sid]);
+  await type(app, cl, 'hello');
+  await expect.poll(() => tail(app, cl), { timeout: 20_000 }).toContain('ok: hello');
+
+  const cx = await openAgent(app, 'codex', { x: 420, y: 700 });
+  await expect.poll(() => tail(app, cx), { timeout: 45_000, message: 'Codex запустился' }).toContain('Fake Codex: new session');
+  await expect.poll(async () => (await ownSession(app, cx))?.id, { timeout: 20_000, message: 'id сессии Codex найден' }).toMatch(/^[0-9a-f-]{36}$/);
+  const cxid = (await ownSession(app, cx)).id;
+  expect(await tail(app, cx)).toContain(cxid);
+
+  await app.restart();
+  await expect.poll(() => tail(app, cl), { timeout: 45_000 }).toContain(`Fake Claude: resumed session ${sid}`);
+  await expect.poll(() => tail(app, cx), { timeout: 45_000 }).toContain(`Fake Codex: resumed session ${cxid}`);
+  expect(ttyCalls(app, 'claude').at(-1).argv).toEqual(['--resume', sid]);
+  expect(ttyCalls(app, 'codex').at(-1).argv).toEqual(['resume', cxid]);
+});

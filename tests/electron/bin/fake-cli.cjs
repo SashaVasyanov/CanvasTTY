@@ -348,8 +348,52 @@ async function claude(argv, prompt, scenario) {
   out(result);
 }
 
+// In a terminal window (a pty: stdin is a TTY) the fakes act like the interactive CLIs, only with
+// sessions: claude --session-id <id> / --resume <id> (a file in ~/.claude/projects/<folder>/ appears
+// with the first typed line, like the real one), codex / codex resume <id> (the rollout file in
+// ~/.codex/sessions/ is written at the start). Each typed line is answered with "ok: <line>".
+function interactive(cli, argv) {
+  try { fs.mkdirSync(STATE, { recursive: true }); fs.appendFileSync(path.join(STATE, 'calls.jsonl'), JSON.stringify({ cli, argv, cwd: process.cwd(), tty: true, pid: process.pid, time: Date.now() }) + '\n'); } catch (e) { /* best effort */ }
+  const home = os.homedir();
+  const say = (s) => process.stdout.write(s);
+  let onLine = () => {};
+  if (cli === 'claude') {
+    const resume = argAfter(argv, '--resume'), fresh = argAfter(argv, '--session-id');
+    const id = resume || fresh || crypto.randomUUID();
+    const dir = path.join(process.env.CLAUDE_CONFIG_DIR || path.join(home, '.claude'), 'projects', process.cwd().replace(/[^a-zA-Z0-9]/g, '-'));
+    const file = path.join(dir, `${id}.jsonl`);
+    if (resume && !fs.existsSync(file)) { say(`No conversation found with session ID: ${resume}\r\n`); process.exit(1); }
+    say(`Fake Claude: ${resume ? 'resumed' : 'new'} session ${id}\r\n> `);
+    onLine = (line) => { fs.mkdirSync(dir, { recursive: true }); fs.appendFileSync(file, JSON.stringify({ type: 'user', sessionId: id, cwd: process.cwd(), timestamp: new Date().toISOString(), message: { role: 'user', content: line } }) + '\n'); };
+  } else {
+    const r = argv.indexOf('resume');
+    const id = r >= 0 && argv[r + 1] ? argv[r + 1] : crypto.randomUUID();
+    if (r < 0) {
+      const dir = path.join(process.env.CODEX_HOME || path.join(home, '.codex'), 'sessions', '2026', '10', '24');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, `rollout-2026-10-24T10-00-00-${id}.jsonl`), JSON.stringify({ timestamp: new Date().toISOString(), type: 'session_meta', payload: { id, timestamp: new Date().toISOString(), cwd: process.cwd() } }) + '\n');
+    }
+    say(`Fake Codex: ${r >= 0 ? 'resumed' : 'new'} session ${id}\r\n> `);
+  }
+  let buf = '';
+  process.stdin.setRawMode?.(false);
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', (d) => {
+    buf += d;
+    let i;
+    while ((i = buf.search(/[\r\n]/)) >= 0) {
+      const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
+      if (!line) continue;
+      onLine(line);
+      say(`ok: ${line}\r\n> `);
+    }
+  });
+  process.stdin.resume();
+}
+
 async function main(cli) {
   const argv = process.argv.slice(2);
+  if (process.stdin.isTTY) { interactive(cli, argv); return; }
   const prompt = await readStdin();
   const scenario = scenarioFor(cli);
   const child = scenario === 'slow' ? startChild() : null;
