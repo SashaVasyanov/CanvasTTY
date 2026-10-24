@@ -108,7 +108,7 @@ test('нет GitHub CLI или remote — объяснение без дейст
   await page.evaluate(() => { window.__mockGit.error = { commit: 'Нечего коммитить: эти файлы уже в последнем коммите.' }; });
   await bar(page).locator('.dg-commit').click();
   await dialog(page).locator('.modal-foot button', { hasText: 'Закоммитить' }).click();
-  await expect(page.locator('.toast').last()).toContainText('Коммит: Нечего коммитить: эти файлы уже в последнем коммите.');
+  await expect(page.locator('.toast', { hasText: 'Коммит: Нечего коммитить: эти файлы уже в последнем коммите.' })).toBeVisible();
   await expect(bar(page).locator('.dg-status')).toHaveText('не закоммичено');
 
   // rolled back: nothing to commit

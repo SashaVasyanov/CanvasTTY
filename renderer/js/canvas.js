@@ -183,7 +183,7 @@ export class CanvasView extends Emitter {
     const keep = this._moving && this.lod != null && this.lodFar != null;
     const lod = want.lod || (keep && this.lod === true), far = want.far || (keep && this.lodFar === true);
     if (lod !== this.lod || far !== this.lodFar) this.setLod(lod, far);
-    if (!this._moving) this.root.style.setProperty('--z', z);
+    if (!this._moving) this.setRestZ(z);
     const zl = `${Math.round(z * 100)}%`;
     if (this.zoomLabel.textContent !== zl) this.zoomLabel.textContent = zl;
     this.updateOverlay(true);
@@ -230,11 +230,17 @@ export class CanvasView extends Emitter {
     this.lod = lod; this.lodFar = far;
     this.root.classList.toggle('lod', lod);
     this.root.classList.toggle('lod-far', far);
-    this.root.style.setProperty('--z', this.vp.z);
+    this.setRestZ(this.vp.z);
     for (const v of this.views.values()) {
       const card = v.def.farLod ? far : lod;
       if (card !== (v.def.farLod ? wasFar : was)) v.inst?.onLod?.(card);
     }
+  }
+  // the zoom at rest for CSS (--z: borders, cards, the readable text and chrome of chat windows);
+  // ui-far: so far out that the settings row of chat windows hides
+  setRestZ(z) {
+    this.root.style.setProperty('--z', z);
+    this.root.classList.toggle('ui-far', z < 0.45);
   }
   // is this window shown as a card right now?
   isCard(n) { return !!(NODE_TYPES[n?.type]?.farLod ? this.lodFar : this.lod); }
@@ -253,7 +259,7 @@ export class CanvasView extends Emitter {
       const sx = Math.round(this.vp.x * dpr) / dpr, sy = Math.round(this.vp.y * dpr) / dpr;
       if (sx !== this.vp.x || sy !== this.vp.y) { this.vp.x = sx; this.vp.y = sy; this.saveViewport(); }
       this.applyLayoutZoom();
-      this.root.style.setProperty('--z', this.vp.z);
+      this.setRestZ(this.vp.z);
       // the chat text may have a new size now (readable when zoomed out): keep chats at their last message
       if (this._restZ !== this.vp.z) { this._restZ = this.vp.z; for (const v of this.views.values()) v.inst?.refollow?.(); }
       const want = this.lodWant();

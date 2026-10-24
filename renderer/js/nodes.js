@@ -103,6 +103,7 @@ export function applyChatText(view) {
   const st = state.settings || {};
   view.root.style.setProperty('--chat-fs', `${clampFont(st.chatFontSize || CHAT_FONT.def)}px`);
   view.root.style.setProperty('--chat-min', st.chatReadable === false ? '0px' : '12px');
+  view.root.style.setProperty('--ui-read', st.chatReadable === false ? '0' : '1'); // the window chrome grows too (styles.css --ui-k)
   requestAnimationFrame(() => { for (const v of view.views.values()) v.inst?.refollow?.(); });
 }
 function applyWindowFont(inst) {

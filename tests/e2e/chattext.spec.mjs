@@ -80,3 +80,24 @@ test('своё окно: Ctrl + / Ctrl − в поле ввода и меню «
   await zoomTo(app, page, 0.5);
   expect(await fontOf(page, other)).toBe(24);
 });
+
+// the rest of the window grows too: title bar, settings row, folder line, buttons by the input
+// (styles.css --ui-k); very far out the settings row hides
+const screenH = (page, id, sel) => page.evaluate(([id, sel]) => document.querySelector(`.node[data-id="${id}"] ${sel}`)?.getBoundingClientRect().height || 0, [id, sel]);
+test('при отдалении растёт и «рамка» окна: заголовок, строка модели, кнопки; совсем далеко строка настроек прячется', async ({ app, page }) => {
+  const a = await addAgentChat(app, { x: 0, w: 1100, h: 900, data: { title: 'Окно' } });
+  await zoomTo(app, page, 1);
+  const head1 = await screenH(page, a, '.node-head'), send1 = await screenH(page, a, '.chat-send');
+  expect(head1).toBeCloseTo(28, 0);
+  await zoomTo(app, page, 0.5);
+  await expect.poll(() => screenH(page, a, '.node-head'), { message: 'заголовок на экране почти как при 100 %' }).toBeGreaterThan(head1 * 0.9);
+  expect(await screenH(page, a, '.chat-send')).toBeGreaterThan(send1 * 0.9);
+  expect(await screenH(page, a, '.agent-bar')).toBeGreaterThan(40);
+  await zoomTo(app, page, 0.35);
+  await expect(page.locator(`.node[data-id="${a}"] .agent-bar`)).toBeHidden();
+  await expect(page.locator(`.node[data-id="${a}"] .agent-info`)).toBeVisible();
+  // the setting «readable when zoomed out» off: the window is just smaller
+  await setSetting(page, 'chatReadable', false);
+  await zoomTo(app, page, 0.5);
+  await expect.poll(() => screenH(page, a, '.node-head')).toBeCloseTo(14, 0);
+});

@@ -425,6 +425,14 @@ svg.guides line { stroke: #ff5ca8; stroke-width: 1; }
 .chat { flex: 1; display: flex; flex-direction: column; min-height: 0; background: var(--surface);
   --chat-font: max(var(--chat-fs), min(calc(var(--chat-fs) * 3), calc(var(--chat-min) / var(--z, 1)))); }
 .chat-list, .chat-input { font-size: var(--chat-font); }
+/* The rest of an AI chat window grows with its text when the canvas is zoomed out (the same setting,
+   --ui-read): the title bar, the model / effort / access row, the folder line and the buttons by the
+   input keep a readable size on screen — CSS zoom, from 95 % down, up to 2.5×. Very far out (ui-far,
+   canvas.js setRestZ) the settings row hides, the conversation keeps the room. */
+.canvas-root { --ui-read: 1; }
+.node.far-lod { --ui-k: calc(1 + var(--ui-read) * (clamp(1, calc(0.95 / var(--z, 1)), 2.5) - 1)); }
+.node.far-lod > .node-head, .node.far-lod .chat-bar, .node.far-lod .agent-info, .node.far-lod .chat-attach, .node.far-lod .chat-send, .node.far-lod .att-chips { zoom: var(--ui-k); }
+.canvas-root.ui-far .node.far-lod .chat-bar { display: none; }
 .chat-list .btn.sm { height: 2em; padding: 0 0.8em; font-size: 0.92em; }
 .chat-list .small { font-size: 0.88em; }
 .chat-bar { display: flex; gap: 6px; padding: 6px 8px; border-bottom: 1px solid var(--line); align-items: center; }
@@ -436,7 +444,7 @@ svg.guides line { stroke: #ff5ca8; stroke-width: 1; }
 .chat-jump.show { display: grid; }
 .chat-jump:hover { background: var(--accent); color: #fff; border-color: transparent; }
 .chat-list { flex: 1; min-height: 0; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 12px; user-select: text; }
-.chat-empty { margin: auto; text-align: center; max-width: 280px; display: flex; flex-direction: column; gap: 6px; }
+.chat-empty { margin: auto; text-align: center; max-width: 20em; display: flex; flex-direction: column; gap: 6px; } /* em: a wide enough column also with the text enlarged */
 .chat-empty-title { font-size: 1.23em; font-weight: 650; }
 .msg { position: relative; max-width: 100%; }
 .msg.user { align-self: flex-end; max-width: 85%; }
