@@ -124,6 +124,13 @@ code.path { font: 12px var(--mono); color: var(--text-2); background: rgba(var(-
 .inbox-btn.has { color: var(--text); }
 .inbox-pop { width: 360px; max-height: min(520px, calc(100vh - 80px)); display: flex; flex-direction: column; padding: 6px; }
 .inbox-head { display: flex; align-items: center; justify-content: space-between; padding: 6px 8px 8px; }
+.inbox-hint { margin-left: auto; margin-right: 8px; }
+/* a window that waits for you (an entry in «Ждут вас»): a pulsing frame in the colour of its state */
+.node.attn { --attn: var(--green); outline: calc(2.5px / var(--z, 1)) solid var(--attn); outline-offset: calc(3px / var(--z, 1)); animation: attn-pulse 1.8s ease-in-out infinite; }
+.node.attn[data-attn="wait"] { --attn: var(--amber); }
+.node.attn[data-attn="err"] { --attn: var(--red); }
+@keyframes attn-pulse { 50% { outline-color: color-mix(in srgb, var(--attn) 30%, transparent); } }
+@media (prefers-reduced-motion: reduce) { .node.attn { animation: none; } }
 .inbox-list { overflow: auto; display: flex; flex-direction: column; gap: 2px; }
 .inbox-empty { padding: 10px 8px 12px; font-size: 12.5px; line-height: 1.45; }
 .inbox-item { display: flex; gap: 10px; align-items: flex-start; text-align: left; padding: 8px; border-radius: 9px; width: 100%; color: var(--text); }

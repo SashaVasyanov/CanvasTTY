@@ -65,6 +65,13 @@ class App {
     bus.on('inbox', paint);
     bus.on('inbox:open', (it) => this.openInboxItem(it));
     paint();
+    // windows that wait for you have a frame on the canvas; looking at one for a moment counts as seen
+    const frames = () => this.paintAttention();
+    bus.on('inbox', frames);
+    state.on('canvas', () => setTimeout(frames, 0));
+    frames();
+    let seenT = null;
+    this.canvas.on('rest', () => { clearTimeout(seenT); seenT = setTimeout(() => this.markSeen(), 1500); });
     // a click into a window means it has been seen
     this.canvas.root.addEventListener('pointerdown', (e) => { const el = e.target.closest?.('.node[data-id]'); if (el) inbox.remove(el.dataset.id); }, true);
     // answers agents finished in the background while their canvas was not open (or the app closed)
@@ -80,6 +87,40 @@ class App {
     native.agentChat.background?.().then((list) => { for (const r of list || []) add(r); }).catch(() => {});
     native.agentChat.onBackground?.((r) => add(r));
   }
+  // the frame «ждёт вас» around windows with an entry in «Ждут вас» (colour by kind)
+  paintAttention() {
+    const byNode = new Map(inbox.items.filter((x) => x.docId === state.doc?.id).map((x) => [x.nodeId, x]));
+    for (const [id, v] of this.canvas.views) {
+      const it = byNode.get(id);
+      v.el?.classList.toggle('attn', !!it);
+      if (it) v.el.dataset.attn = INBOX_KINDS[it.kind]?.cls || 'ok'; else if (v.el) delete v.el.dataset.attn;
+    }
+  }
+  // the view rests on a waiting window (most of it on screen, readable, the app in front): seen
+  markSeen() {
+    const view = this.canvas;
+    if (!document.hasFocus() || document.hidden || view.vp.z < 0.45) return;
+    const r = view.rect(), z = view.vp.z;
+    for (const it of inbox.items.filter((x) => x.docId === state.doc?.id)) {
+      const n = view.node(it.nodeId);
+      if (!n || view.isCard(n)) continue;
+      const x1 = r.left + view.vp.x + n.x * z, y1 = r.top + view.vp.y + n.y * z, x2 = x1 + n.w * z, y2 = y1 + n.h * z;
+      const seen = Math.max(0, Math.min(x2, r.right) - Math.max(x1, r.left)) * Math.max(0, Math.min(y2, r.bottom) - Math.max(y1, r.top));
+      if (seen >= 0.6 * (x2 - x1) * (y2 - y1)) inbox.remove(it.nodeId);
+    }
+  }
+  // Ctrl+J: to the next window that waits for you, on any canvas — the ones that need a decision
+  // first, then errors, then finished ones; oldest first. Going there counts as seen.
+  async nextWaiting() {
+    const rank = { wait: 0, error: 1, interrupted: 2, done: 3, background: 4 };
+    const list = [...inbox.items].sort((a, b) => (rank[a.kind] ?? 9) - (rank[b.kind] ?? 9) || a.ts - b.ts);
+    const it = list[0];
+    if (!it) { toast('Никто не ждёт: все агенты просмотрены'); return false; }
+    await this.openInboxItem(it);
+    const left = inbox.count;
+    toast(`${it.title}: ${INBOX_KINDS[it.kind]?.label.toLowerCase() || ''}${left ? ` · ещё ждут: ${left} — Ctrl+J` : ''}`, 'info', 2600);
+    return true;
+  }
   async openInboxItem(it) {
     inbox.remove(it.nodeId);
     const p = projectOf(it.docId);
@@ -93,7 +134,7 @@ class App {
     const list = h('div', { class: 'inbox-list' });
     const clearBtn = h('button', { class: 'btn sm', onclick: () => inbox.clear() }, 'Очистить');
     const pop = h('div', { class: 'popover inbox-pop' },
-      h('div', { class: 'inbox-head' }, h('b', {}, 'Ждут вас'), clearBtn), list);
+      h('div', { class: 'inbox-head' }, h('b', {}, 'Ждут вас'), h('span', { class: 'muted small inbox-hint' }, 'Ctrl+J — по очереди'), clearBtn), list);
     const close = () => { pop.remove(); off(); document.removeEventListener('pointerdown', away, true); };
     const render = () => {
       clearBtn.disabled = !inbox.count;
@@ -713,6 +754,8 @@ class App {
       const mod = e.ctrlKey || e.metaKey;
       const k = keyName(e);
       if (mod && k === 'p') { e.preventDefault(); this.palette(); return; }
+      // the next agent waiting for you (in a terminal: Ctrl+Shift+J)
+      if (mod && k === 'j' && (e.shiftKey ? !document.activeElement?.isContentEditable : !isEditable(document.activeElement))) { e.preventDefault(); this.nextWaiting(); return; }
       // search across everything; Ctrl+K in a text field or a terminal stays theirs (a link in a note,
       // kill-line), from a terminal: Ctrl+Shift+K
       if (mod && k === 'k' && (e.shiftKey ? !document.activeElement?.isContentEditable : !isEditable(document.activeElement))) { e.preventDefault(); openSearch(this); return; }
@@ -744,6 +787,7 @@ class App {
       { label: 'Показать всё', icon: 'home', hint: 'Shift+1', run: () => this.canvas.fit() },
       { label: 'Лимиты нейросетей', icon: 'gauge', run: () => this.showLimits(this.limitsBtn) },
       { label: 'Ждут вас — агенты, которые закончили', icon: 'bell', run: () => this.showInbox(this.inboxBtn) },
+      { label: 'Следующий ждущий агент', icon: 'bell', hint: 'Ctrl+J', run: () => this.nextWaiting() },
       { label: 'Спросить нескольких агентов…', icon: 'chat', run: async () => { const { openAskMany } = await import('./askmany.js'); openAskMany(this.canvas, {}); } },
       { label: 'Шаблоны раскладки…', icon: 'squares', run: () => openTemplates(this.canvas) },
       { label: 'Сохранить выделенное как шаблон…', icon: 'squares', run: () => saveTemplate(this.canvas) },
@@ -1045,7 +1089,7 @@ class App {
       ['Shift + клик, рамка', 'Множественное выделение'], ['Shift при перемещении', 'Только по оси'], ['Alt при перемещении', 'Без привязки'],
       ['Ctrl+Z / Ctrl+Shift+Z', 'Отменить / повторить'], ['Ctrl+C / X / V / D', 'Копировать / вырезать / вставить / дублировать'],
       ['Ctrl+G', 'Сгруппировать в область'], ['Ctrl + / − / 0', 'Текст в окне чата (в поле ввода)'], ['Ctrl+L', 'Закрепить'], ['[ / ]', 'Назад / вперёд по слоям'], ['Стрелки (+Shift)', 'Сдвиг на 1 (10) px'],
-      ['Shift+1 / Shift+2 / Shift+0', 'Показать всё / выделенное / 100%'], ['Ctrl+P (в терминале Ctrl+Shift+P)', 'Палитра команд'], ['Ctrl+K (в терминале Ctrl+Shift+K)', 'Поиск по всему'], ['Ctrl+O / Ctrl+Shift+O', 'Открыть заметку'], ['Ctrl+N / Ctrl+Shift+N', 'Новая заметка'],
+      ['Shift+1 / Shift+2 / Shift+0', 'Показать всё / выделенное / 100%'], ['Ctrl+P (в терминале Ctrl+Shift+P)', 'Палитра команд'], ['Ctrl+K (в терминале Ctrl+Shift+K)', 'Поиск по всему'], ['Ctrl+J (в терминале Ctrl+Shift+J)', 'Следующий ждущий агент'], ['Ctrl+O / Ctrl+Shift+O', 'Открыть заметку'], ['Ctrl+N / Ctrl+Shift+N', 'Новая заметка'],
       ['Ctrl+`', 'Новый терминал'], ['Ctrl+\\', 'Боковая панель'], ['M', 'Скрыть / показать миникарту'], ['Ctrl+Shift+F', 'Счётчик FPS'], ['F1', 'Инструкция'], ['Ctrl+K (в заметке)', 'Ссылка'], ['[[ (в заметке)', 'Ссылка на заметку с автодополнением'],
       ['Ctrl+Shift+L (в заметке)', 'Чек-лист'], ['# , - , 1. , [] , > (в заметке)', 'Markdown-сокращения'],
     ];

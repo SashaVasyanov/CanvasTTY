@@ -264,6 +264,7 @@ export class CanvasView extends Emitter {
       // next pan/zoom starts without re-rasterising; will-change is added again by markMoving().
       this._zoomedSinceRest = false;
       this.root.classList.remove('world-layer');
+      this.emit('rest'); // the view stopped moving (app.js: windows looked at leave «Ждут вас»)
     }, 160);
   }
 
