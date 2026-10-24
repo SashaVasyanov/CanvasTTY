@@ -142,6 +142,24 @@ code.path { font: 12px var(--mono); color: var(--text-2); background: rgba(var(-
 .inbox-kind.ok { color: var(--green); } .inbox-kind.wait { color: var(--amber); } .inbox-kind.err { color: var(--red); }
 .inbox-text { font-size: 12px; color: var(--text-2); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .inbox-meta { font-size: 11px; color: var(--muted); }
+/* «Пока вас не было» (renderer/js/away.js): under the title bar on the right, until closed */
+.away-card { top: 52px; right: 14px; width: 380px; max-height: min(560px, calc(100vh - 80px)); display: flex; flex-direction: column; padding: 6px; animation: away-in 0.18s ease-out; }
+@keyframes away-in { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+.away-head { display: flex; align-items: center; gap: 8px; padding: 6px 4px 2px 8px; }
+.away-ic { color: var(--accent); display: inline-flex; }
+.away-sum { padding: 2px 8px 8px; font-size: 12px; color: var(--text-2); }
+.away-sum:empty { display: none; }
+.away-list { overflow: auto; display: flex; flex-direction: column; gap: 2px; }
+.away-row { display: flex; gap: 10px; align-items: flex-start; text-align: left; padding: 8px; border-radius: 9px; width: 100%; color: var(--text); }
+.away-row:hover { background: rgba(var(--fg-rgb), 0.06); }
+.away-main { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.away-top { display: flex; align-items: baseline; gap: 8px; }
+.away-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+.away-line { font-size: 12px; color: var(--text-2); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.away-meta { font-size: 11px; color: var(--muted); }
+.away-meta:empty { display: none; }
+.away-more { padding: 4px 8px; }
+.away-foot { display: flex; align-items: center; gap: 8px; padding: 8px 4px 2px; border-top: 1px solid var(--line); margin-top: 4px; }
 .win-ctrls { display: flex; margin-left: 8px; }
 .win-btn { width: 46px; height: 38px; display: grid; place-items: center; color: var(--text-2); }
 .win-btn:hover { background: rgba(var(--fg-rgb), 0.08); color: var(--text); }

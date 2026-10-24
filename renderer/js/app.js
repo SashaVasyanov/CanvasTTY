@@ -14,6 +14,7 @@ import { inbox, INBOX_KINDS, badgeOf, ago, projectOf } from './inbox.js';
 import { bindCanvasTools } from './canvasTools.js';
 import { openSearch } from './search.js';
 import { bookmarks, bookmarkKey, saveBookmark, saveToFree, goBookmark, bookmarkItems } from './bookmarks.js';
+import { away } from './away.js';
 import { openTemplates, saveTemplate, allTemplates, placeTemplate } from './templates.js';
 import { limits, limitsPanel, petSvg, LIMIT_SOURCES, PETS, openPetPicker, openPetCatalog, CLOCK_PRESETS, CLOCK_DEFAULT, clockColors, paintClock, clockMarkup } from './hub.js';
 
@@ -83,10 +84,13 @@ class App {
       try { n = (await native.canvas.load(r.docId))?.nodes?.find((x) => x.id === r.nodeId); } catch {}
       if (!n) return; // the window was deleted
       title = NODE_TYPES[n.type]?.title(n) || title;
-      inbox.add({ nodeId: r.nodeId, docId: r.docId, kind: r.state === 'lost' ? 'interrupted' : 'background', title, text: r.state === 'lost' ? 'Агент остановился, не закончив ответ' : 'Агент закончил, пока окно было закрыто', type: n.type, agentId: n.data.agentId }, { notify: true });
+      const item = { nodeId: r.nodeId, docId: r.docId, kind: r.state === 'lost' ? 'interrupted' : 'background', title, text: r.state === 'lost' ? 'Агент остановился, не закончив ответ' : 'Агент закончил, пока окно было закрыто', type: n.type, agentId: n.data.agentId };
+      inbox.add(item, { notify: true });
+      away.record(item);
     };
     native.agentChat.background?.().then((list) => { for (const r of list || []) add(r); }).catch(() => {});
     native.agentChat.onBackground?.((r) => add(r));
+    away.start(this); // «Пока вас не было»
   }
   // the frame «ждёт вас» around windows with an entry in «Ждут вас» (colour by kind)
   paintAttention() {
@@ -802,6 +806,7 @@ class App {
       { label: 'Лимиты нейросетей', icon: 'gauge', run: () => this.showLimits(this.limitsBtn) },
       { label: 'Ждут вас — агенты, которые закончили', icon: 'bell', run: () => this.showInbox(this.inboxBtn) },
       { label: 'Следующий ждущий агент', icon: 'bell', hint: 'Ctrl+J', run: () => this.nextWaiting() },
+      { label: 'Пока вас не было — последняя сводка', icon: 'bell', run: () => { if (!away.showLast()) toast('Сводки пока не было: она появляется, когда вы вернулись, а агенты за это время закончили'); } },
       { label: 'Спросить нескольких агентов…', icon: 'chat', run: async () => { const { openAskMany } = await import('./askmany.js'); openAskMany(this.canvas, {}); } },
       { label: 'Шаблоны раскладки…', icon: 'squares', run: () => openTemplates(this.canvas) },
       { label: 'Сохранить выделенное как шаблон…', icon: 'squares', run: () => saveTemplate(this.canvas) },
@@ -1043,12 +1048,18 @@ class App {
       keep.onchange = () => state.setSetting('agentsKeepRunning', keep.checked);
       const notify = h('input', { type: 'checkbox', class: 'switch' }); notify.checked = s.notifyAgents !== false;
       notify.onchange = () => state.setSetting('notifyAgents', notify.checked);
+      // «Пока вас не было» (renderer/js/away.js): after how many minutes away, or never
+      const awaySel = h('select', { class: 'select sm' }, ...[[5, 'через 5 мин'], [15, 'через 15 мин'], [30, 'через 30 мин'], [60, 'через час'], [0, 'не показывать']].map(([v, l]) => h('option', { value: String(v) }, l)));
+      awaySel.value = String([0, 5, 15, 30, 60].includes(Number(s.awayMinutes ?? 5)) ? Number(s.awayMinutes ?? 5) : 5);
+      awaySel.onchange = () => state.setSetting('awayMinutes', Number(awaySel.value));
       // the agents see and add to the canvas of their window (renderer/js/canvasTools.js)
       const tools = h('input', { type: 'checkbox', class: 'switch' }); tools.checked = s.canvasTools !== false;
       tools.onchange = () => state.setSetting('canvasTools', tools.checked);
       wrap.append(h('h3', {}, 'Окна чатов с агентами'),
         h('div', { class: 'set-row' }, h('div', {}, h('div', { class: 'set-label' }, 'Уведомлять, когда агент закончил'),
           h('div', { class: 'muted small' }, 'Системное уведомление и мигающая кнопка на панели задач, если VibeTabula не в фокусе. Список таких чатов — колокольчик «Ждут вас» вверху.')), notify),
+        h('div', { class: 'set-row' }, h('div', {}, h('div', { class: 'set-label' }, 'Сводка «Пока вас не было»'),
+          h('div', { class: 'muted small' }, 'Когда вы вернулись к компьютеру или в приложение, а агенты за это время закончили: кто закончил, сколько файлов изменил, у кого ошибка или кто ждёт решения. Клик по строке — к окну.')), awaySel),
         h('div', { class: 'set-row' }, h('div', {}, h('div', { class: 'set-label' }, 'Агент продолжает работать после закрытия приложения'),
           h('div', { class: 'muted small' }, 'Ответ дописывается в фоне и появляется в окне чата при следующем запуске. Если выключить, закрытие приложения останавливает агента, а в чате появляется кнопка «Продолжить».')), keep),
         h('div', { class: 'set-row' }, h('div', {}, h('div', { class: 'set-label' }, 'Инструменты холста для агентов'),

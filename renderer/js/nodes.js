@@ -14,6 +14,7 @@ import { chatContext, imagesToAttachments, renderContextRow, renderContextNote, 
 import { explainError, ERROR_ACTIONS } from './errors.js';
 import { inbox } from './inbox.js';
 import { live, outcome, filesWord } from './activity.js';
+import { away } from './away.js';
 
 // ---------------- routers for main-process events ----------------
 const ptyRoutes = new Map();
@@ -404,12 +405,15 @@ function watched(inst) {
   return seen >= 0.3 * (x2 - x1) * (y2 - y1);
 }
 // an answer ended: «Ждут вас» gets an entry unless the user watched it end
-function reportEnd(inst, kind, text) {
+// (and «Пока вас не было» logs it in any case: away.js — nobody may be looking at the screen)
+function reportEnd(inst, kind, text, msg) {
   if (!kind) return;
-  if (watched(inst)) { inbox.remove(inst.node.id); return; }
   const view = inst.view;
   const n = (view.doc?.id === inst.docId && view.node(inst.node.id)) || inst.node;
-  inbox.add({ nodeId: n.id, docId: inst.docId, kind, title: NODE_TYPES[n.type].title(n), text, type: n.type, agentId: n.data.agentId, provider: n.data.provider });
+  const item = { nodeId: n.id, docId: inst.docId, kind, title: NODE_TYPES[n.type].title(n), text, type: n.type, agentId: n.data.agentId, provider: n.data.provider };
+  away.record({ ...item, text: String(text || '').replace(/\s+/g, ' ').trim().slice(0, 160), detail: outcome(msg), files: msg?.changes?.files?.length || msg?.touched?.length || 0 });
+  if (watched(inst)) { inbox.remove(inst.node.id); return; }
+  inbox.add(item);
 }
 
 // ---------------- files an agent made or named, shown in Explorer / Finder ----------------
@@ -951,7 +955,7 @@ class ChatInstance {
     const last = all[all.length - 1];
     if (last?.running) delete last.running;
     if (last?.role === 'assistant') { last.end = Date.now(); if (ev.aborted) last.stopped = true; }
-    reportEnd(this, ev.aborted ? null : ev.error ? 'error' : 'done', ev.error ? last?.errorText : last?.content);
+    reportEnd(this, ev.aborted ? null : ev.error ? 'error' : 'done', ev.error ? last?.errorText : last?.content, last);
     this.sendBtn.innerHTML = icon('send', 16); this.sendBtn.classList.remove('stop');
     activeRuns.delete(this.node.id);
     await patchNodeData(this, { messages: [...all] });
@@ -1514,7 +1518,7 @@ class AgentChatInstance {
     if (ev.interrupted) { asst.interrupted = true; asst.parts.push({ type: 'notice', text: INTERRUPTED }); }
     asst.content = asst.parts.filter((p) => p.type === 'text').map((p) => p.text).join('\n\n').trim();
     const err = asst.parts.find((p) => p.type === 'error');
-    reportEnd(this, ev.aborted ? null : ev.interrupted ? 'interrupted' : err ? 'error' : asst.needsInput ? 'wait' : 'done', err ? err.text : asst.content);
+    reportEnd(this, ev.aborted ? null : ev.interrupted ? 'interrupted' : err ? 'error' : asst.needsInput ? 'wait' : 'done', err ? err.text : asst.content, asst);
     activeRuns.delete(this.node.id);
     await patchNodeData(this, { messages: [...all], ...(ev.sessionId ? { sessionId: ev.sessionId } : {}) });
     // after the answer is saved (a closed canvas' file is written by both)
