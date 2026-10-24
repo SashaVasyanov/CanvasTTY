@@ -22,7 +22,10 @@ async function finishAgent(page, text = 'Готово: поправил README.'
   await emitAgent(page, { type: 'done', sessionId: 's1' });
 }
 
-test.beforeEach(async ({ app, page }) => { await recordNotifications(page); });
+// A window the view rests on for a moment leaves the list by itself (app.js markSeen, tested in
+// waiting.spec.mjs); here it would race with the checks of what got into the list.
+const noSeenByLooking = (page) => page.evaluate(() => { window.__app.markSeen = () => {}; });
+test.beforeEach(async ({ app, page }) => { await recordNotifications(page); await noSeenByLooking(page); });
 
 test('агент закончил, пока приложение не в фокусе: колокольчик, уведомление, переход к окну', async ({ app, page }) => {
   await recordAgentRuns(page);
@@ -139,6 +142,7 @@ test('API-чат и сохранение списка после перезап�
   await expect(count(page)).toHaveText('1');
   await page.reload();
   await page.waitForFunction(() => window.__app?.canvas?.doc);
+  await noSeenByLooking(page);
   await expect(count(page)).toHaveText('1');
   await bell(page).click();
   await expect(items(page).first().locator('.inbox-title')).toHaveText('Перевод');
@@ -173,6 +177,7 @@ test('агент закончил в фоне, пока его canvas был з�
   await page.addInitScript(([docId, nodeId]) => { window.__mockBackground = [{ nodeId, docId, kind: 'claude', state: 'done' }]; }, [other, node]);
   await page.reload();
   await page.waitForFunction(() => window.__app?.canvas?.doc);
+  await noSeenByLooking(page);
   await expect(count(page)).toHaveText('1');
   await bell(page).click();
   await expect(items(page).first().locator('.inbox-title')).toHaveText('Долгая задача');
