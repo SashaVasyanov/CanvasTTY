@@ -15,6 +15,8 @@ import { explainError, ERROR_ACTIONS } from './errors.js';
 import { inbox } from './inbox.js';
 import { live, outcome, filesWord } from './activity.js';
 import { away } from './away.js';
+import { parsePatch, commentMessage } from './diffComments.js';
+import { diffRows } from './diffView.js';
 
 // ---------------- routers for main-process events ----------------
 const ptyRoutes = new Map();
@@ -704,17 +706,6 @@ async function revertChanges(view, chatId, ts, reapply = false, fallback = null)
   const skipped = r.skipped.length ? ` Не тронуты: ${r.skipped.map((x) => `${x.path} (${x.reason})`).join(', ')}.` : '';
   toast(`${reapply ? 'Возвращено' : 'Откачено'}: ${r.done.length} ${filesWord(r.done.length)}.${skipped}`, r.skipped.length ? 'warn' : 'ok');
   return next;
-}
-// a unified diff as lines: + added, − removed, @@ a new piece; the git header lines are left out
-function diffLines(patch) {
-  const out = [];
-  for (const line of String(patch || '').split('\n')) {
-    if (/^(diff --git|index |--- |\+\+\+ |new file mode|deleted file mode|similarity|rename )/.test(line)) continue;
-    const cls = line.startsWith('@@') ? 'hunk' : line.startsWith('+') ? 'add' : line.startsWith('-') ? 'del' : line.startsWith('\\') ? 'meta' : '';
-    out.push(h('div', { class: `dl ${cls}` }, line || ' '));
-  }
-  if (!out.length) out.push(h('div', { class: 'dl meta' }, 'Нет текстовых изменений'));
-  return out;
 }
 // the card with the diff next to the chat (or the existing one for this answer)
 function showChanges(view, chatId, m) {
@@ -1804,7 +1795,8 @@ export const NODE_TYPES = {
     },
   },
 
-  // what an agent changed during one answer: files with their diff, rollback (see showChanges)
+  // what an agent changed during one answer: files with their diff, rollback (see showChanges),
+  // comments on lines that go to the agent (diffComments.js)
   diff: {
     chrome: 'window', defaultSize: { w: 640, h: 560 }, minSize: { w: 360, h: 220 },
     defaultData: () => ({ changes: null }),
@@ -1818,25 +1810,75 @@ export const NODE_TYPES = {
       // the chat message is the source of truth (rollback state); the card's own copy if it is gone
       const changesOf = () => msgByTs(view, cur.data.chatId, cur.data.ts)?.changes || cur.data.changes;
       const save = (c) => view.setData(cur.id, { changes: c });
+      // comments on lines → the agent of this card (its chat window; for a copy, the copy's chat)
+      // (setData does not call update(): read the canvas' node, repaint here)
+      const comments = () => (view.node(cur.id) || cur).data.comments || [];
+      const setComments = (list) => { view.setData(cur.id, { comments: list }); paintAll(); paintHead(); };
+      const chatOf = () => cur.data.chatId || cur.data.worktreeOf;
+      let editing = null;
+      const loadedFiles = new Map(); // path → { code, rows }, the files whose diff is shown
+      const paintFile = (path) => {
+        const f = loadedFiles.get(path);
+        if (!f) return;
+        f.code.replaceChildren(...diffRows(f.rows, {
+          file: path, comments: comments(), editing,
+          open: (x) => { editing = x.id ? { id: x.id } : { file: path, kind: x.kind, line: x.line, code: x.text }; paintAll(); },
+          cancel: () => { editing = null; paintAll(); },
+          save: (text) => {
+            const ed = editing; editing = null;
+            if (ed.id) setComments(comments().map((c) => (c.id === ed.id ? { ...c, text } : c)));
+            else setComments([...comments(), { id: uid('cm'), file: ed.file, kind: ed.kind, line: ed.line, code: ed.code, text }]);
+          },
+          remove: (c) => setComments(comments().filter((x) => x.id !== c.id)),
+        }));
+      };
+      const paintAll = () => { for (const path of loadedFiles.keys()) paintFile(path); };
+      const sendComments = () => {
+        const fresh = comments().filter((c) => !c.sent);
+        if (!fresh.length) return;
+        const inst = view.views.get(chatOf())?.inst;
+        if (!inst?.send) { toast('Окна чата этого агента нет на холсте', 'warn'); return; }
+        const msg = { text: commentMessage(fresh), attachments: [] };
+        if (inst.isBusy()) { (inst.relayQueue ||= []).push(msg); toast('Агент ещё работает — замечания уйдут после его ответа'); }
+        else { inst.send(msg); toast(`Замечания отправлены агенту: ${fresh.length}`, 'ok'); }
+        const now = Date.now();
+        setComments(comments().map((c) => (c.sent ? c : { ...c, sent: now })));
+        view.flashNode?.(chatOf());
+      };
+      const sendBtn = h('button', { class: 'btn sm primary no-drag diff-send', title: 'Все новые замечания одним сообщением в чат агента', onclick: (e) => { e.stopPropagation(); sendComments(); } });
+      const sendSlot = h('span', { class: 'diff-send-slot' }); // the button is there only when there are comments
+      const paintHead = () => {
+        const all = comments(), fresh = all.filter((c) => !c.sent).length;
+        if (all.length && chatOf()) { if (!sendBtn.isConnected) sendSlot.append(sendBtn); } else sendBtn.remove();
+        sendBtn.disabled = !fresh;
+        sendBtn.textContent = fresh ? `Отправить агенту (${fresh})` : 'Замечания отправлены';
+        for (const d of list.querySelectorAll('.diff-file')) {
+          const n = all.filter((c) => c.file === d.dataset.path).length;
+          const b = d.querySelector('.diff-ncmt');
+          if (b) { b.textContent = n ? `💬 ${n}` : ''; b.hidden = !n; }
+        }
+      };
       const render = () => {
         const c = changesOf();
-        head.replaceChildren(); list.replaceChildren();
+        head.replaceChildren(); list.replaceChildren(); loadedFiles.clear();
         if (!c?.files?.length) { list.append(h('div', { class: 'muted diff-empty' }, 'Изменений нет')); return; }
         const t = changeTotals(c), rev = !!c.reverted;
-        head.append(
+        head.append(...[ // (the DOM's append would write a null as the text «null»)
           h('span', { class: 'diff-sum' }, `${c.files.length} ${filesWord(c.files.length)}`),
           h('span', { class: 'mc-add' }, `+${t.add}`), h('span', { class: 'mc-del' }, `−${t.del}`),
           rev ? h('span', { class: 'diff-rev' }, 'откачено') : null,
           h('span', { class: 'mc-sp' }),
           h('span', { class: 'diff-root muted', title: c.root }, c.root.split(/[\\/]/).pop()),
-          cur.data.noRevert ? null : h('button', { class: 'btn sm no-drag', onclick: async (e) => { e.stopPropagation(); await revertChanges(view, cur.data.chatId, cur.data.ts, rev, { changes: changesOf(), save }); render(); } }, rev ? 'Вернуть' : 'Откатить'));
+          sendSlot,
+          cur.data.noRevert ? null : h('button', { class: 'btn sm no-drag', onclick: async (e) => { e.stopPropagation(); await revertChanges(view, cur.data.chatId, cur.data.ts, rev, { changes: changesOf(), save }); render(); } }, rev ? 'Вернуть' : 'Откатить')].filter(Boolean));
         const reverted = new Set(c.reverted?.files || []);
         c.files.forEach((f, k) => {
           const code = h('div', { class: 'diff-code' });
-          const d = h('details', { class: `diff-file no-drag${reverted.has(f.path) ? ' rev' : ''}` },
+          const d = h('details', { class: `diff-file no-drag${reverted.has(f.path) ? ' rev' : ''}`, 'data-path': f.path },
             h('summary', {},
               h('span', { class: `diff-st st-${f.status}` }, f.status === 'A' ? 'новый' : f.status === 'D' ? 'удалён' : 'изменён'),
               h('span', { class: 'diff-path', title: f.path }, f.path),
+              h('span', { class: 'diff-ncmt', title: 'Замечаний к файлу', hidden: true }),
               ...(f.binary ? [h('span', { class: 'muted small' }, 'двоичный')] : [h('span', { class: 'mc-add' }, `+${f.add}`), h('span', { class: 'mc-del' }, `−${f.del}`)]),
               reverted.has(f.path) ? h('span', { class: 'diff-rev' }, 'откачен') : null,
               h('button', { class: 'icon-btn sm', title: 'Показать в папке', html: icon('folder', 12), onclick: (e) => { e.preventDefault(); e.stopPropagation(); native.changes.reveal({ root: c.root, file: f.path }); } })),
@@ -1846,16 +1888,28 @@ export const NODE_TYPES = {
             if (!d.open || loaded) return;
             loaded = true;
             code.textContent = 'Загрузка…';
-            try { code.replaceChildren(...diffLines(await native.changes.patch({ root: c.root, before: c.before, after: c.after, file: f.path }))); }
-            catch { code.textContent = 'Не удалось показать: папка или версия недоступна на этом компьютере.'; }
+            try {
+              const rows = parsePatch(await native.changes.patch({ root: c.root, before: c.before, after: c.after, file: f.path }));
+              loadedFiles.set(f.path, { code, rows });
+              paintFile(f.path);
+            } catch { code.textContent = 'Не удалось показать: папка или версия недоступна на этом компьютере.'; }
           });
           list.append(d);
           if (k === 0) d.open = true;
         });
+        paintHead();
       };
       render();
       const off = bus.on('changes:updated', (e) => { if (e.chatId === cur.data.chatId && e.ts === cur.data.ts) render(); });
-      return { update: (n) => { const changed = n.data.changes !== cur.data.changes; cur = n; if (changed) render(); }, destroy: () => off() };
+      return {
+        update: (n) => { // the node changed from outside (sync, undo)
+          const changed = n.data.changes !== cur.data.changes, cm = n.data.comments !== cur.data.comments;
+          cur = n;
+          if (changed) render();
+          else if (cm) { paintAll(); paintHead(); }
+        },
+        destroy: () => off(),
+      };
     },
   },
 

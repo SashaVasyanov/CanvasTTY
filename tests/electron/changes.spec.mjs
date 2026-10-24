@@ -50,3 +50,37 @@ test('агент поменял файлы: строка под ответом, 
   expect(read('notes.txt')).toBe('файл агента\n');
   expect(fs.existsSync(path.join(repo, 'old.txt'))).toBe(false);
 });
+
+test('замечание к строке в карточке уходит настоящему агенту следующим сообщением, после перезапуска оно на месте', async ({ app, home }) => {
+  const repo = path.join(home, 'project2');
+  fs.mkdirSync(repo, { recursive: true });
+  const git = (...a) => execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...a], { cwd: repo, encoding: 'utf8' });
+  git('init', '-q');
+  fs.writeFileSync(path.join(repo, 'README.md'), 'Привет, мир\n');
+  git('add', '-A'); git('commit', '-qm', 'init');
+
+  app.scenario({ codex: 'edit' });
+  const chat = await app.openAgentChat('codex');
+  await app.page.evaluate(([id, cwd]) => window.__app.canvas.setData(id, { cwd }), [chat, repo]);
+  await app.send(chat, 'Обнови README');
+  await app.waitAnswer(chat);
+  await app.el(chat).locator('.msg-changes button', { hasText: 'Показать' }).click();
+  const card = app.page.locator('.node-diff');
+  const added = card.locator('.diff-file').first().locator('.dl.add');
+  await expect(added).toHaveText(['+Строка от агента']);
+  expect(await added.getAttribute('data-no')).toBe('2');
+  await added.hover();
+  await added.locator('.dl-plus').click();
+  await card.locator('.dl-ta').fill('Напиши строку по-английски');
+  await card.locator('.dl-ta').press('Control+Enter');
+
+  app.scenario({ codex: 'basic' });
+  await card.locator('.diff-send').click();
+  await expect.poll(() => app.calls('codex').length).toBe(2);
+  expect(app.calls('codex')[1].prompt).toContain('README.md, строка 2 (добавлена):\n> Строка от агента\nНапиши строку по-английски');
+  await app.waitAnswer(chat);
+
+  await app.restart();
+  await expect(app.page.locator('.node-diff .dl-cmt')).toContainText('Напиши строку по-английски');
+  await expect(app.page.locator('.node-diff .dl-cmt')).toHaveClass(/sent/);
+});

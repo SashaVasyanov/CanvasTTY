@@ -517,6 +517,24 @@ svg.guides line { stroke: #ff5ca8; stroke-width: 1; }
 .diff-code .dl.del { background: color-mix(in srgb, var(--red) 15%, transparent); }
 .diff-code .dl.hunk { color: var(--muted); background: rgba(var(--fg-rgb), 0.04); margin-top: 4px; }
 .diff-code .dl.meta { color: var(--muted); }
+/* comments on lines (renderer/js/diffComments.js): the number and «+» in the gutter, the note under the line */
+.diff-code .dl { position: relative; padding-left: 64px; }
+.diff-code .dl[data-no]::before { content: attr(data-no); position: absolute; left: 0; width: 34px; text-align: right; color: var(--muted); opacity: 0.7; user-select: none; }
+.dl-plus { position: absolute; left: 40px; top: 50%; transform: translateY(-50%); width: 17px; height: 17px; border-radius: 5px; display: inline-flex; align-items: center; justify-content: center; background: var(--accent); color: #0d1030; opacity: 0; transition: opacity 0.1s; }
+.diff-code .dl:hover .dl-plus, .dl-plus:focus-visible { opacity: 1; }
+.dl-cmt, .dl-edit, .dl-orphan { margin: 4px 12px 6px 64px; font: 12.5px/1.45 var(--font); white-space: normal; }
+.dl-cmt { padding: 7px 10px; border-radius: 8px; background: color-mix(in srgb, var(--accent) 13%, transparent); border-left: 3px solid var(--accent); }
+.dl-cmt.sent { opacity: 0.6; border-left-color: var(--muted); background: rgba(var(--fg-rgb), 0.05); }
+.dl-cmt-text { white-space: pre-wrap; color: var(--text); }
+.dl-cmt-meta { display: flex; align-items: center; gap: 4px; margin-top: 3px; font-size: 11px; color: var(--muted); }
+.dl-orphan { margin-bottom: 0; }
+.dl-edit { display: flex; flex-direction: column; gap: 6px; }
+.dl-ta { width: 100%; min-height: 58px; resize: vertical; padding: 7px 9px; border-radius: 8px; border: 1px solid var(--line-2); background: rgba(var(--fg-rgb), 0.05); color: var(--text); font: inherit; outline: none; }
+.dl-ta:focus { border-color: var(--accent); }
+.dl-edit-btns { display: flex; align-items: center; gap: 6px; }
+.diff-ncmt[hidden] { display: none; }
+.diff-send-slot { display: contents; }
+.diff-ncmt { font-size: 11px; color: var(--accent); flex-shrink: 0; }
 .note-missing { flex: 1; display: none; flex-direction: column; gap: 10px; align-items: center; justify-content: center; color: var(--muted); }
 .rich-editor { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 .rich-editor.compact .note-toolbar { display: none; }

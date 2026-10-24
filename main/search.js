@@ -30,7 +30,7 @@ function canvasEntries(doc) {
       case 'note': add(n, base(d.path), ''); break; // the text: notes search
       case 'image': add(n, d.name || base(d.vault) || 'Картинка', ''); break;
       case 'web': add(n, d.title || d.url, d.url); break;
-      case 'diff': add(n, d.title || 'Изменения', (d.changes?.files || []).map((f) => f.path).join('\n')); break;
+      case 'diff': add(n, d.title || 'Изменения', [...(d.changes?.files || []).map((f) => f.path), ...(d.comments || []).map((c) => c.text)].join('\n')); break; // files and comments on lines
       case 'terminal': add(n, d.title || '', ''); break; // live output: searched in the window
       case 'widget': {
         if (d.kind === 'checklist') add(n, d.title || 'Чек-лист', (d.items || []).map((x) => x.text).join('\n'));
