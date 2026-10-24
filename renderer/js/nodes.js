@@ -23,6 +23,9 @@ import { mountGitBar } from './gitbar.js';
 const ptyRoutes = new Map();
 native.pty.onData(({ id, data }) => ptyRoutes.get(id)?.onData(data));
 native.pty.onExit(({ id, code, error }) => ptyRoutes.get(id)?.onExit(code, error));
+// what a terminal agent says about itself (main/pty.js signals): its window, or — when its canvas is
+// not open — straight into «Ждут вас» / «Пока вас не было»
+native.pty.onAgent?.((ev) => { const inst = ptyRoutes.get(ev.id); if (inst) inst.agentSignal(ev.state, ev.message); else terminalSignalElsewhere(ev); });
 const chatRoutes = new Map();
 native.chat.onEvent((ev) => chatRoutes.get(ev.reqId)?.(ev));
 native.agentChat.onEvent((ev) => chatRoutes.get(ev.reqId)?.(ev));
@@ -164,6 +167,7 @@ const uuid = () => { const b = crypto.getRandomValues(new Uint8Array(16)); b[6] 
 class TerminalInstance {
   constructor({ node, view, body }) {
     this.node = node; this.view = view; this.body = body;
+    this.docId = view.doc?.id;
     this.sessionId = node.data.sessionId || null;
     this.state = 'starting';
     this.lastOutput = 0;
@@ -191,7 +195,10 @@ class TerminalInstance {
       if (mod && (keyName(e) === '\\' || keyName(e) === '`')) return false;
       return true;
     });
-    this.term.onData((d) => { if (this.sessionId && this.state !== 'exited') native.pty.write(this.sessionId, d); });
+    this.term.onData((d) => {
+      if (this.sessionId && this.state !== 'exited') native.pty.write(this.sessionId, d);
+      if (this.agentState && this.agentState.state !== 'busy') { this.agentState = null; this.syncHead(); } // you answered / typed the next task
+    });
     this.term.onTitleChange?.((t) => { this.osTitle = t; });
     this.ro = new ResizeObserver(() => this.doFit());
     this.ro.observe(this.wrap);
@@ -225,6 +232,7 @@ class TerminalInstance {
         ptyRoutes.set(this.sessionId, this);
         if (att.buffer) this.term.write(att.buffer);
         this.lastOutput = att.lastOutput || 0;
+        if (att.agentEvent) this.agentState = { state: att.agentEvent.state, message: att.agentEvent.message || '', at: att.agentEvent.at };
         this.notFound = att.notFound;
         this.state = att.exited ? 'exited' : 'running';
         if (att.exited) this.showEnded(att.exitCode);
@@ -277,7 +285,9 @@ class TerminalInstance {
     await new Promise((r) => requestAnimationFrame(r));
     try { this.fit.fit(); } catch {}
     const since = Date.now();
-    const res = await native.pty.spawn({ cmd: a.cmd, args, cwd, cols: this.term.cols || 100, rows: this.term.rows || 30, ...(session ? { session } : {}) });
+    if (session && this.noSignals) session.signals = false; // an old CLI that does not know the options (see onExit)
+    this.agentState = null; this.spawnedAt = since;
+    const res = await native.pty.spawn({ cmd: a.cmd, args, cwd, cols: this.term.cols || 100, rows: this.term.rows || 30, nodeId: this.node.id, docId: this.view.doc?.id, ...(session ? { session } : {}) });
     if (session && !res.error) {
       this.view.setData(this.node.id, { agentSession: { kind, id: session.id || (session.resume ? own.id : null), at: since } });
       if (kind === 'codex' && !session.id) this.findCodexSession(cwd, since);
@@ -302,6 +312,14 @@ class TerminalInstance {
     if (this.state !== 'running') { this.state = 'running'; this.syncHead(); }
   }
   onExit(code, error) {
+    // an older Claude Code / Codex that does not know the status options: once again without them
+    if (!this.noSignals && termKind(this.agent) && Date.now() - (this.spawnedAt || 0) < 15_000 && /unknown (option|argument)|unexpected argument|unrecognized|error: .*--settings|tui\.notification/i.test(this.tailText(2000))) {
+      this.noSignals = true;
+      this.term.write('\r\n\x1b[2m(VibeTabula: эта версия агента не знает опций статусов — запускаю без них)\x1b[0m\r\n');
+      this.sessionId = null;
+      setTimeout(() => this.spawn(false), 300);
+      return;
+    }
     const own = this.data.agentSession;
     if (own && !own.ended) this.view.setData(this.node.id, { agentSession: { ...own, ended: true } }); // the agent itself quit: not continued on its own
     this.state = 'exited';
@@ -327,6 +345,14 @@ class TerminalInstance {
     this.banner.style.display = 'flex';
   }
   hideBanner() { this.banner.style.display = 'none'; }
+  // a signal of the agent itself (main/pty.js): status, «Ждут вас», «Пока вас не было»
+  agentSignal(st, message = '') {
+    if (!['busy', 'wait', 'done'].includes(st)) return;
+    this.agentState = { state: st, message: String(message || '').slice(0, 200), at: Date.now() };
+    this.syncHead();
+    if (st === 'busy') { inbox.remove(this.node.id); return; }
+    reportEnd(this, st === 'wait' ? 'wait' : 'done', message || (st === 'done' ? 'Агент закончил и ждёт следующую задачу' : 'Агент ждёт вашего ответа'), null);
+  }
   // Codex picks its session id itself: its session file in this folder that appeared after the start
   async findCodexSession(cwd, since) {
     const token = (this._codexWatch = {});
@@ -375,8 +401,13 @@ class TerminalInstance {
     if (this.state === 'starting') return { label: 'Запуск…', kind: 'idle' };
     if (this.state === 'stopped') return { label: 'Остановлен', kind: 'off' };
     if (this.state === 'exited') return { label: 'Завершён', kind: 'off' };
+    // the agent's own signals (main/pty.js): exact, before guessing from the screen
+    const sig = this.agentState;
+    if (sig?.state === 'wait') return { label: 'Ждёт ответа', kind: 'wait', detail: sig.message ? clip(sig.message.replace(/^Claude /, ''), 80) : 'Ждёт вашего ответа' };
     if (Date.now() - this.lastOutput < 2500) return { label: 'Работает', kind: 'busy' };
-    // an agent CLI asking for approval / a choice (Claude Code, Codex, Gemini…)
+    if (sig?.state === 'done') return { label: 'Готово', kind: 'idle', detail: 'Готово — ждёт следующую задачу' };
+    if (sig) return { label: 'Ожидает', kind: 'idle' };
+    // no signals (another agent, an old version): an agent CLI asking for approval / a choice
     if (this.agent.cmd && this.term) {
       if (this._waitAt !== this.lastOutput) {
         this._waitAt = this.lastOutput;
@@ -470,6 +501,17 @@ function reportEnd(inst, kind, text, msg) {
   const item = { nodeId: n.id, docId: inst.docId, kind, title: NODE_TYPES[n.type].title(n), text, type: n.type, agentId: n.data.agentId, provider: n.data.provider };
   away.record({ ...item, text: String(text || '').replace(/\s+/g, ' ').trim().slice(0, 160), detail: outcome(msg), files: msg?.changes?.files?.length || msg?.touched?.length || 0 });
   if (watched(inst)) { inbox.remove(inst.node.id); return; }
+  inbox.add(item);
+}
+
+// a terminal agent on a canvas that is not open said it is done / waits for you
+async function terminalSignalElsewhere({ nodeId, docId, state: st, message }) {
+  if (!nodeId || !docId || !['wait', 'done'].includes(st)) return;
+  let n = null;
+  try { n = (await native.canvas.load(docId))?.nodes?.find((x) => x.id === nodeId); } catch {}
+  if (!n) return;
+  const item = { nodeId, docId, kind: st, title: NODE_TYPES.terminal.title(n), text: message || (st === 'done' ? 'Агент закончил и ждёт следующую задачу' : 'Агент ждёт вашего ответа'), type: 'terminal', agentId: n.data.agentId };
+  away.record(item);
   inbox.add(item);
 }
 

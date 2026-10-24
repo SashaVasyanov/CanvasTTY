@@ -22,6 +22,39 @@ function withSession(cmd, args, own) {
   return own.resume ? [...args, 'resume', id] : args; // Codex picks its own id: found afterwards (history.js)
 }
 
+// Exact statuses of terminal agents from the agents themselves (not guessed from the screen):
+//   Claude Code — hooks (UserPromptSubmit / Notification / Stop) from a settings file given with
+//     --settings; each hook appends "<event> <its JSON>" to the file named by $VT_AGENT_EVENTS (hooks
+//     run in bash on every OS, Git Bash on Windows), which is watched here;
+//   Codex — its TUI notifications as OSC 9 escape sequences (-c tui.notifications=true
+//     -c tui.notification_method=osc9), read from the output here.
+// Both become 'pty:agent' events { id, state: 'busy'|'wait'|'done', message, nodeId, docId }.
+const HOOK = (ev) => `[ -n "$VT_AGENT_EVENTS" ] && { printf '%s ' ${ev}; tr -d '\\r\\n'; echo; } >> "$VT_AGENT_EVENTS"; exit 0`;
+const CLAUDE_HOOKS = { hooks: Object.fromEntries([['UserPromptSubmit', 'prompt'], ['Notification', 'notify'], ['Stop', 'stop']].map(([k, ev]) => [k, [{ hooks: [{ type: 'command', command: HOOK(ev) }] }]])) };
+function signalArgs(cmd, args, own, hooksFile) {
+  const kind = own?.kind;
+  if (!['claude', 'codex'].includes(kind) || progName(cmd) !== kind || own.signals === false) return args;
+  if (kind === 'claude') return hooksFile ? [...args, '--settings', hooksFile] : args;
+  return ['-c', 'tui.notifications=true', '-c', 'tui.notification_method=osc9', ...args];
+}
+// one line of the events file → { state, message }
+function hookEvent(line) {
+  const sp = line.indexOf(' ');
+  const ev = sp < 0 ? line : line.slice(0, sp);
+  let j = {}; try { j = JSON.parse(line.slice(sp + 1)); } catch {}
+  const message = String(j.message || '').slice(0, 200);
+  if (ev === 'prompt') return { state: 'busy', message: '' };
+  if (ev === 'stop') return { state: 'done', message: '' };
+  if (ev === 'notify') return { state: j.notification_type === 'idle_prompt' || /waiting for your input/i.test(message) ? 'done' : 'wait', message };
+  return null;
+}
+// the text of a Codex notification → { state, message }
+function oscEvent(text) {
+  if (/^4;/.test(text)) return null; // ConEmu progress, not a notification
+  const message = String(text).slice(0, 200);
+  return { state: /^(approval requested|codex wants to|approve|allow)/i.test(message) || /approval|permission/i.test(message.slice(0, 40)) ? 'wait' : 'done', message };
+}
+
 class PtyManager {
   constructor({ userData, send }) {
     this.userData = userData;
@@ -91,7 +124,7 @@ class PtyManager {
   // session: { kind: 'claude'|'codex', id, resume } — the agent's own session of this window: after
   // the trust check of the command itself, `--session-id <id>` / `--resume <id>` / `resume <id>` are
   // added here (only a UUID, only for that agent's own program), so they never need approval
-  async spawn({ cmd, args, cwd, cols, rows, env, session: own }) {
+  async spawn({ cmd, args, cwd, cols, rows, env, session: own, nodeId, docId }) {
     const id = `pty_${Date.now().toString(36)}_${(this.seq++).toString(36)}`;
     const session = { id, cmd, buffer: '', exited: false, exitCode: null, lastOutput: 0, proc: null, notFound: false };
     this.sessions.set(id, session);
@@ -110,6 +143,9 @@ class PtyManager {
       session.notFound = true;
     }
     args = withSession(cmd, args, own);
+    const kind = ['claude', 'codex'].includes(own?.kind) && progName(cmd) === own.kind && own.signals !== false ? own.kind : null;
+    args = signalArgs(cmd, args, own, kind === 'claude' ? this.hooksFile() : null);
+    Object.assign(session, { kind, nodeId: String(nodeId || ''), docId: String(docId || ''), osc: '' });
 
     let bridge;
     try {
@@ -127,6 +163,7 @@ class PtyManager {
     const c = Math.max(10, Math.min(500, cols | 0 || 100));
     const r = Math.max(4, Math.min(300, rows | 0 || 30));
     const childEnv = { ...process.env, COLORTERM: 'truecolor', TERM_PROGRAM: 'VibeTabula', ...(env || {}) };
+    if (kind === 'claude') { childEnv.VT_AGENT_EVENTS = this.watchEvents(session).replace(/\\/g, '/'); }
     if (isWin && process.env.APPDATA) {
       const npmBin = path.join(process.env.APPDATA, 'npm');
       if (!(childEnv.PATH || childEnv.Path || '').includes(npmBin)) {
@@ -148,6 +185,7 @@ class PtyManager {
       session.buffer += data;
       if (session.buffer.length > MAX_SCROLLBACK) session.buffer = session.buffer.slice(-MAX_SCROLLBACK);
       this.send('pty:data', { id, data });
+      if (session.kind === 'codex') this.scanOsc(session, data);
     });
     proc.stderr.on('data', (chunk) => {
       let data = chunk.toString('utf8').replace(/\n/g, '\r\n');
@@ -158,6 +196,7 @@ class PtyManager {
     proc.stdin.on('error', () => {});
     proc.on('exit', (code) => {
       session.exited = true; session.exitCode = code;
+      this.unwatch(session);
       this.send('pty:exit', { id, code });
     });
     proc.on('error', (err) => {
@@ -193,9 +232,58 @@ class PtyManager {
     try { s.proc.stdin.write(this.frame(1, p)); } catch {}
   }
 
+  // ---------- agent signals (see signalArgs) ----------
+  hooksFile() {
+    const dir = path.join(this.userData, 'agent-events');
+    const f = path.join(dir, 'claude-hooks.json');
+    if (!this._hooksWritten) { try { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(f, JSON.stringify(CLAUDE_HOOKS, null, 1)); this._hooksWritten = true; } catch {} }
+    return f;
+  }
+  signal(s, ev) {
+    if (!ev) return;
+    s.agentEvent = { ...ev, at: Date.now() };
+    this.send('pty:agent', { id: s.id, ...ev, nodeId: s.nodeId, docId: s.docId });
+  }
+  watchEvents(s) {
+    const f = path.join(this.userData, 'agent-events', `${s.id}.log`);
+    try { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, ''); } catch {}
+    s.events = { file: f, pos: 0, rest: '' };
+    const read = () => {
+      const e = s.events;
+      if (!e) return;
+      let size = 0; try { size = fs.statSync(f).size; } catch { return; }
+      if (size <= e.pos) return;
+      let chunk = '';
+      try { const fd = fs.openSync(f, 'r'); const b = Buffer.alloc(Math.min(size - e.pos, 1 << 20)); fs.readSync(fd, b, 0, b.length, e.pos); fs.closeSync(fd); e.pos += b.length; chunk = b.toString('utf8'); } catch { return; }
+      const lines = (e.rest + chunk).split('\n');
+      e.rest = lines.pop();
+      for (const l of lines) if (l.trim()) this.signal(s, hookEvent(l.trim()));
+    };
+    fs.watchFile(f, { interval: 500 }, read);
+    s.events.read = read;
+    return f;
+  }
+  unwatch(s) {
+    if (!s.events) return;
+    try { s.events.read(); } catch {}
+    fs.unwatchFile(s.events.file);
+    try { fs.unlinkSync(s.events.file); } catch {}
+    s.events = null;
+  }
+  // OSC 9 notifications of Codex in the output (a sequence may be split between chunks)
+  scanOsc(s, data) {
+    const text = (s.osc + data).slice(-4096);
+    const re = /\x1b\]9;([^\x07\x1b]*)(?:\x07|\x1b\\)/g;
+    let m, end = 0;
+    while ((m = re.exec(text))) { this.signal(s, oscEvent(m[1])); end = re.lastIndex; }
+    const open = text.lastIndexOf('\x1b]9;');
+    s.osc = open >= end ? text.slice(open) : '';
+  }
+
   kill(id) {
     const s = this.sessions.get(id);
     if (!s) return;
+    this.unwatch(s);
     if (s.proc && !s.exited) {
       try { s.proc.stdin.write(this.frame(2, Buffer.alloc(0))); } catch {}
       setTimeout(() => { try { if (!s.exited) s.proc.kill(); } catch {} }, 800);
@@ -206,7 +294,7 @@ class PtyManager {
   attach(id) {
     const s = this.sessions.get(id);
     if (!s) return null;
-    return { id, buffer: s.buffer, exited: s.exited, exitCode: s.exitCode, lastOutput: s.lastOutput, notFound: s.notFound };
+    return { id, buffer: s.buffer, exited: s.exited, exitCode: s.exitCode, lastOutput: s.lastOutput, notFound: s.notFound, agentEvent: s.agentEvent || null };
   }
 
   statuses() {
@@ -227,4 +315,4 @@ class PtyManager {
   }
 }
 
-module.exports = { PtyManager, withSession };
+module.exports = { PtyManager, withSession, signalArgs, hookEvent, oscEvent, CLAUDE_HOOKS };

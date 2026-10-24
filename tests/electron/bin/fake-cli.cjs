@@ -352,6 +352,19 @@ async function claude(argv, prompt, scenario) {
 // sessions: claude --session-id <id> / --resume <id> (a file in ~/.claude/projects/<folder>/ appears
 // with the first typed line, like the real one), codex / codex resume <id> (the rollout file in
 // ~/.codex/sessions/ is written at the start). Each typed line is answered with "ok: <line>".
+// Status signals like the real ones (main/pty.js): claude runs the hooks of its --settings file in
+// bash (UserPromptSubmit, then Stop; a line "perm" — Notification «needs your permission»); codex
+// started with -c tui.notifications=true prints OSC 9 («approve?» — an approval request).
+function bashPath() {
+  if (process.platform !== 'win32') return 'bash';
+  const git = [process.env.CLAUDE_CODE_GIT_BASH_PATH, 'C:\\Program Files\\Git\\bin\\bash.exe', 'C:\\Program Files\\Git\\usr\\bin\\bash.exe'].find((p) => p && fs.existsSync(p));
+  return git || 'bash';
+}
+function runHook(settings, event, input) {
+  for (const group of settings?.hooks?.[event] || []) for (const h of group.hooks || []) {
+    try { require('child_process').execFileSync(bashPath(), ['-c', h.command], { input: JSON.stringify(input), stdio: ['pipe', 'ignore', 'ignore'], timeout: 15000 }); } catch (e) { /* a hook error does not stop the agent */ }
+  }
+}
 function interactive(cli, argv) {
   try { fs.mkdirSync(STATE, { recursive: true }); fs.appendFileSync(path.join(STATE, 'calls.jsonl'), JSON.stringify({ cli, argv, cwd: process.cwd(), tty: true, pid: process.pid, time: Date.now() }) + '\n'); } catch (e) { /* best effort */ }
   const home = os.homedir();
@@ -364,7 +377,15 @@ function interactive(cli, argv) {
     const file = path.join(dir, `${id}.jsonl`);
     if (resume && !fs.existsSync(file)) { say(`No conversation found with session ID: ${resume}\r\n`); process.exit(1); }
     say(`Fake Claude: ${resume ? 'resumed' : 'new'} session ${id}\r\n> `);
-    onLine = (line) => { fs.mkdirSync(dir, { recursive: true }); fs.appendFileSync(file, JSON.stringify({ type: 'user', sessionId: id, cwd: process.cwd(), timestamp: new Date().toISOString(), message: { role: 'user', content: line } }) + '\n'); };
+    let settings = null;
+    try { settings = JSON.parse(fs.readFileSync(argAfter(argv, '--settings'), 'utf8')); } catch (e) { /* none */ }
+    onLine = (line) => {
+      fs.mkdirSync(dir, { recursive: true });
+      fs.appendFileSync(file, JSON.stringify({ type: 'user', sessionId: id, cwd: process.cwd(), timestamp: new Date().toISOString(), message: { role: 'user', content: line } }) + '\n');
+      runHook(settings, 'UserPromptSubmit', { hook_event_name: 'UserPromptSubmit', session_id: id, prompt: line });
+      if (line === 'perm') runHook(settings, 'Notification', { hook_event_name: 'Notification', session_id: id, message: 'Claude needs your permission to use Bash', notification_type: 'permission_prompt' });
+      else runHook(settings, 'Stop', { hook_event_name: 'Stop', session_id: id });
+    };
   } else {
     const r = argv.indexOf('resume');
     const id = r >= 0 && argv[r + 1] ? argv[r + 1] : crypto.randomUUID();
@@ -374,6 +395,8 @@ function interactive(cli, argv) {
       fs.writeFileSync(path.join(dir, `rollout-2026-10-24T10-00-00-${id}.jsonl`), JSON.stringify({ timestamp: new Date().toISOString(), type: 'session_meta', payload: { id, timestamp: new Date().toISOString(), cwd: process.cwd() } }) + '\n');
     }
     say(`Fake Codex: ${r >= 0 ? 'resumed' : 'new'} session ${id}\r\n> `);
+    const osc = argv.includes('tui.notifications=true');
+    onLine = (line) => { if (osc) setTimeout(() => say(line === 'approve?' ? '\x1b]9;Approval requested: rm -rf build\x07' : '\x1b]9;Agent turn complete\x07'), 300); };
   }
   let buf = '';
   process.stdin.setRawMode?.(false);
@@ -382,7 +405,7 @@ function interactive(cli, argv) {
     buf += d;
     let i;
     while ((i = buf.search(/[\r\n]/)) >= 0) {
-      const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
+      const line = buf.slice(0, i).replace(/\x1b\[20[01]~/g, '').trim(); buf = buf.slice(i + 1); // bracketed paste markers
       if (!line) continue;
       onLine(line);
       say(`ok: ${line}\r\n> `);

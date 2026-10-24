@@ -18,7 +18,7 @@ contextBridge.exposeInMainWorld('native', {
     write: (id, data) => ipcRenderer.send('pty:write', id, data),
     resize: (id, c, r) => ipcRenderer.send('pty:resize', id, c, r),
     kill: inv('pty:kill'), attach: inv('pty:attach'), statuses: inv('pty:statuses'), which: inv('pty:which'),
-    onData: on('pty:data'), onExit: on('pty:exit'),
+    onData: on('pty:data'), onExit: on('pty:exit'), onAgent: on('pty:agent'),
   },
   chat: { providers: inv('chat:providers'), send: inv('chat:send'), abort: inv('chat:abort'), models: inv('chat:models'), onEvent: on('chat:event') },
   agentChat: { run: inv('agentchat:run'), abort: inv('agentchat:abort'), attach: inv('agentchat:attach'), release: inv('agentchat:release'), background: inv('agentchat:background'), onBackground: on('agentchat:background'), defaults: inv('agentchat:defaults'), imagesDir: inv('agentchat:imagesDir'), onEvent: on('agentchat:event') },

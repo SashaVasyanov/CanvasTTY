@@ -1,6 +1,7 @@
 // Terminals on the canvas run a real shell through the pty bridge of the main process (python on
 // Linux / macOS, a ConPTY bridge compiled with csc.exe on Windows); the session lives in the main
 // process, so it survives its window being re-created.
+import fs from 'node:fs';
 import path from 'node:path';
 import { test, expect } from './fixtures.mjs';
 
@@ -67,7 +68,7 @@ test('Claude Code и Codex в терминале: своя сессия, пос�
   const sid = (await ownSession(app, cl)).id;
   expect(sid).toMatch(/^[0-9a-f-]{36}$/);
   expect(await tail(app, cl)).toContain(sid);
-  expect(ttyCalls(app, 'claude')[0].argv).toEqual(['--session-id', sid]);
+  expect(ttyCalls(app, 'claude')[0].argv.slice(0, 2)).toEqual(['--session-id', sid]);
   await type(app, cl, 'hello');
   await expect.poll(() => tail(app, cl), { timeout: 20_000 }).toContain('ok: hello');
 
@@ -80,6 +81,30 @@ test('Claude Code и Codex в терминале: своя сессия, пос�
   await app.restart();
   await expect.poll(() => tail(app, cl), { timeout: 45_000 }).toContain(`Fake Claude: resumed session ${sid}`);
   await expect.poll(() => tail(app, cx), { timeout: 45_000 }).toContain(`Fake Codex: resumed session ${cxid}`);
-  expect(ttyCalls(app, 'claude').at(-1).argv).toEqual(['--resume', sid]);
-  expect(ttyCalls(app, 'codex').at(-1).argv).toEqual(['resume', cxid]);
+  expect(ttyCalls(app, 'claude').at(-1).argv.slice(0, 2)).toEqual(['--resume', sid]);
+  expect(ttyCalls(app, 'codex').at(-1).argv.slice(-2)).toEqual(['resume', cxid]);
+});
+
+// Exact statuses from the agents themselves (main/pty.js signals): Claude Code hooks from the
+// --settings file VibeTabula gives it, Codex OSC 9 notifications; with the window on screen the
+// status changes, with the app in the background the window also goes to «Ждут вас»
+test('статусы терминальных агентов по их сигналам: «Готово», «Ждёт ответа», и в «Ждут вас»', async ({ app }) => {
+  const cl = await openAgent(app, 'claude', { x: 420, y: 260 });
+  await expect.poll(() => tail(app, cl), { timeout: 45_000 }).toContain('Fake Claude: new session');
+  const argv = ttyCalls(app, 'claude')[0].argv;
+  const settings = JSON.parse(fs.readFileSync(argv[argv.indexOf('--settings') + 1], 'utf8'));
+  expect(Object.keys(settings.hooks).sort()).toEqual(['Notification', 'Stop', 'UserPromptSubmit']);
+  await type(app, cl, 'hello');
+  await expect.poll(() => app.status(cl), { timeout: 20_000, message: 'Stop → «Готово»' }).toBe('Готово');
+  await type(app, cl, 'perm');
+  await expect.poll(() => app.status(cl), { timeout: 20_000, message: 'Notification → «Ждёт ответа»' }).toBe('Ждёт ответа');
+  expect(await app.page.evaluate((id) => window.__app.canvas.views.get(id).inst.statusInfo().detail, cl)).toBe('needs your permission to use Bash');
+
+  const cx = await openAgent(app, 'codex', { x: 420, y: 760 });
+  await expect.poll(() => tail(app, cx), { timeout: 45_000 }).toContain('Fake Codex: new session');
+  // the app in the background: the finished Codex goes to «Ждут вас»
+  await app.page.evaluate(() => { document.hasFocus = () => false; });
+  await app.page.evaluate((id) => { const v = window.__app.canvas.views.get(id).inst; v.sendText('approve?', true); }, cx);
+  await expect.poll(() => app.status(cx), { timeout: 20_000, message: 'OSC 9 запрос → «Ждёт ответа»' }).toBe('Ждёт ответа');
+  await expect.poll(() => app.page.evaluate(async () => (await import('./js/inbox.js')).inbox.items.map((x) => [x.title.includes('Codex'), x.kind])), { timeout: 10_000 }).toContainEqual([true, 'wait']);
 });

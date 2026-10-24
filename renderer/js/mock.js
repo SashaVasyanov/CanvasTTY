@@ -37,8 +37,8 @@ export const mockNative = {
   },
   pty: {
     // every start is in window.__ptySpawns ({ cmd, args, session }) for the tests
-    async spawn({ cmd, args, session }) {
-      (window.__ptySpawns ||= []).push(JSON.parse(JSON.stringify({ cmd, args: args || [], session: session || null })));
+    async spawn({ cmd, args, session, nodeId, docId }) {
+      (window.__ptySpawns ||= []).push(JSON.parse(JSON.stringify({ cmd, args: args || [], session: session || null, nodeId, docId })));
       const id = `mock_${seq++}`;
       const s = sessions[id] = { line: '', buffer: '', last: Date.now(), cmd };
       const out = (d) => { s.buffer += d; s.last = Date.now(); emit('pty:data', { id, data: d }); };
@@ -62,7 +62,8 @@ export const mockNative = {
     attach: async (id) => sessions[id] ? { id, buffer: sessions[id].buffer, exited: false, lastOutput: sessions[id].last } : null,
     statuses: async () => Object.fromEntries(Object.entries(sessions).map(([id, s]) => [id, { exited: false, busy: Date.now() - s.last < 2500, lastOutput: s.last }])),
     which: async () => '/usr/bin/demo',
-    onData: on('pty:data'), onExit: on('pty:exit'),
+    // tests send agent signals with window.__mockEmit('pty:agent', { id, state, message, nodeId, docId })
+    onData: on('pty:data'), onExit: on('pty:exit'), onAgent: on('pty:agent'),
   },
   // sessions of terminal agents: tests list existing ids in window.__mockSessions, the Codex one found
   // after a start in window.__mockCodexFind
