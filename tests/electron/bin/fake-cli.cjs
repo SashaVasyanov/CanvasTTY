@@ -416,6 +416,7 @@ function interactive(cli, argv) {
 
 async function main(cli) {
   const argv = process.argv.slice(2);
+  if (argv[0] === '--version') { process.stdout.write(`9.9.9 (fake ${cli})\n`); return; } // the first start checks the versions
   if (process.stdin.isTTY) { interactive(cli, argv); return; }
   const prompt = await readStdin();
   const scenario = scenarioFor(cli);

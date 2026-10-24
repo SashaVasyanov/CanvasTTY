@@ -185,3 +185,22 @@ test.describe('переход со старого названия CanvasTTY', (
     expect(status).toBe(200);
   });
 });
+
+// «Проверить агентов на этом компьютере…» (the first-start window, renderer/js/onboarding.js +
+// main/agentsetup.js): the fake CLIs on PATH are found with their versions, the sign-in is read
+// from the agents' own files
+test('проверка агентов: найденные CLI с версией, вход появляется после входа', async ({ app, home }) => {
+  const page = app.page;
+  await expect(page.locator('.ob-modal'), 'в тестах окно первого запуска само не открывается').toHaveCount(0);
+  await page.keyboard.press('Control+p');
+  await page.locator('.modal input').first().fill('Проверить агентов');
+  await page.locator('.modal input').first().press('Enter');
+  const box = page.locator('.ob-modal');
+  const claude = box.locator('.ob-agent[data-id="claude"]');
+  await expect(claude).toContainText('9.9.9 (fake claude)', { timeout: 30_000 });
+  await expect(box.locator('.ob-agent[data-id="codex"]')).toContainText('9.9.9 (fake codex)');
+  if (process.platform !== 'darwin') await expect(claude.locator('.ob-st')).toHaveText('установлен, вход не выполнен');
+  fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: 'tester@example.com' } }));
+  await box.locator('button', { hasText: 'Проверить ещё раз' }).click();
+  await expect(claude.locator('.ob-st')).toHaveText('✓ готов · tester@example.com', { timeout: 30_000 });
+});

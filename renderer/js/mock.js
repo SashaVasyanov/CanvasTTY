@@ -27,7 +27,7 @@ let seq = 0;
 export const mockNative = {
   isElectron: false,
   win: { minimize() {}, maximize() {}, close() {}, isMaximized: async () => false, focus: async () => {}, attention: async () => { window.__attention = (window.__attention || 0) + 1; }, onState: on('win:state') },
-  info: async () => ({ version: '1.4.0', platform: 'browser', home: '/home/user', host: 'demo-pc' }),
+  info: async () => ({ version: '1.4.0', platform: 'browser', home: '/home/user', host: 'demo-pc', test: !!navigator.webdriver }),
   ws: { load: async () => LS.get('mock:ws', null), save: async (ws) => LS.set('mock:ws', ws) },
   canvas: {
     load: async (id) => LS.get(`mock:canvas:${id}`, null), save: async (id, d) => LS.set(`mock:canvas:${id}`, d), remove: async (id) => localStorage.removeItem(`mock:canvas:${id}`),
@@ -67,6 +67,8 @@ export const mockNative = {
   },
   // sessions of terminal agents: tests list existing ids in window.__mockSessions, the Codex one found
   // after a start in window.__mockCodexFind
+  // installed agents for the first start: tests set window.__mockAgents (the default: Claude Code signed in)
+  agents: { detect: async () => window.__mockAgents || [{ id: 'claude', found: true, path: '/usr/bin/claude', version: '2.0.0 (Claude Code)', login: true, account: 'demo@example.com' }, { id: 'codex', found: false }, { id: 'gemini', found: false }, { id: 'kimi', found: false }] },
   termSessions: {
     exists: async (kind, id) => (window.__mockSessions || []).includes(id),
     findCodex: async () => window.__mockCodexFind || null,

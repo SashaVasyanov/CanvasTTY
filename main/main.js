@@ -29,6 +29,7 @@ const { SyncManager } = require('./sync');
 const changes = require('./changes');
 const worktrees = require('./worktrees');
 const gitflow = require('./gitflow');
+const agentsetup = require('./agentsetup');
 const codexPets = require('./codexpets');
 
 const isMac = process.platform === 'darwin';
@@ -330,7 +331,9 @@ app.whenReady().then(() => {
     }
     return out[0] || '';
   });
-  ipcMain.handle('app:info', () => ({ version: app.getVersion(), platform: process.platform, home: app.getPath('home'), userData, host: os.hostname() }));
+  ipcMain.handle('app:info', () => ({ version: app.getVersion(), platform: process.platform, home: app.getPath('home'), userData, host: os.hostname(), test: !!process.env.VIBETABULA_TEST_HOME }));
+  // the first start: installed agent CLIs and their sign-in (main/agentsetup.js)
+  ipcMain.handle('agents:detect', () => agentsetup.detect());
 
   // ---------- storage ----------
   ipcMain.handle('ws:load', () => loadWorkspace());

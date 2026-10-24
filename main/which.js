@@ -50,7 +50,8 @@ function run(cmd, args, { cwd, env, timeout = 60_000, input } = {}) {
     const p = execFile(c.file, c.args, { cwd, env: { ...process.env, ...(env || {}) }, timeout, windowsHide: true, windowsVerbatimArguments: c.verbatim, maxBuffer: 32 * 1024 * 1024, encoding: 'utf8' }, (err, stdout, stderr) => {
       resolve({ code: err ? (typeof err.code === 'number' ? err.code : -1) : 0, stdout: String(stdout || ''), stderr: String(stderr || (err && !stdout ? err.message : '') || '') });
     });
-    if (input != null) p.stdin.end(input);
+    p.stdin.on('error', () => {});
+    p.stdin.end(input ?? undefined); // a program that reads stdin must not wait for more
   });
 }
 

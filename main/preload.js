@@ -41,6 +41,7 @@ contextBridge.exposeInMainWorld('native', {
   dialog: { folder: inv('dialog:folder') },
   shell: { open: inv('shell:open'), openPath: inv('shell:openPath'), reveal: inv('shell:reveal') },
   termSessions: { exists: inv('termsess:exists'), findCodex: inv('termsess:findCodex') },
+  agents: { detect: inv('agents:detect') },
   git: { info: inv('git:info'), commit: inv('git:commit'), pr: inv('git:pr'), checks: inv('git:checks'), failedLogs: inv('git:failedLogs') },
   wt: { isRepo: inv('wt:isRepo'), create: inv('wt:create'), status: inv('wt:status'), preview: inv('wt:preview'), merge: inv('wt:merge'), remove: inv('wt:remove') },
   // the agents' canvas tools: requests from main/canvas-bridge.js, answered by renderer/js/canvasTools.js

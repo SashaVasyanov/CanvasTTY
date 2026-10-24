@@ -15,6 +15,7 @@ import { bindCanvasTools } from './canvasTools.js';
 import { openSearch } from './search.js';
 import { bookmarks, bookmarkKey, saveBookmark, saveToFree, goBookmark, bookmarkItems } from './bookmarks.js';
 import { away } from './away.js';
+import { maybeOnboard, openOnboarding } from './onboarding.js';
 import { openTemplates, saveTemplate, allTemplates, placeTemplate } from './templates.js';
 import { limits, limitsPanel, petSvg, LIMIT_SOURCES, PETS, openPetPicker, openPetCatalog, CLOCK_PRESETS, CLOCK_DEFAULT, clockColors, paintClock, clockMarkup } from './hub.js';
 
@@ -54,6 +55,7 @@ class App {
     this.bindInbox();
     bindCanvasTools(this.canvas);
     document.getElementById('boot')?.remove();
+    maybeOnboard(this); // the first start on this computer
   }
 
   // ---------------- «Ждут вас» ----------------
@@ -811,6 +813,7 @@ class App {
       { label: 'Шаблоны раскладки…', icon: 'squares', run: () => openTemplates(this.canvas) },
       { label: 'Сохранить выделенное как шаблон…', icon: 'squares', run: () => saveTemplate(this.canvas) },
       ...allTemplates().map((t) => ({ label: `Шаблон: ${t.name}`, hint: t.builtIn ? 'встроенный' : 'ваш', icon: 'squares', run: () => placeTemplate(this.canvas, t) })),
+      { label: 'Проверить агентов на этом компьютере…', icon: 'sparkle', run: () => openOnboarding(this) },
       { label: 'Настройки', icon: 'settings', hint: 'Ctrl+,', run: () => this.openSettings() },
       { label: 'Сменить питомца', icon: 'refresh', run: () => openPetPicker() },
       { label: 'Каталог Codex Pets', icon: 'globe', hint: 'codex-pets.net', run: () => openPetCatalog() },
@@ -1058,6 +1061,8 @@ class App {
       // the agents see and add to the canvas of their window (renderer/js/canvasTools.js)
       const tools = h('input', { type: 'checkbox', class: 'switch' }); tools.checked = s.canvasTools !== false;
       tools.onchange = () => state.setSetting('canvasTools', tools.checked);
+      wrap.append(h('div', { class: 'set-row' }, h('div', {}, h('div', { class: 'set-label' }, 'Установленные агенты'), h('div', { class: 'muted small' }, 'Какие из Claude Code, Codex, Gemini CLI и Kimi есть на этом компьютере, их версии и выполнен ли вход.')),
+        h('button', { class: 'btn sm', onclick: () => openOnboarding(this) }, 'Проверить агентов…')));
       wrap.append(h('h3', {}, 'Окна чатов с агентами'),
         h('div', { class: 'set-row' }, h('div', {}, h('div', { class: 'set-label' }, 'Уведомлять, когда агент закончил'),
           h('div', { class: 'muted small' }, 'Системное уведомление и мигающая кнопка на панели задач, если VibeTabula не в фокусе. Список таких чатов — колокольчик «Ждут вас» вверху.')), notify),

@@ -1362,3 +1362,30 @@ button.wg-day.marked:hover { background: color-mix(in srgb, var(--dc) 34%, trans
 .wg-card-ic { width: 32px; height: 32px; border-radius: 9px; display: grid; place-items: center; background: rgba(124, 140, 255, 0.16); color: var(--accent-2); }
 .wg-card-name { font-weight: 650; font-size: 12.5px; color: var(--text-strong); }
 .wg-card-desc { font-size: 11px; line-height: 1.3; color: var(--muted); }
+
+/* the first start: agents on this computer, project folder, what to start with (renderer/js/onboarding.js) */
+.ob { display: flex; flex-direction: column; gap: 8px; }
+.ob-lead { margin: 0 0 4px; color: var(--text-2); line-height: 1.5; }
+.ob-head { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.ob-head .btn .ic { margin-right: 4px; vertical-align: -2px; }
+.ob-agents { display: flex; flex-direction: column; gap: 6px; }
+.ob-agent { display: flex; align-items: center; gap: 12px; padding: 9px 10px; border-radius: 10px; background: rgba(var(--fg-rgb), 0.04); border: 1px solid var(--line); }
+.ob-agent:not(.found) { opacity: 0.85; }
+.ob-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.ob-name { font-weight: 650; display: flex; align-items: baseline; gap: 8px; }
+.ob-ver { font: 11px var(--mono); color: var(--muted); font-weight: 400; }
+.ob-st { font-size: 12px; }
+.ob-st.ok { color: var(--green); }
+.ob-st.wait { color: var(--amber); }
+.ob-st.off { color: var(--muted); }
+.ob-cmd { font: 11.5px var(--mono); color: var(--text-2); overflow-wrap: anywhere; }
+.ob-acts { display: flex; gap: 6px; flex-shrink: 0; }
+.ob-none { padding: 8px 10px; border-radius: 9px; background: color-mix(in srgb, var(--amber) 12%, transparent); font-size: 12.5px; line-height: 1.45; }
+.ob-wait { padding: 10px 2px; }
+.ob-folder { display: flex; align-items: center; gap: 8px; }
+.ob-cwd { flex: 1; min-width: 0; font: 12px var(--mono); padding: 6px 9px; border-radius: 7px; background: rgba(var(--sink-rgb), 0.25); border: 1px solid var(--line-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ob-start { display: flex; flex-direction: column; gap: 6px; }
+.ob-opt { display: flex; align-items: flex-start; gap: 10px; padding: 9px 10px; border-radius: 10px; border: 1px solid var(--line); cursor: pointer; }
+.ob-opt.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.ob-opt input { margin-top: 3px; accent-color: var(--accent); }
+.ob-opt-t { font-weight: 600; }
