@@ -114,6 +114,19 @@ export const mockNative = {
     background: async () => window.__mockBackground || [], onBackground: on('agentchat:background'),
     defaults: async () => ({ claude: { model: 'sonnet' }, codex: { model: 'gpt-5-codex', effort: 'medium', models: [] } }), onEvent: on('agentchat:event'),
   },
+  // commit / pull request / CI checks (main/gitflow.js): calls go to window.__gitCalls; tests shape the
+  // answers with window.__mockGit = { info: {...}, error: { commit|pr: 'text' }, checks: {...} | (o) => {...}, logs }
+  git: (() => {
+    const cfg = () => window.__mockGit || {};
+    const call = (name, o) => { (window.__gitCalls ||= []).push([name, JSON.parse(JSON.stringify(o ?? null))]); if (cfg().error?.[name]) throw new Error(cfg().error[name]); };
+    return {
+      info: async (root) => { call('info', root); return { git: true, root, branch: 'main', remote: 'origin', defaultBranch: 'main', gh: 'ok', pr: null, ...(cfg().info || {}) }; },
+      commit: async (o) => { call('commit', o); return { hash: 'abc1234', branch: cfg().info?.branch || 'main' }; },
+      pr: async (o) => { call('pr', o); const b = o.branch || cfg().info?.branch || 'feature'; const open = cfg().info?.pr; return { number: open?.number || 7, url: open?.url || 'https://github.com/demo/repo/pull/7', branch: b, base: 'main', existing: !!open, commit: o.commit ? { hash: 'abc1234', branch: b } : null }; },
+      checks: async (o) => { call('checks', o); const c = cfg().checks; return typeof c === 'function' ? c(o) : c || { state: 'pending', checks: [] }; },
+      failedLogs: async (o) => { call('failedLogs', o); return cfg().logs ?? ''; },
+    };
+  })(),
   // git snapshots of an agent's folder: none in the browser unless a test sets window.__mockChanges
   changes: {
     snapshot: async (dir) => (window.__mockChanges ? { root: '/demo/repo', tree: 'tree-before' } : null),

@@ -127,4 +127,4 @@ async function remove(w, { force = false, dropBranch = false } = {}) {
   return { ok: true, branchKept };
 }
 
-module.exports = { create, status, preview, merge, remove, slug };
+module.exports = { create, status, preview, merge, remove, slug, identity };

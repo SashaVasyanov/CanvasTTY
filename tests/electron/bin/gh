@@ -1,0 +1,3 @@
+#!/usr/bin/env node
+// Fake GitHub CLI for the tests (see fake-gh.cjs). Windows runs gh.cmd instead.
+require('./fake-gh.cjs');

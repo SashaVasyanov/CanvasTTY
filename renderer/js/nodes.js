@@ -17,6 +17,7 @@ import { live, outcome, filesWord } from './activity.js';
 import { away } from './away.js';
 import { parsePatch, commentMessage } from './diffComments.js';
 import { diffRows } from './diffView.js';
+import { mountGitBar } from './gitbar.js';
 
 // ---------------- routers for main-process events ----------------
 const ptyRoutes = new Map();
@@ -1806,7 +1807,8 @@ export const NODE_TYPES = {
       let cur = node;
       const head = h('div', { class: 'diff-head' });
       const list = h('div', { class: 'diff-files scrollable' });
-      body.append(h('div', { class: 'diff-view' }, head, list));
+      const view_ = h('div', { class: 'diff-view' }, head, list);
+      body.append(view_);
       // the chat message is the source of truth (rollback state); the card's own copy if it is gone
       const changesOf = () => msgByTs(view, cur.data.chatId, cur.data.ts)?.changes || cur.data.changes;
       const save = (c) => view.setData(cur.id, { changes: c });
@@ -1833,18 +1835,32 @@ export const NODE_TYPES = {
         }));
       };
       const paintAll = () => { for (const path of loadedFiles.keys()) paintFile(path); };
+      // a message to the agent of this card (after its current answer when it is busy)
+      const toAgent = (text, { later, sent }) => {
+        const inst = view.views.get(chatOf())?.inst;
+        if (!inst?.send) { toast('Окна чата этого агента нет на холсте', 'warn'); return false; }
+        const msg = { text, attachments: [] };
+        if (inst.isBusy()) { (inst.relayQueue ||= []).push(msg); toast(`Агент ещё работает — ${later} после его ответа`); }
+        else { inst.send(msg); toast(sent, 'ok'); }
+        view.flashNode?.(chatOf());
+        return true;
+      };
       const sendComments = () => {
         const fresh = comments().filter((c) => !c.sent);
-        if (!fresh.length) return;
-        const inst = view.views.get(chatOf())?.inst;
-        if (!inst?.send) { toast('Окна чата этого агента нет на холсте', 'warn'); return; }
-        const msg = { text: commentMessage(fresh), attachments: [] };
-        if (inst.isBusy()) { (inst.relayQueue ||= []).push(msg); toast('Агент ещё работает — замечания уйдут после его ответа'); }
-        else { inst.send(msg); toast(`Замечания отправлены агенту: ${fresh.length}`, 'ok'); }
+        if (!fresh.length || !toAgent(commentMessage(fresh), { later: 'замечания уйдут', sent: `Замечания отправлены агенту: ${fresh.length}` })) return;
         const now = Date.now();
         setComments(comments().map((c) => (c.sent ? c : { ...c, sent: now })));
-        view.flashNode?.(chatOf());
       };
+      // commit / pull request / CI checks (gitbar.js); the question and the answer fill in the texts
+      const about = () => {
+        const msgs = view.node(chatOf())?.data.messages || [];
+        const i = cur.data.ts ? msgs.findIndex((x) => x.ts === cur.data.ts && x.role === 'assistant') : msgs.length;
+        const user = [...msgs.slice(0, i < 0 ? msgs.length : i)].reverse().find((x) => x.role === 'user');
+        return { question: user?.content || '', answer: i >= 0 ? msgs[i]?.content || '' : '' };
+      };
+      const gitBar = mountGitBar({ view, nodeId: cur.id, changes: changesOf, about, toAgent: (t) => toAgent(t, { later: 'упавшие проверки уйдут', sent: 'Упавшие проверки отправлены агенту' }),
+        files: () => { const c = changesOf(); return c?.reverted || !c?.files ? [] : c.files.map((f) => f.path); } });
+      view_.insertBefore(gitBar.el, list);
       const sendBtn = h('button', { class: 'btn sm primary no-drag diff-send', title: 'Все новые замечания одним сообщением в чат агента', onclick: (e) => { e.stopPropagation(); sendComments(); } });
       const sendSlot = h('span', { class: 'diff-send-slot' }); // the button is there only when there are comments
       const paintHead = () => {
@@ -1898,6 +1914,7 @@ export const NODE_TYPES = {
           if (k === 0) d.open = true;
         });
         paintHead();
+        gitBar.paint();
       };
       render();
       const off = bus.on('changes:updated', (e) => { if (e.chatId === cur.data.chatId && e.ts === cur.data.ts) render(); });
@@ -1908,7 +1925,7 @@ export const NODE_TYPES = {
           if (changed) render();
           else if (cm) { paintAll(); paintHead(); }
         },
-        destroy: () => off(),
+        destroy: () => { off(); gitBar.destroy(); },
       };
     },
   },

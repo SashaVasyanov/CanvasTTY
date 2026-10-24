@@ -84,3 +84,53 @@ test('замечание к строке в карточке уходит нас
   await expect(app.page.locator('.node-diff .dl-cmt')).toContainText('Напиши строку по-английски');
   await expect(app.page.locator('.node-diff .dl-cmt')).toHaveClass(/sent/);
 });
+
+test('пул-реквест из карточки: ветка, коммит и push в настоящий git, PR через gh; упавшие проверки уходят агенту', async ({ app, home }) => {
+  const repo = path.join(home, 'project3'), remote = path.join(home, 'remote3.git');
+  fs.mkdirSync(repo, { recursive: true });
+  const git = (cwd, ...a) => execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...a], { cwd, encoding: 'utf8' }).trim();
+  git(home, 'init', '-q', '--bare', '-b', 'main', remote);
+  git(repo, 'init', '-q', '-b', 'main');
+  fs.writeFileSync(path.join(repo, 'README.md'), 'Привет, мир\n');
+  fs.writeFileSync(path.join(repo, 'old.txt'), 'старый файл\n');
+  git(repo, 'add', '-A'); git(repo, 'commit', '-qm', 'init');
+  git(repo, 'remote', 'add', 'origin', remote);
+  git(repo, 'push', '-q', '-u', 'origin', 'main');
+  git(repo, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+  const gh = (cfg) => fs.writeFileSync(path.join(app.state, 'gh.json'), JSON.stringify(cfg));
+  gh({ checks: [{ name: 'test', state: 'IN_PROGRESS', bucket: 'pending', link: '' }] });
+
+  app.scenario({ codex: 'edit' });
+  const chat = await app.openAgentChat('codex');
+  await app.page.evaluate(([id, cwd]) => window.__app.canvas.setData(id, { cwd }), [chat, repo]);
+  await app.send(chat, 'Обнови README');
+  await app.waitAnswer(chat);
+  await app.el(chat).locator('.msg-changes button', { hasText: 'Показать' }).click();
+  const bar = app.page.locator('.node-diff .diff-git');
+  await bar.locator('.dg-prbtn').click();
+  const dialog = app.page.locator('.modal');
+  await expect(dialog.locator('.modal-title')).toHaveText('Новый пул-реквест');
+  await expect(dialog.locator('input').nth(1)).toHaveValue('agent/obnovi-readme');
+  await dialog.locator('.modal-foot button', { hasText: 'Создать PR' }).click();
+  await expect(bar.locator('.dg-pr')).toHaveText('PR #1', { timeout: 20_000 });
+  await expect(bar.locator('.dg-checks')).toHaveText('проверки идут…');
+
+  expect(git(repo, 'symbolic-ref', '--short', 'HEAD')).toBe('agent/obnovi-readme');
+  expect(git(remote, 'log', '-1', '--format=%s', 'agent/obnovi-readme')).toBe('Обнови README');
+  expect(git(remote, 'show', '--name-status', '--format=', 'agent/obnovi-readme').split('\n').sort()).toEqual(['A\tnotes.txt', 'D\told.txt', 'M\tREADME.md']);
+  expect(git(remote, 'rev-parse', 'main'), 'main на удалённом не тронута').toBe(git(repo, 'rev-parse', 'main'));
+  const [pr] = JSON.parse(fs.readFileSync(path.join(app.state, 'gh-prs.json'), 'utf8'));
+  expect(pr).toMatchObject({ headRefName: 'agent/obnovi-readme', baseRefName: 'main', title: 'Обнови README' });
+
+  gh({ checks: [{ name: 'test', state: 'FAILURE', bucket: 'fail', link: '' }], runs: [{ databaseId: 9, conclusion: 'failure', workflowName: 'CI', headSha: 'x' }], log: 'test\tRun tests\t2026-10-24T10:00:00.0000000Z README must be in English\n' });
+  await bar.locator('[title="Обновить проверки"]').click();
+  await expect(bar.locator('.dg-checks')).toHaveText('упали: test');
+  app.scenario({ codex: 'basic' });
+  await bar.locator('.dg-fix').click();
+  await expect.poll(() => app.calls('codex').length).toBe(2);
+  expect(app.calls('codex')[1].prompt).toContain('Проверки CI в пул-реквесте #1 упали: test.\n\nКонец логов упавших шагов:\n```\n### CI\nREADME must be in English\n```');
+  await app.waitAnswer(chat);
+
+  await app.restart();
+  await expect(app.page.locator('.node-diff .diff-git .dg-pr')).toHaveText('PR #1');
+});

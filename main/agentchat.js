@@ -15,15 +15,7 @@ const crypto = require('crypto');
 
 const isWin = process.platform === 'win32';
 
-// the command line for a CLI; npm installs .cmd shims on Windows, which only cmd.exe can start
-function cliCommand(resolved, args) {
-  if (isWin && /\.(cmd|bat)$/i.test(resolved)) {
-    const q = (a) => (/[\s"&|<>^()%!]/.test(a) ? `"${String(a).replace(/"/g, '""')}"` : a);
-    const line = [q(resolved), ...args.map(q)].join(' ');
-    return { file: process.env.ComSpec || 'cmd.exe', args: ['/d', '/s', '/c', `"${line}"`], verbatim: true };
-  }
-  return { file: resolved, args, verbatim: false };
-}
+const { cliCommand } = require('./which'); // .cmd shims on Windows
 
 // the helper and everything it started (it runs in its own process group on Linux/macOS)
 function killTree(pid) {

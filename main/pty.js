@@ -8,6 +8,7 @@ const os = require('os');
 const safeCwd = (d) => { try { if (d && require('fs').statSync(d).isDirectory()) return d; } catch {} return os.homedir(); };
 
 const isWin = process.platform === 'win32';
+const { which } = require('./which');
 const MAX_SCROLLBACK = 400 * 1024;
 
 class PtyManager {
@@ -55,28 +56,7 @@ class PtyManager {
   }
 
   // ---------- helpers ----------
-  which(cmd) {
-    if (!cmd) return null;
-    if (path.isAbsolute(cmd)) return fs.existsSync(cmd) ? cmd : null;
-    const dirs = (process.env.PATH || process.env.Path || '').split(path.delimiter).filter(Boolean);
-    const exts = isWin ? (process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD;.PS1').split(';').map((e) => e.toLowerCase()) : [''];
-    if (isWin) {
-      // npm global bin is often missing from PATH of GUI apps
-      const appdata = process.env.APPDATA;
-      if (appdata) dirs.push(path.join(appdata, 'npm'));
-      dirs.push(path.join(os.homedir(), '.local', 'bin'));
-      dirs.push(path.join(os.homedir(), 'AppData', 'Local', 'Programs'));
-    } else {
-      dirs.push('/usr/local/bin', '/opt/homebrew/bin', path.join(os.homedir(), '.local', 'bin'), path.join(os.homedir(), '.npm-global', 'bin'));
-    }
-    for (const d of dirs) {
-      for (const e of exts) {
-        const p = path.join(d, cmd + e);
-        try { if (fs.statSync(p).isFile()) return p; } catch {}
-      }
-    }
-    return null;
-  }
+  which(cmd) { return which(cmd); } // main/which.js
 
   defaultShell() {
     if (isWin) {

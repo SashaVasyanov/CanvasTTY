@@ -28,6 +28,7 @@ useTestHome();
 const { SyncManager } = require('./sync');
 const changes = require('./changes');
 const worktrees = require('./worktrees');
+const gitflow = require('./gitflow');
 const codexPets = require('./codexpets');
 
 const isMac = process.platform === 'darwin';
@@ -444,6 +445,14 @@ app.whenReady().then(() => {
   ipcMain.handle('wt:preview', (e, w) => worktrees.preview(w));
   ipcMain.handle('wt:merge', (e, w) => worktrees.merge(w));
   ipcMain.handle('wt:remove', (e, w, o) => worktrees.remove(w, { force: !!o?.force, dropBranch: !!o?.dropBranch }));
+  // commit, pull request and its CI checks from the changes card (main/gitflow.js)
+  const files = (v) => (Array.isArray(v) ? v.slice(0, 500).map(String) : []);
+  ipcMain.handle('git:info', (e, dir) => gitflow.info(String(dir || '')));
+  ipcMain.handle('git:commit', (e, o) => gitflow.commit({ root: String(o?.root || ''), files: files(o?.files), message: String(o?.message || '').slice(0, 10000) }));
+  ipcMain.handle('git:pr', (e, o) => gitflow.pr({ root: String(o?.root || ''), title: String(o?.title || '').slice(0, 300), body: String(o?.body || '').slice(0, 60000), branch: o?.branch ? String(o.branch).slice(0, 200) : '',
+    commit: o?.commit ? { files: files(o.commit.files), message: String(o.commit.message || '').slice(0, 10000) } : null }));
+  ipcMain.handle('git:checks', (e, o) => gitflow.checks({ root: String(o?.root || ''), number: Number(o?.number) }));
+  ipcMain.handle('git:failedLogs', (e, o) => gitflow.failedLogs({ root: String(o?.root || ''), number: Number(o?.number) }));
   // only shows the file in Explorer (opening it could start a program: .bat, .js, .exe…)
   ipcMain.handle('changes:reveal', (e, o) => {
     const root = path.resolve(String(o.root)), abs = path.resolve(root, String(o.file));
