@@ -129,6 +129,33 @@ export const mockNative = {
     window.__canvasCall = (target, op, args = {}, extra = {}) => new Promise((resolve) => { const id = ++n; waiting.set(id, resolve); emit('canvastools:request', { id, ...target, op, args, ...extra }); });
     return { onRequest: on('canvastools:request'), reply: (id, r) => { waiting.get(id)?.(r); waiting.delete(id); } };
   })(),
+  // search across everything (main/search.js): the same groups from the browser's storage
+  search: {
+    async all(q, { canvasIds = [] } = {}) {
+      const ws = String(q || '').toLowerCase().split(/\s+/).filter(Boolean);
+      const match = (x) => ws.length > 0 && ws.every((w) => String(x || '').toLowerCase().includes(w));
+      const snip = (t) => { const i = Math.max(0, String(t).toLowerCase().indexOf(ws[0])); const st = Math.max(0, i - 40); return (st ? '…' : '') + String(t).slice(st, st + 140).replace(/\s+/g, ' '); };
+      const strip = (x) => String(x || '').replace(/<\/(p|div)>/g, '\n').replace(/<[^>]+>/g, '');
+      const objects = [];
+      for (const id of canvasIds) {
+        for (const n of LS.get(`mock:canvas:${id}`, null)?.nodes || []) {
+          const d = n.data || {};
+          const text = n.type === 'text' ? strip(d.html) : ['sticky', 'shape'].includes(n.type) ? d.text || '' : '';
+          const title = n.type === 'frame' ? d.title : n.type === 'note' ? String(d.path || '').split('/').pop().replace(/\.md$/, '') : d.title || text.split('\n')[0];
+          if (match(`${title}\n${text}`)) objects.push({ canvasId: id, nodeId: n.id, type: n.type, title, snippet: text ? snip(text) : '' });
+          if (n.type === 'chat' || n.type === 'agentchat') (d.messages || []).forEach((m, i) => { if (match(m.content)) objects.push({ canvasId: id, nodeId: n.id, type: n.type, title: d.title || '', msg: i, role: m.role, snippet: snip(m.content) }); });
+        }
+      }
+      const notes = Object.entries(files).filter(([p, t]) => p.endsWith('.md') && match(`${p}\n${t}`)).map(([p, t]) => ({ path: p, name: p.split('/').pop().replace(/\.md$/, ''), snippet: snip(t) }));
+      const chats = [];
+      for (const meta of await mockNative.history.list({})) {
+        const rec = await mockNative.history.get(meta.id);
+        const i = (rec?.messages || []).findIndex((m) => match(`${rec.title}\n${m.content}`));
+        if (i >= 0) chats.push({ id: meta.id, title: rec.title, kind: rec.kind, agent: rec.agent, provider: rec.provider, updated: rec.updated, msg: i, snippet: snip(rec.messages[i].content) });
+      }
+      return { objects, notes, chats };
+    },
+  },
   // separate copies for agents: tests set window.__mockWt = { status, preview, merge, remove(opts) }
   wt: (() => {
     const log = (k, v) => { (window.__wtCalls ||= []).push([k, v]); };

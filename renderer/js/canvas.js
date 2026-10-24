@@ -350,6 +350,13 @@ export class CanvasView extends Emitter {
     if (!nodes.length) { this.animateTo({ x: this.rect().width / 2, y: this.rect().height / 2, z: 1 }); return; }
     this.animateTo(this.fitRect(this.bounds(nodes)));
   }
+  // a short pulse around an object (found by the search, jumped to)
+  flashNode(id) {
+    const el = this.views.get(id)?.el;
+    if (!el) return;
+    el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash');
+    clearTimeout(el._flashT); el._flashT = setTimeout(() => el.classList.remove('flash'), 1700);
+  }
   focusNode(id) {
     const n = this.node(id); if (!n) return;
     this.select([id]);

@@ -12,6 +12,7 @@ import { setFpsMeter, toggleFpsMeter, runPerfTest } from './perf.js';
 import { AgentWatch, Companion, loadCodexPets, codexPetFor } from './companion.js';
 import { inbox, INBOX_KINDS, badgeOf, ago, projectOf } from './inbox.js';
 import { bindCanvasTools } from './canvasTools.js';
+import { openSearch } from './search.js';
 import { openTemplates, saveTemplate, allTemplates, placeTemplate } from './templates.js';
 import { limits, limitsPanel, petSvg, LIMIT_SOURCES, PETS, openPetPicker, openPetCatalog, CLOCK_PRESETS, CLOCK_DEFAULT, clockColors, paintClock, clockMarkup } from './hub.js';
 
@@ -712,6 +713,9 @@ class App {
       const mod = e.ctrlKey || e.metaKey;
       const k = keyName(e);
       if (mod && k === 'p') { e.preventDefault(); this.palette(); return; }
+      // search across everything; Ctrl+K in a text field or a terminal stays theirs (a link in a note,
+      // kill-line), from a terminal: Ctrl+Shift+K
+      if (mod && k === 'k' && (e.shiftKey ? !document.activeElement?.isContentEditable : !isEditable(document.activeElement))) { e.preventDefault(); openSearch(this); return; }
       if (mod && e.shiftKey && k === 'f') { e.preventDefault(); toggleFpsMeter(); return; }
       if (mod && k === 'o') { e.preventDefault(); this.quickOpen(false); return; }
       if (mod && k === 'n') { e.preventDefault(); this.sidebar.newNote(); return; }
@@ -727,6 +731,7 @@ class App {
   // ---------------- command palette / quick open ----------------
   palette(initial = '') {
     const cmds = [
+      { label: 'Поиск по всему…', icon: 'search', hint: 'Ctrl+K', run: () => openSearch(this) },
       ...state.settings.agents.filter((a) => a.chat).map((a) => ({ label: `${a.name} — окно чата`, hint: 'по подписке', badge: badge(a.mono, a.color, 16, a.dark), run: () => this.launchAgentChat({ agentId: a.id }) })),
       ...state.settings.agents.map((a) => ({ label: `${a.name} — терминал`, hint: a.cmd || 'shell', badge: badge(a.mono, a.color, 16, a.dark), run: () => this.launchAgent({ agentId: a.id }) })),
       ...Object.keys(PROVIDER_META).map((id) => ({ label: `Чат: ${providerName(id)}`, hint: 'API', badge: badge(PROVIDER_META[id].mono, PROVIDER_META[id].color, 16, PROVIDER_META[id].dark), run: () => this.launchChat({ provider: id }) })),
@@ -1040,7 +1045,7 @@ class App {
       ['Shift + клик, рамка', 'Множественное выделение'], ['Shift при перемещении', 'Только по оси'], ['Alt при перемещении', 'Без привязки'],
       ['Ctrl+Z / Ctrl+Shift+Z', 'Отменить / повторить'], ['Ctrl+C / X / V / D', 'Копировать / вырезать / вставить / дублировать'],
       ['Ctrl+G', 'Сгруппировать в область'], ['Ctrl + / − / 0', 'Текст в окне чата (в поле ввода)'], ['Ctrl+L', 'Закрепить'], ['[ / ]', 'Назад / вперёд по слоям'], ['Стрелки (+Shift)', 'Сдвиг на 1 (10) px'],
-      ['Shift+1 / Shift+2 / Shift+0', 'Показать всё / выделенное / 100%'], ['Ctrl+P (в терминале Ctrl+Shift+P)', 'Палитра команд'], ['Ctrl+O / Ctrl+Shift+O', 'Открыть заметку'], ['Ctrl+N / Ctrl+Shift+N', 'Новая заметка'],
+      ['Shift+1 / Shift+2 / Shift+0', 'Показать всё / выделенное / 100%'], ['Ctrl+P (в терминале Ctrl+Shift+P)', 'Палитра команд'], ['Ctrl+K (в терминале Ctrl+Shift+K)', 'Поиск по всему'], ['Ctrl+O / Ctrl+Shift+O', 'Открыть заметку'], ['Ctrl+N / Ctrl+Shift+N', 'Новая заметка'],
       ['Ctrl+`', 'Новый терминал'], ['Ctrl+\\', 'Боковая панель'], ['M', 'Скрыть / показать миникарту'], ['Ctrl+Shift+F', 'Счётчик FPS'], ['F1', 'Инструкция'], ['Ctrl+K (в заметке)', 'Ссылка'], ['[[ (в заметке)', 'Ссылка на заметку с автодополнением'],
       ['Ctrl+Shift+L (в заметке)', 'Чек-лист'], ['# , - , 1. , [] , > (в заметке)', 'Markdown-сокращения'],
     ];

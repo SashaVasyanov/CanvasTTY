@@ -24,6 +24,7 @@ contextBridge.exposeInMainWorld('native', {
   agentChat: { run: inv('agentchat:run'), abort: inv('agentchat:abort'), attach: inv('agentchat:attach'), release: inv('agentchat:release'), background: inv('agentchat:background'), onBackground: on('agentchat:background'), defaults: inv('agentchat:defaults'), imagesDir: inv('agentchat:imagesDir'), onEvent: on('agentchat:event') },
   setBg: inv('win:setBg'),
   perf: { info: inv('perf:info'), save: inv('perf:save') },
+  search: { all: inv('search:all') },
   history: { list: inv('history:list'), get: inv('history:get'), save: inv('history:save'), remove: inv('history:remove') },
   sessions: { list: inv('sessions:list'), read: inv('sessions:read') },
   app: { onFlush: on('app:flush'), flushed: () => ipcRenderer.send('app:flushed') },

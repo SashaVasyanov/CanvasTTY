@@ -740,6 +740,21 @@ button.ly-twisty:hover { background: rgba(var(--fg-rgb), 0.08); color: var(--tex
 .pl-ic { width: 20px; display: grid; place-items: center; color: var(--text-2); }
 .pl-label { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pl-hint { color: var(--muted); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40%; }
+/* search across everything (renderer/js/search.js) */
+.search-status { margin: 6px 2px 0; }
+.sr-head { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); padding: 10px 10px 4px; }
+.pl-row.sr-row { height: auto; min-height: 36px; padding: 6px 10px; align-items: flex-start; }
+.sr-row .pl-ic { margin-top: 2px; }
+.sr-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.sr-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sr-main > .sr-snip { color: var(--text-2); font-size: 12px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.sr-row mark { background: rgba(255, 214, 10, 0.35); color: inherit; border-radius: 3px; padding: 0 1px; }
+.sr-row .pl-hint { margin-top: 2px; }
+::highlight(vt-found) { background-color: rgba(255, 214, 10, 0.55); color: inherit; }
+.node.flash { animation: node-flash 1.6s ease-out; }
+@keyframes node-flash { 0%, 40% { box-shadow: 0 0 0 4px var(--accent), 0 0 0 10px color-mix(in srgb, var(--accent) 35%, transparent); } 100% { box-shadow: 0 0 0 0 transparent; } }
+.msg.found { animation: msg-found 2.4s ease-out; border-radius: 10px; }
+@keyframes msg-found { 0%, 50% { background: color-mix(in srgb, var(--accent) 16%, transparent); } 100% { background: transparent; } }
 
 /* ---------- settings ---------- */
 .settings-modal .modal-body { padding: 0; }

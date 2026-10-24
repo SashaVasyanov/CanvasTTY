@@ -10,6 +10,7 @@ const { ChatManager, PROVIDERS } = require('./chat');
 const { getLimits } = require('./limits');
 const { AgentChatManager, agentDefaults } = require('./agentchat');
 const { CanvasBridge } = require('./canvas-bridge');
+const { SearchIndex } = require('./search');
 const { HistoryStore, listSessions, readSession } = require('./history');
 const { Attachments } = require('./attachments');
 // automated tests run the app against a throw-away profile: settings, canvases, chats and the
@@ -382,6 +383,9 @@ app.whenReady().then(() => {
   // started once the window listens, so no change from another computer is missed
   ipcMain.handle('sync:ready', () => { sync.start(); return sync.info(); });
   ipcMain.handle('history:list', (e, q) => history.list(q || {}));
+  // search across everything (Ctrl+K): canvases, notes, saved conversations (main/search.js)
+  const searchIndex = new SearchIndex({ canvasDir, history, vault, waitFile: (f) => writeQueues.get(f)?.catch(() => {}) });
+  ipcMain.handle('search:all', (e, q, o) => searchIndex.search(String(q || '').slice(0, 200), { canvasIds: Array.isArray(o?.canvasIds) ? o.canvasIds.slice(0, 500) : [], limit: Math.min(50, Number(o?.limit) || 30) }));
   ipcMain.handle('history:get', (e, id) => history.get(id));
   ipcMain.handle('history:save', (e, rec) => history.save(rec));
   ipcMain.handle('history:remove', (e, id) => history.remove(id));

@@ -474,6 +474,22 @@ function fileItems(inst, target, m) {
 }
 const clip = (s, n) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 
+// a message found by the search: shown (older ones are rendered if needed), scrolled to the middle
+// of the list and highlighted
+function revealMessage(inst, i, q = '') {
+  const total = inst.messages.length;
+  if (!(i >= 0 && i < total)) return false;
+  if ((inst.shown || 0) < total - i) { inst.shown = total - i; inst._keepScroll = true; inst.renderAll(); inst._keepScroll = false; }
+  const el = inst.list.querySelector(`.msg[data-i="${i}"]`);
+  if (!el) return false;
+  inst.follow = false;
+  inst.list.scrollTop = Math.max(0, el.offsetTop - inst.list.offsetTop - Math.max(0, (inst.list.clientHeight - el.offsetHeight) / 2));
+  el.classList.remove('found'); void el.offsetWidth; el.classList.add('found');
+  setTimeout(() => el.classList.remove('found'), 2600);
+  import('./search.js').then(({ highlightIn }) => highlightIn(el, q)).catch(() => {});
+  return true;
+}
+
 // the message under the mouse (its element carries data-i); -1 outside messages
 function msgIndexAt(inst, target) {
   const el = target?.closest?.('.msg[data-i]');
@@ -832,6 +848,7 @@ class ChatInstance {
     }
     return el;
   }
+  revealMessage(i, q) { return revealMessage(this, i, q); }
   // what to do with a message: right click on it (renderer/js/canvas.js nodeMenu)
   contextItems(target) {
     const i = msgIndexAt(this, target), m = this.messages[i];
@@ -1342,6 +1359,7 @@ class AgentChatInstance {
     }
     return el;
   }
+  revealMessage(i, q) { return revealMessage(this, i, q); }
   contextItems(target) {
     const i = msgIndexAt(this, target), m = this.messages[i];
     if (!m || m.running) return [];
